@@ -1,0 +1,37 @@
+{
+  "name": "pi-tool-groups",
+  "version": "0.1.0",
+  "description": "Group collapsed non-edit Pi tool rows while preserving native detailed renderers.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "keywords": ["pi-package", "pi-extension", "tui", "tool-calls"],
+  "files": ["src", "README.md", "LICENSE"],
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@earendil-works/pi-tui": { "optional": true }
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.85.1",
+    "@earendil-works/pi-tui": "0.85.1",
+    "@types/node": "26.5.1",
+    "typescript": "7.0.2",
+    "vitest": "5.0.1"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm test",
+    "package:check": "npm pack --dry-run"
+  }
+}

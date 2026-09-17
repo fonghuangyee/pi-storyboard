@@ -1,9 +1,19 @@
 import type { GroupKind } from "./grouping.ts";
 import type { ToolRowSnapshot } from "./renderer.ts";
 
-/** One native assistant child, such as a thinking run, text block, or spacer. */
+export type StoryboardAssistantContentType =
+  | "thinking"
+  | "commentary"
+  | "final_answer"
+  | "text"
+  | "native";
+
+/**
+ * One native assistant child. Text phases are retained only as a small
+ * validated enum: raw provider signatures never leave the Pi adapter.
+ */
 export type StoryboardAssistantContent = {
-  readonly type: "thinking" | "text" | "native";
+  readonly type: StoryboardAssistantContentType;
   readonly row: unknown;
   readonly renderedLines: readonly string[];
 };
@@ -31,6 +41,10 @@ export type AssistantSceneSnapshot = {
   readonly isStreaming: boolean;
   readonly hasThinking: boolean;
   readonly hasText: boolean;
+  /** A validated TextSignatureV1 phase was `final_answer`. */
+  readonly hasFinalAnswer: boolean;
+  /** At least one visible text block had no validated portable phase. */
+  readonly hasUnknownText: boolean;
   readonly assistantContent?: readonly StoryboardAssistantContent[];
   readonly sourceOrder?: readonly StoryboardSourceItem[];
 };
@@ -107,7 +121,14 @@ function hasUniqueStrings(values: unknown): values is readonly string[] {
 }
 
 function isAssistantContent(value: unknown): value is StoryboardAssistantContent {
-  if (!isRecord(value) || (value.type !== "thinking" && value.type !== "text" && value.type !== "native")) {
+  if (
+    !isRecord(value) ||
+    (value.type !== "thinking" &&
+      value.type !== "commentary" &&
+      value.type !== "final_answer" &&
+      value.type !== "text" &&
+      value.type !== "native")
+  ) {
     return false;
   }
   return Array.isArray(value.renderedLines) && value.renderedLines.every((line) => typeof line === "string");
@@ -130,7 +151,9 @@ function isAssistantSnapshot(value: unknown): value is AssistantSceneSnapshot {
     typeof value.stopReason !== "string" ||
     typeof value.isStreaming !== "boolean" ||
     typeof value.hasThinking !== "boolean" ||
-    typeof value.hasText !== "boolean"
+    typeof value.hasText !== "boolean" ||
+    typeof value.hasFinalAnswer !== "boolean" ||
+    typeof value.hasUnknownText !== "boolean"
   ) {
     return false;
   }
@@ -321,8 +344,8 @@ function makeScene(
 }
 
 /**
- * Build a render-time Story Spine projection from ordered, already-inspected
- * snapshots. This function has no Pi dependency and is deliberately
+ * Build a render-time turn-storyboard projection from ordered,
+ * already-inspected snapshots. This function has no Pi dependency and is deliberately
  * conservative: a missing, extra, reordered, expanded, or malformed owned
  * tool produces a native segment rather than a guessed scene.
  *
@@ -358,6 +381,7 @@ export function buildStoryboard(
     const validAssistant = hasUniqueStrings(assistant.expectedToolCallIds);
     const validTools = followingTools.every(isToolSnapshot);
     const hasExpectedTools = assistant.expectedToolCallIds.length > 0;
+    const hasUnclassifiedOrFinalText = assistant.hasFinalAnswer || assistant.hasUnknownText;
 
     if (!validAssistant || !validTools || (hasExpectedTools && !ownershipMatches(assistant, followingTools))) {
       // Keep the assistant and every contiguous tool row in the affected
@@ -369,6 +393,15 @@ export function buildStoryboard(
 
     if (!hasExpectedTools && followingTools.length > 0) {
       // Tool rows cannot become children of an assistant that claims no calls.
+      pushNative(segments, children.slice(index, end));
+      index = end;
+      continue;
+    }
+
+    if (hasExpectedTools && hasUnclassifiedOrFinalText) {
+      // A final answer is ordinary Pi output, while an absent/unknown phase is
+      // not safe to reinterpret as commentary. Keep the complete response and
+      // its tool rows native rather than guessing from position or stopReason.
       pushNative(segments, children.slice(index, end));
       index = end;
       continue;

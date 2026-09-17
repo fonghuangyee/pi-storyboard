@@ -44,12 +44,16 @@ describe("TuiPreview", () => {
     expect(storyboard).not.toContain("07 ");
     expect(storyboard).not.toContain("08 ");
     expect(storyboard).toContain("├─ Read 2 files");
+    expect(storyboard).toContain("native results confirm commentary can contain Markdown");
     expect(storyboard).toContain("Confirming the separator after the first read");
     expect(storyboard).toContain("╰─ Run 2 commands");
     expect(storyboard).toContain("expanded");
     expect(storyboard).toContain("native Pi rows");
-    expect(storyboard).toContain("scene header = one assistant message");
-    expect(storyboard).toContain("child action groups belong to that message");
+    expect(storyboard).toContain("native thinking starts a visual Pi turn block");
+    expect(storyboard).toContain("no persisted master record");
+    expect(storyboard).not.toContain("scene header = one assistant message");
+    expect(storyboard).toContain("├─");
+    expect(storyboard).toContain("╰─");
     expect(storyboard.split("\n").every((line) => visibleWidth(line) <= 100)).toBe(true);
 
     // Enter the preview pane and scroll through the complete scenario matrix.
@@ -59,9 +63,12 @@ describe("TuiPreview", () => {
       preview.handleInput("\u001b[B");
       scrolledStoryboard += preview.render(100).join("\n");
     }
-    expect(scrolledStoryboard).toContain("Tool-only assistant message");
-    expect(scrolledStoryboard).toContain("Running edit preview");
+    expect(scrolledStoryboard).toContain("Write 1 file");
+    expect(scrolledStoryboard).toContain("Collapsed running edit");
+    expect(scrolledStoryboard).toContain("README.md");
+    expect(scrolledStoryboard).toContain("thinking blocks collapsed");
     expect(scrolledStoryboard).toContain("Final answer");
+    expect(scrolledStoryboard).toContain("Unknown text phase");
     expect(scrolledStoryboard.split("\n").every((line) => visibleWidth(line) <= 100)).toBe(true);
 
     preview.handleInput("\u001b[D");

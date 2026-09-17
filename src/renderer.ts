@@ -264,6 +264,11 @@ function formatWriteParts(args: unknown): ToolRowParts {
 }
 
 function formatEditParts(args: unknown): ToolRowParts {
+  // Pending edits may not have streamed a valid path yet. Keep their compact
+  // row generic instead of exposing partial edit arguments or showing
+  // `undefined` as if it were meaningful tool input.
+  if (args === undefined) return { main: "edit" };
+
   if (
     isRecord(args) &&
     hasOnlyKnownKeys(args, ["path"]) &&

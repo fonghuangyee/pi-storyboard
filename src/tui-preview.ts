@@ -2,6 +2,16 @@ import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { TranscriptReplay } from "./transcript-replay.ts";
 import { renderToolGroup, type GroupSnapshot, type ThemeLike } from "./renderer.ts";
 import {
+  renderStoryboardScene,
+  storyboardAssistantWidth,
+} from "./storyboard-renderer.ts";
+import type {
+  StoryboardActionRun,
+  StoryboardOrderedChild,
+  StoryboardScene,
+  StoryboardToolSnapshot,
+} from "./storyboard.ts";
+import {
   Box,
   CancellableLoader,
   Container,
@@ -22,8 +32,6 @@ import {
   VStack,
   isFocusable,
   matchesKey,
-  sliceByColumn,
-  stripTerminalSequences,
   truncateToWidth,
   visibleWidth,
   type Component,
@@ -294,6 +302,12 @@ const SAMPLE_TOOL_GROUPS: readonly GroupSnapshot[] = [
         isPartial: false,
         expanded: false,
       },
+      {
+        toolName: "edit",
+        args: { path: "README.md" },
+        isPartial: true,
+        expanded: false,
+      },
     ],
   },
   {
@@ -362,13 +376,15 @@ class ToolGroupsSample implements Component {
 
 type StoryboardPreviewItem =
   | { type: "group"; group: GroupSnapshot }
-  | { type: "thinking"; text: string };
+  | { type: "thinking"; text: string }
+  | { type: "commentary"; text: string };
 
 type StoryboardPreviewScene = {
-  title: string;
+  /** Native thinking content used as the visual turn-block header. */
+  title?: string;
   state: "complete" | "running" | "failed" | "note";
   groups: readonly GroupSnapshot[];
-  /** Optional source-order sample; groups alone retain the compact legacy sample. */
+  /** Optional exact source-order sample following the native header. */
   items?: readonly StoryboardPreviewItem[];
   detail?: string;
 };
@@ -377,7 +393,7 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
   {
     title: "Refining row layout logic",
     state: "failed",
-    detail: "one assistant message owns several action groups",
+    detail: "one assistant response and its tool batch",
     groups: [
       {
         kind: "read",
@@ -400,6 +416,10 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
           rows: SAMPLE_TOOL_GROUPS[0]!.rows.slice(0, 2),
         },
       },
+      {
+        type: "commentary",
+        text: "The native results confirm **commentary can contain Markdown** and remain in source order.",
+      },
       { type: "thinking", text: "Confirming the separator after the first read" },
       {
         type: "group",
@@ -420,8 +440,25 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
   {
     title: "Reviewing atomic handling logic",
     state: "note",
-    detail: "thinking-only assistant message · no tool calls",
+    detail: "thinking-only assistant response · no tool calls",
     groups: [],
+  },
+  {
+    state: "note",
+    detail: "long continuous thinking · first two + last two visible",
+    groups: [],
+    items: [{
+      type: "thinking",
+      text: [
+        "Thinking paragraph 1",
+        "Thinking paragraph 2",
+        "Thinking paragraph 3",
+        "Thinking paragraph 4",
+        "Thinking paragraph 5",
+        "Thinking paragraph 6",
+        "Thinking paragraph 7",
+      ].join("\n\n"),
+    }],
   },
   {
     title: "Verifying errorDetail line changes",
@@ -434,6 +471,17 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
           {
             toolName: "read",
             args: { path: "src/renderer.ts", offset: 458, limit: 46 },
+            isPartial: true,
+            expanded: false,
+          },
+        ],
+      },
+      {
+        kind: "edit",
+        rows: [
+          {
+            toolName: "edit",
+            args: { path: "README.md" },
             isPartial: true,
             expanded: false,
           },
@@ -455,13 +503,12 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
   {
     title: "Inspecting search strategy",
     state: "complete",
-    detail: "same scene can contain different semantic groups",
+    detail: "one response can contain different semantic groups",
     groups: [SAMPLE_TOOL_GROUPS[1]!, SAMPLE_TOOL_GROUPS[2]!],
   },
   {
-    title: "Tool-only assistant message",
     state: "complete",
-    detail: "no thinking/text block · tool calls still belong to the scene",
+    detail: "tool-only assistant response · presentation-only Thinking... placeholder",
     groups: [
       {
         kind: "write",
@@ -476,13 +523,13 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
   {
     title: "First assistant message · inspect",
     state: "complete",
-    detail: "scene boundary A",
+    detail: "response boundary A",
     groups: [{ kind: "read", rows: [SAMPLE_TOOL_GROUPS[0]!.rows[1]!] }],
   },
   {
     title: "Second assistant message · verify",
     state: "complete",
-    detail: "scene boundary B · never merged with the previous scene",
+    detail: "response boundary B · never merged with the previous response",
     groups: [{ kind: "read", rows: [SAMPLE_TOOL_GROUPS[0]!.rows[1]!] }],
   },
 ];
@@ -491,24 +538,11 @@ function storyFit(line: string, width: number): string {
   return truncateToWidth(line, Math.max(1, Math.floor(width)), "");
 }
 
-function storyTitle(theme: Theme, scene: StoryboardPreviewScene): string {
-  const marker = scene.state === "note" ? "○" : "◉";
-  const color = scene.state === "running"
-    ? "syntaxKeyword"
-    : scene.state === "note"
-      ? "muted"
-      : scene.state === "failed"
-        ? "error"
-        : "success";
-  return `${theme.fg(color, marker)} ${theme.italic(theme.fg("thinkingText", scene.title))}`;
-}
-
 /**
- * Static Direction A preview. This intentionally consumes fixed snapshots and
- * never reads transcript/session state; it is the approved fixed visual
- * reference for the live Story Spine renderer.
+ * Static turn-storyboard preview. It uses fixed snapshots only and delegates
+ * to the production renderer so the branch and end-cap grammar cannot drift.
  */
-class StorySpineSample implements Component {
+class TurnStoryboardSample implements Component {
   private scrollOffset = 0;
 
   constructor(
@@ -516,111 +550,144 @@ class StorySpineSample implements Component {
     private readonly tui: TUI,
   ) {}
 
+  private previewScene(scene: StoryboardPreviewScene, width: number): StoryboardScene {
+    const assistantWidth = storyboardAssistantWidth(width);
+    const orderedChildren: StoryboardOrderedChild[] = [];
+    const actionRuns: StoryboardActionRun[] = [];
+    let toolIndex = 0;
+
+    if (scene.title !== undefined) {
+      const nativeThinking = new Text(
+        this.theme.italic(this.theme.fg("thinkingText", scene.title)),
+        1,
+        0,
+      );
+      orderedChildren.push({
+        type: "assistant",
+        content: {
+          type: "thinking",
+          row: nativeThinking,
+          renderedLines: nativeThinking.render(assistantWidth),
+        },
+      });
+    }
+
+    const items = scene.items ?? scene.groups.map((group) => ({ type: "group" as const, group }));
+    for (const item of items) {
+      if (item.type === "thinking") {
+        const nativeThinking = new Text(
+          this.theme.italic(this.theme.fg("thinkingText", item.text)),
+          1,
+          0,
+        );
+        orderedChildren.push({
+          type: "assistant",
+          content: {
+            type: "thinking",
+            row: nativeThinking,
+            renderedLines: nativeThinking.render(assistantWidth),
+          },
+        });
+        continue;
+      }
+      if (item.type === "commentary") {
+        const markdown = new Markdown(item.text, 1, 0, markdownTheme(this.theme));
+        orderedChildren.push({
+          type: "assistant",
+          content: {
+            type: "commentary",
+            row: markdown,
+            renderedLines: markdown.render(assistantWidth),
+          },
+        });
+        continue;
+      }
+
+      const rows: StoryboardToolSnapshot[] = item.group.rows.map((snapshot) => {
+        const toolCallId = `preview-${toolIndex++}`;
+        return {
+          toolRow: toolCallId,
+          toolCallId,
+          kind: item.group.kind,
+          snapshot,
+        };
+      });
+      actionRuns.push({ kind: item.group.kind, rows });
+      orderedChildren.push(...rows.map((tool) => ({ type: "tool" as const, tool })));
+    }
+
+    const allTools = actionRuns.flatMap((run) => run.rows);
+    return {
+      type: "scene",
+      assistant: {
+        assistantRow: scene,
+        renderedAssistantLines: [],
+        expectedToolCallIds: allTools.map((tool) => tool.toolCallId),
+        stopReason: scene.state === "running" ? "pending" : scene.state === "failed" ? "error" : "toolUse",
+        isStreaming: scene.state === "running",
+        hasThinking: scene.title !== undefined,
+        hasText: items.some((item) => item.type === "commentary"),
+        hasFinalAnswer: false,
+        hasUnknownText: false,
+      },
+      actionRuns,
+      orderedChildren,
+      state: scene.state,
+    };
+  }
+
   private renderAll(width: number): string[] {
     const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
-    const wide = safeWidth >= 80;
-    const headerIndent = safeWidth >= 50 ? " " : "";
-    const childIndent = safeWidth >= 50 ? "   " : safeWidth >= 30 ? " " : "";
+    const indent = safeWidth >= 50 ? " " : "";
     const rendered: string[] = [];
     const groupTheme = toolGroupTheme(this.theme);
 
     rendered.push(storyFit(
-      `${headerIndent}${this.theme.fg("accent", "◉")} ${this.theme.fg("muted", "scene header = one assistant message")}`,
+      `${indent}${this.theme.fg("accent", "◉")}/${this.theme.fg("muted", "○")} ${this.theme.fg("muted", "native thinking starts a visual Pi turn block (tools/note)")}`,
       safeWidth,
     ));
     rendered.push(storyFit(
-      `${childIndent}└─ ${this.theme.fg("dim", "child action groups belong to that message")}`,
+      `${indent}${this.theme.fg("muted", "├─")} ${this.theme.fg("dim", "more source-ordered content or action children follow")}`,
       safeWidth,
     ));
     rendered.push(storyFit(
-      `${headerIndent}${this.theme.fg("muted", "○")} ${this.theme.fg("muted", "note scene = assistant message with no tool calls")}`,
+      `${indent}${this.theme.fg("muted", "╰─")} ${this.theme.fg("dim", "final child closes the turn")}`,
       safeWidth,
     ));
     rendered.push(storyFit(
-      `${headerIndent}${this.theme.fg("accent", "expanded")} ${this.theme.fg("dim", "→ native Pi rows · full output · diffs · diagnostics")}`,
+      `${indent}${this.theme.fg("dim", "boundary")} ${this.theme.fg("muted", "= no persisted master record · one assistant response + matched tool batch")}`,
+      safeWidth,
+    ));
+    rendered.push(storyFit(
+      `${indent}${this.theme.fg("accent", "expanded")} ${this.theme.fg("dim", "→ native Pi rows · full output · diffs · diagnostics")}`,
       safeWidth,
     ));
 
-    for (const scene of STORYBOARD_SCENES) {
-      rendered.push("");
-
-      const title = `${headerIndent}${storyTitle(this.theme, scene)}`;
-      const actionCount = scene.groups.reduce((total, group) => total + group.rows.length, 0);
-      const statusText = scene.state === "note"
-        ? "note"
-        : `${actionCount} ${actionCount === 1 ? "action" : "actions"}${scene.state === "failed" ? " · failed" : ""}`;
-      const status = this.theme.fg("muted", statusText);
-      const titleWidth = visibleWidth(title);
-      const statusWidth = visibleWidth(status);
-      const gap = wide ? Math.max(2, safeWidth - titleWidth - statusWidth) : 2;
-      rendered.push(storyFit(`${title}${" ".repeat(gap)}${status}`, safeWidth));
-      if (scene.detail) {
-        rendered.push(storyFit(`${childIndent}└─ ${this.theme.fg("dim", scene.detail)}`, safeWidth));
-      }
-
-      const items: readonly StoryboardPreviewItem[] = scene.items ?? scene.groups.map((group) => ({
-        type: "group",
-        group,
-      }));
-      if (items.length === 0) continue;
-
-      rendered.push(storyFit(`${childIndent}│`, safeWidth));
-      for (let itemIndex = 0; itemIndex < items.length; itemIndex++) {
-        const item = items[itemIndex]!;
-        const lastItem = itemIndex === items.length - 1;
-        if (item.type === "thinking") {
-          rendered.push(storyFit(
-            `${childIndent}│  ${this.theme.italic(this.theme.fg("thinkingText", item.text))}`,
-            safeWidth,
-          ));
-        } else {
-          const branch = lastItem ? "╰─ " : "├─ ";
-          const groupWidth = Math.max(1, safeWidth - visibleWidth(childIndent) - visibleWidth(branch));
-          const groupLines = renderToolGroup(item.group, groupWidth, groupTheme).slice(1);
-
-          for (let lineIndex = 0; lineIndex < groupLines.length; lineIndex++) {
-            const line = groupLines[lineIndex] ?? "";
-            if (lineIndex === 0) {
-              const heading = line.startsWith(" ") ? line.slice(1) : line;
-              rendered.push(storyFit(`${childIndent}${branch}${heading}`, safeWidth));
-            } else if (line.length === 0) {
-              rendered.push(storyFit(`${childIndent}${lastItem ? "   " : "│"}`, safeWidth));
-            } else {
-              const continuation = lastItem ? "   " : "│  ";
-              const groupContent = stripTerminalSequences(line).startsWith("  ")
-                ? sliceByColumn(line, 2, Math.max(0, visibleWidth(line) - 2), true)
-                : line;
-              rendered.push(storyFit(`${childIndent}${continuation}${groupContent}`, safeWidth));
-            }
-          }
-        }
-
-        if (!lastItem) rendered.push(storyFit(`${childIndent}│`, safeWidth));
-      }
+    for (const preview of STORYBOARD_SCENES) {
+      rendered.push(...renderStoryboardScene(
+        this.previewScene(preview, safeWidth),
+        [""],
+        safeWidth,
+        toolGroupTheme(this.theme),
+        (group, groupWidth, theme) => renderToolGroup(group, groupWidth, theme),
+      ));
     }
 
+    rendered.push("");
+    rendered.push(storyFit(
+      `${indent}${this.theme.fg("syntaxKeyword", "compact")} ${this.theme.fg("muted", "Collapsed running edit → pending path row; expand for native preview")}`,
+      safeWidth,
+    ));
+
     const nativeCases = [
-      {
-        title: "Running edit preview",
-        detail: "native Pi edit preview/diff remains visible until the edit settles",
-      },
-      {
-        title: "Expanded tool output",
-        detail: "the complete scene returns to native Pi rendering",
-      },
-      {
-        title: "Final answer",
-        detail: "assistant text with no thinking and no tools stays native, not a scene",
-      },
+      "Expanded tool output → complete native Pi rows",
+      "Final answer → complete native assistant Markdown",
+      "Unknown text phase → complete native fallback",
     ];
     for (const nativeCase of nativeCases) {
       rendered.push("");
       rendered.push(storyFit(
-        `${headerIndent}${this.theme.fg("dim", "native boundary")}  ${this.theme.italic(this.theme.fg("thinkingText", nativeCase.title))}`,
-        safeWidth,
-      ));
-      rendered.push(storyFit(
-        `${childIndent}╰─ ${this.theme.fg("muted", nativeCase.detail)}`,
+        `${indent}${this.theme.fg("dim", "native")} ${this.theme.fg("muted", nativeCase)}`,
         safeWidth,
       ));
     }
@@ -672,9 +739,9 @@ function createDefinitions(): PreviewDefinition[] {
       create: ({ theme }) => new ToolGroupsSample(theme),
     },
     {
-      name: "Storyboard / Spine",
-      description: "Direction A: scene ownership, boundaries, and native fallbacks",
-      create: ({ theme, tui }) => new StorySpineSample(theme, tui),
+      name: "Turn storyboard",
+      description: "Thinking-led turn blocks with explicit branch endings",
+      create: ({ theme, tui }) => new TurnStoryboardSample(theme, tui),
     },
     {
       name: "Colors",

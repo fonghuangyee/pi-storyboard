@@ -44,11 +44,16 @@ type ReplayContentBlock = {
 type ReplayContent =
   | { readonly type: "thinking"; readonly thinking: string }
   | { readonly type: "tool"; readonly call: ReplayToolCall }
-  | { readonly type: "text"; readonly text: string };
+  | {
+      readonly type: "text";
+      readonly text: string;
+      readonly phase?: "commentary" | "final_answer";
+    };
 
 type ReplayAssistant = {
   readonly thinking: readonly string[];
   readonly text?: string;
+  readonly textPhase?: "commentary" | "final_answer";
   readonly calls: readonly ReplayToolCall[];
   readonly stopReason: string;
   /** Optional source-order fixture for the interleaving seam. */
@@ -139,12 +144,42 @@ const TRANSCRIPT_TAIL: readonly ReplayAssistant[] = Object.freeze([
     stopReason: "toolUse",
   },
   {
+    // A validated OpenAI Responses commentary block is user-visible native
+    // Markdown, not a short scene title. It remains complete on the turn rail
+    // before the tool run.
+    thinking: Object.freeze(["**Locating exact types source files**"]),
+    calls: Object.freeze([
+      {
+        id: "replay-commentary-bash",
+        name: "bash",
+        args: Object.freeze({ command: "rg -n 'TextContent|final_answer' node_modules" }),
+        result: EMPTY_RESULT,
+      },
+    ]),
+    content: Object.freeze([
+      { type: "thinking" as const, thinking: "**Locating exact types source files**" },
+      {
+        type: "text" as const,
+        text: "I’ll separate what Pi’s documented schema proves from what it does not prove, and inspect the canonical type/source definitions before making the claim.",
+        phase: "commentary" as const,
+      },
+      { type: "tool" as const, call: {
+        id: "replay-commentary-bash",
+        name: "bash",
+        args: Object.freeze({ command: "rg -n 'TextContent|final_answer' node_modules" }),
+        result: EMPTY_RESULT,
+      } },
+    ]),
+    stopReason: "toolUse",
+  },
+  {
     // Transcript JSONL entry 504. This is a mixed thinking + final-text
-    // assistant message, not a thinking-only note scene.
+    // assistant message, not a thinking-only storyboard turn.
     thinking: Object.freeze([
       "**Clarifying separator usage and error formatting**\n\n**Planning final package check**",
     ]),
     text: "Fixed.\n\nFailed rows now always use an ASCII separator:\n\n```text\n● npm run check - Command exited with code 1\n```\n\nThe renderer also reserves space for ` - ` so width truncation will not remove the separator.\n\nValidation: **43 tests passed.**",
+    textPhase: "final_answer",
     calls: Object.freeze([]),
     stopReason: "stop",
   },
@@ -178,6 +213,11 @@ const TRANSCRIPT_TAIL: readonly ReplayAssistant[] = Object.freeze([
         args: Object.freeze({ path: "src/renderer.ts" }),
         result: EMPTY_RESULT,
       } },
+      {
+        type: "text" as const,
+        text: "The existing row confirms **native commentary** can remain between action runs.",
+        phase: "commentary" as const,
+      },
       { type: "thinking" as const, thinking: "**Applying the settled replacement**" },
       { type: "tool" as const, call: {
         id: "replay-interleaved-edit",
@@ -197,13 +237,29 @@ function replayAssistantMessage(scene: ReplayAssistant): ReplayAssistantMessage 
   const sourceContent: readonly ReplayContent[] = scene.content ?? [
     ...scene.thinking.map((thinking) => ({ type: "thinking" as const, thinking })),
     ...scene.calls.map((call) => ({ type: "tool" as const, call })),
-    ...(scene.text === undefined ? [] : [{ type: "text" as const, text: scene.text }]),
+    ...(scene.text === undefined
+      ? []
+      : [{ type: "text" as const, text: scene.text, phase: scene.textPhase }]),
   ];
   return {
     role: "assistant",
     content: sourceContent.map((content) => {
       if (content.type === "thinking") return { type: "thinking", thinking: content.thinking };
-      if (content.type === "text") return { type: "text", text: content.text };
+      if (content.type === "text") {
+        return {
+          type: "text",
+          text: content.text,
+          ...(content.phase === undefined
+            ? {}
+            : {
+                textSignature: JSON.stringify({
+                  v: 1,
+                  id: `replay-${content.phase}`,
+                  phase: content.phase,
+                }),
+              }),
+        };
+      }
       return {
         type: "toolCall",
         id: content.call.id,
@@ -265,7 +321,7 @@ function fit(line: string, width: number): string {
 /**
  * Replay the selected transcript tail with Pi's actual assistant/tool
  * components. The contained Container is intentionally allowed to pass
- * through the installed Story Spine patch, so this is a live-render seam test
+ * through the installed turn-storyboard patch, so this is a live-render seam test
  * rather than a second approximation of the renderer.
  */
 export class TranscriptReplay implements Component {

@@ -1,7 +1,7 @@
 {
   "name": "pi-tool-groups",
   "version": "0.1.0",
-  "description": "Group collapsed non-edit Pi tool rows while preserving native detailed renderers.",
+  "description": "Group collapsed Pi tool rows into source-ordered turn storyboards while preserving native fallbacks.",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,

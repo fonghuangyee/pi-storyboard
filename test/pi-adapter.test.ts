@@ -39,7 +39,13 @@ function assistant(lines: string[]): AssistantMessageComponent & Record<string, 
 function storyboardAssistant(
   lines: string[],
   toolCallIds: readonly string[],
-  options: { thinking?: boolean; text?: boolean; streaming?: boolean; stopReason?: string } = {},
+  options: {
+    thinking?: boolean;
+    text?: boolean;
+    textPhase?: "commentary" | "final_answer";
+    streaming?: boolean;
+    stopReason?: string;
+  } = {},
 ): AssistantMessageComponent & Record<string, unknown> {
   const component = assistant(lines);
   const fields = component as unknown as Record<string, unknown>;
@@ -47,7 +53,13 @@ function storyboardAssistant(
     role: "assistant",
     content: [
       ...(options.thinking === false ? [] : [{ type: "thinking", thinking: "work" }]),
-      ...(options.text ? [{ type: "text", text: "answer" }] : []),
+      ...(options.text ? [{
+        type: "text",
+        text: "answer",
+        ...(options.textPhase === undefined
+          ? {}
+          : { textSignature: JSON.stringify({ v: 1, id: "msg-test", phase: options.textPhase }) }),
+      }] : []),
       ...toolCallIds.map((id) => ({ type: "toolCall", id, name: "read", arguments: {} })),
     ],
     stopReason: options.stopReason ?? "stop",
@@ -87,7 +99,7 @@ function interleavedAssistant(): {
   fields.contentContainer = {
     children: contentChildren,
     mouseLayout: {
-      width: 77,
+      width: 78,
       children: contentChildren.map((component) => ({ component, height: 1 })),
     },
   };
@@ -114,19 +126,23 @@ describe("Container adapter", () => {
   beforeEach(() => {
     // Each test owns its handle, but this also makes a failed test unable to
     // poison the prototype for the following case.
-    original = Container.prototype.render;
-    const marker = (Container.prototype as unknown as Record<PropertyKey, unknown>)[PATCH_MARKER];
+    const prototype = Container.prototype as unknown as Record<PropertyKey, unknown>;
+    const marker = prototype[PATCH_MARKER];
     if (marker && typeof marker === "object") {
+      const savedOriginal = (marker as Record<string, unknown>).original;
+      if (typeof savedOriginal === "function") {
+        Container.prototype.render = savedOriginal as Container["render"];
+      }
       try {
-        delete (Container.prototype as unknown as Record<PropertyKey, unknown>)[PATCH_MARKER];
+        delete prototype[PATCH_MARKER];
       } catch {
         // The normal adapter marker is configurable.
       }
     }
-    Container.prototype.render = original;
+    original = Container.prototype.render;
   });
 
-  it("renders validated assistant ownership as a Story Spine scene", () => {
+  it("renders one assistant response and its tools as a closed story block", () => {
     const owner = storyboardAssistant([`assistant work${" ".repeat(60)}`], ["read-1", "bash-1"]);
     const read = tool("read", { path: "a.ts" }, result());
     const bash = tool("bash", { command: "npm test" }, result());
@@ -141,15 +157,146 @@ describe("Container adapter", () => {
     const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup });
 
     const lines = container(owner, read, bash, following).render(80);
-    expect(lines.join("\\n")).toContain("◉ assistant work");
-    expect(lines.find((line) => line.includes("2 actions"))).toBeDefined();
+    expect(lines.join("\\n")).toContain("◉assistant work");
     expect(lines.join("\\n")).toContain("├─ read heading");
     expect(lines.join("\\n")).toContain("╰─ command heading");
+    expect(lines.join("\\n")).toContain("2 actions");
     expect(renderGroup.mock.calls.map(([group]) => group.kind)).toEqual(["read", "command"]);
     expect(owner.render).toHaveBeenCalledOnce();
     expect(read.render).not.toHaveBeenCalled();
     expect(bash.render).not.toHaveBeenCalled();
     expect(following.render).toHaveBeenCalledOnce();
+    handle?.uninstall();
+  });
+
+  it("closes each assistant/tool batch before the next thinking block", () => {
+    const firstOwner = storyboardAssistant(["first thinking"], ["read-1"]);
+    const firstTool = tool("read", { path: "first.ts" }, result());
+    assignToolCallId(firstTool, "read-1");
+    const secondOwner = storyboardAssistant(["next thinking"], ["bash-1"]);
+    const secondTool = tool("bash", { command: "npm test" }, result());
+    assignToolCallId(secondTool, "bash-1");
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      renderGroup: (group: { kind: string }) => ["", ` ${group.kind} heading`],
+    });
+
+    const output = container(firstOwner, firstTool, secondOwner, secondTool).render(80).join("\n");
+    expect(output.match(/◉/gu)).toHaveLength(2);
+    expect(output.match(/╰─/gu)).toHaveLength(2);
+    expect(output.indexOf("first thinking")).toBeLessThan(output.indexOf("╰─ read heading"));
+    expect(output.indexOf("╰─ read heading")).toBeLessThan(output.indexOf("next thinking"));
+    expect(output.indexOf("next thinking")).toBeLessThan(output.indexOf("╰─ command heading"));
+    handle?.uninstall();
+  });
+
+  it("uses the same placeholder for an explicit empty thinking block", () => {
+    const owner = assistant([]);
+    const fields = owner as unknown as Record<string, unknown>;
+    fields.lastMessage = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "" },
+        { type: "toolCall", id: "read-empty-thinking", name: "read", arguments: {} },
+      ],
+      stopReason: "toolUse",
+    };
+    fields.isStreaming = false;
+    const read = tool("read", { path: "empty-thinking.ts" }, result());
+    assignToolCallId(read, "read-empty-thinking");
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      renderGroup: () => ["", " Read 1 file"],
+    });
+
+    const output = container(owner, read).render(80).join("\\n");
+    expect(output).toContain("◉ Thinking...");
+    expect(output).toContain("╰─ Read 1 file");
+    handle?.uninstall();
+  });
+
+  it("keeps an edit compact through partial args, preview invalidation, and settlement", () => {
+    const owner = storyboardAssistant(["", " thinking while editing"], ["edit-running"]);
+    const thinking = {
+      render: vi.fn(() => [" thinking while editing"]),
+      handleMouse: vi.fn(() => ({ handled: true })),
+    };
+    const spacer = { render: vi.fn(() => [""]) };
+    const ownerFields = owner as unknown as Record<string, unknown>;
+    ownerFields.contentContainer = {
+      children: [spacer, thinking],
+      mouseLayout: {
+        width: 78,
+        children: [
+          { component: spacer, height: 1 },
+          { component: thinking, height: 1 },
+        ],
+      },
+    };
+    const runningEdit = tool("edit", {});
+    assignToolCallId(runningEdit, "edit-running");
+    const editFields = runningEdit as unknown as Record<string, unknown>;
+    const editMouse = vi.fn(() => ({ handled: true }));
+    editFields.handleMouse = editMouse;
+    runningEdit.render = vi.fn(() => ["FULL-WIDTH GREEN NATIVE EDIT PREVIEW"]);
+    const snapshots: ToolRowSnapshot[] = [];
+    const renderGroup = vi.fn((group: { rows: readonly ToolRowSnapshot[] }) => {
+      const row = group.rows[0]!;
+      snapshots.push(row);
+      const args = row.args as { path?: string; replacementCount?: number } | undefined;
+      const label = args?.path ?? "edit";
+      const count = args?.replacementCount;
+      const detail = count === undefined ? "" : ` (${count} replacement)`;
+      return ["", " Edit 1 time", `  ● ${label}${detail}`];
+    });
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup });
+    const value = container(owner, runningEdit);
+
+    const partialOutput = value.render(80).join("\\n");
+    expect(partialOutput).toContain("◉ thinking while editing");
+    expect(partialOutput).toContain("╰─ Edit 1 time");
+    expect(partialOutput).toContain("● edit");
+
+    editFields.args = {
+      path: "src/storyboard-renderer.ts",
+      edits: [{ oldText: "old", newText: "new" }],
+    };
+    const previewOutput = value.render(80).join("\\n");
+    expect(previewOutput).toContain("● src/storyboard-renderer.ts");
+    expect(previewOutput).not.toContain("FULL-WIDTH GREEN");
+
+    editFields.result = result();
+    editFields.isPartial = false;
+    const settledLines = value.render(80);
+    const settledOutput = settledLines.join("\\n");
+    expect(settledOutput).toContain("● src/storyboard-renderer.ts (1 replacement)");
+    expect(settledOutput).not.toContain("FULL-WIDTH GREEN");
+    expect(snapshots.map((snapshot) => snapshot.args)).toEqual([
+      undefined,
+      { path: "src/storyboard-renderer.ts" },
+      { path: "src/storyboard-renderer.ts", replacementCount: 1 },
+    ]);
+    expect(runningEdit.render).not.toHaveBeenCalled();
+
+    const editLine = settledLines.findIndex((line) => line.includes("src/storyboard-renderer.ts"));
+    value.handleMouse?.({
+      type: "click",
+      button: "left",
+      x: 8,
+      y: editLine,
+      screenX: 8,
+      screenY: editLine,
+      width: 80,
+      height: settledLines.length,
+      shift: false,
+      alt: false,
+      ctrl: false,
+    });
+    expect(editMouse).not.toHaveBeenCalled();
+
+    editFields.expanded = true;
+    expect(value.render(80).join("\\n")).toContain("FULL-WIDTH GREEN NATIVE EDIT PREVIEW");
+    expect(runningEdit.render).toHaveBeenCalledOnce();
     handle?.uninstall();
   });
 
@@ -194,15 +341,15 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("renders a thinking-only assistant as a note scene", () => {
+  it("renders a thinking-only assistant as a quiet content node", () => {
     const note = storyboardAssistant(["reviewing logic"], []);
     const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: () => ["bad"] });
 
-    expect(container(note).render(80).join("\\n")).toContain("○ reviewing logic");
+    expect(container(note).render(80).join("\\n")).toContain("○reviewing logic");
     handle?.uninstall();
   });
 
-  it("uses a deterministic Tool step title for tool-only scenes", () => {
+  it("renders tool-only responses under a thinking placeholder", () => {
     const owner = storyboardAssistant([], ["write-1"], { thinking: false });
     const write = tool("write", { path: "a.txt", content: "hidden" }, result());
     assignToolCallId(write, "write-1");
@@ -212,14 +359,15 @@ describe("Container adapter", () => {
     });
 
     const lines = container(owner, write).render(80).join("\\n");
-    expect(lines).toContain("◉ Tool step");
+    expect(lines).toContain("◉ Thinking...");
     expect(lines).toContain("╰─ Write 1 file");
+    expect(lines).not.toContain("Tool step");
     expect(owner.render).toHaveBeenCalledOnce();
     expect(write.render).not.toHaveBeenCalled();
     handle?.uninstall();
   });
 
-  it("translates scene header mouse coordinates back to native assistant content", () => {
+  it("translates storyboard-gutter mouse coordinates back to native assistant content", () => {
     const owner = storyboardAssistant(["assistant work"], ["read-1"]);
     const read = tool("read", { path: "a.ts" }, result());
     assignToolCallId(read, "read-1");
@@ -244,7 +392,7 @@ describe("Container adapter", () => {
     });
     expect(handleMouse).toHaveBeenCalledOnce();
     const mappedEvent = handleMouse.mock.calls[0] as unknown as [Record<string, unknown>];
-    expect(mappedEvent[0]).toMatchObject({ x: 3, width: 77, height: 1 });
+    expect(mappedEvent[0]).toMatchObject({ x: 4, width: 78, height: 1 });
     handle?.uninstall();
   });
 
@@ -259,14 +407,108 @@ describe("Container adapter", () => {
 
     const lines = container(owner, bash, read).render(80);
     expect(lines[0]).toBe("");
-    expect(lines.join("\n")).toContain("◉ assistant work");
-    expect(lines.join("\n")).toContain("read heading");
-    expect(lines.join("\n")).toContain("command heading");
+    expect(lines.join("\n")).toContain("◉assistant work");
+    expect(lines.join("\n")).toContain("├─ read heading");
+    expect(lines.join("\n")).toContain("╰─ command heading");
     expect(renderGroup.mock.calls.map(([group]) => group.kind)).toEqual(["read", "command"]);
     expect(owner.render).toHaveBeenCalledOnce();
     expect(bash.render).not.toHaveBeenCalled();
     expect(read.render).not.toHaveBeenCalled();
     handle?.uninstall();
+  });
+
+  it("marks separated thinking paragraphs before a native final answer", () => {
+    const owner = assistant([
+      "",
+      " first final-turn thought",
+      "",
+      " second final-turn thought",
+      "",
+      " native final answer",
+    ]);
+    const fields = owner as unknown as Record<string, unknown>;
+    fields.lastMessage = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "first final-turn thought" },
+        { type: "thinking", thinking: "second final-turn thought" },
+        {
+          type: "text",
+          text: "native final answer",
+          textSignature: JSON.stringify({ v: 1, id: "final-test", phase: "final_answer" }),
+        },
+      ],
+      stopReason: "stop",
+    };
+    fields.isStreaming = false;
+    const spacer = { render: vi.fn(() => [""]) };
+    const thinking = {
+      render: vi.fn(() => [" first final-turn thought", "", " second final-turn thought"]),
+      handleMouse: vi.fn(() => ({ handled: true })),
+    };
+    const finalText = { render: vi.fn(() => [" native final answer"]) };
+    fields.contentContainer = {
+      children: [spacer, thinking, spacer, finalText],
+      mouseLayout: {
+        width: 80,
+        children: [
+          { component: spacer, height: 1 },
+          { component: thinking, height: 3 },
+          { component: spacer, height: 1 },
+          { component: finalText, height: 1 },
+        ],
+      },
+    };
+
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: () => ["bad"] });
+    const lines = container(owner).render(80);
+    const output = lines.join("\\n");
+    expect(output).toContain("○ first final-turn thought");
+    expect(output).toContain("○ second final-turn thought");
+    expect(output).toContain(" native final answer");
+    expect(output).not.toContain("○ native final answer");
+    expect(owner.render).toHaveBeenCalledOnce();
+    handle?.uninstall();
+  });
+
+  it("uses validated text phase and fails open for final or unknown text", () => {
+    const commentaryOwner = storyboardAssistant(["commentary update"], ["read-commentary"], {
+      thinking: false,
+      text: true,
+      textPhase: "commentary",
+      stopReason: "toolUse",
+    });
+    const commentaryTool = tool("read", { path: "commentary.ts" }, result());
+    assignToolCallId(commentaryTool, "read-commentary");
+    const commentaryRender = vi.fn(() => ["", " Read 1 file"]);
+    const commentaryHandle = installToolGroupingPatch({
+      getTheme: () => theme,
+      renderGroup: commentaryRender,
+    });
+    const commentaryLines = container(commentaryOwner, commentaryTool).render(80).join("\n");
+    expect(commentaryLines).toContain("○commentary update");
+    expect(commentaryLines).toContain("╰─ Read 1 file");
+    expect(commentaryTool.render).not.toHaveBeenCalled();
+    commentaryHandle?.uninstall();
+
+    for (const textPhase of ["final_answer", undefined] as const) {
+      const owner = storyboardAssistant(["native assistant text"], ["read-native"], {
+        thinking: false,
+        text: true,
+        ...(textPhase === undefined ? {} : { textPhase }),
+      });
+      const nativeTool = tool("read", { path: "native.ts" }, result());
+      assignToolCallId(nativeTool, "read-native");
+      const renderGroup = vi.fn(() => ["bad"]);
+      const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup });
+
+      expect(container(owner, nativeTool).render(80)).toEqual([
+        "native assistant text",
+        "native read",
+      ]);
+      expect(renderGroup).not.toHaveBeenCalled();
+      handle?.uninstall();
+    }
   });
 
   it("groups eligible rows without rendering grouped native rows", () => {
@@ -306,7 +548,7 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("groups every non-edit tool kind while keeping edit native", () => {
+  it("groups every tool kind while keeping an incompatible settled edit native", () => {
     const write = tool("write", { path: "a.txt", content: "hidden" }, result());
     const bash = tool("bash", { command: "npm test" }, result());
     const powershell = tool("powershell", { command: "Get-ChildItem" }, result());
@@ -383,7 +625,7 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("groups only completed successful edits with minimal snapshots", () => {
+  it("groups running and settled edits with minimal snapshots", () => {
     const first = tool(
       "edit",
       { path: "a.ts", edits: [{ oldText: "old", newText: "new" }, { oldText: "x", newText: "y" }] },
@@ -411,19 +653,20 @@ describe("Container adapter", () => {
     });
 
     expect(container(first, second, running, failed, malformed).render(80)).toEqual([
-      "edit 2",
-      "native edit",
-      "edit 1",
+      "edit 4",
       "native edit",
     ]);
     expect(snapshots[0]?.kind).toBe("edit");
     expect(snapshots[0]?.rows[0]?.args).toEqual({ path: "a.ts", replacementCount: 2 });
     expect(snapshots[0]?.rows[0]?.result).toEqual({ content: [], isError: false });
-    expect(snapshots[1]?.rows[0]?.args).toEqual({ path: "failed.ts", replacementCount: 1 });
-    expect(snapshots[1]?.rows[0]?.errorSummary).toBe("output");
+    expect(snapshots[0]?.rows[2]?.args).toEqual({ path: "running.ts" });
+    expect(snapshots[0]?.rows[2]?.result).toBeUndefined();
+    expect(snapshots[0]?.rows[2]?.isPartial).toBe(true);
+    expect(snapshots[0]?.rows[3]?.args).toEqual({ path: "failed.ts", replacementCount: 1 });
+    expect(snapshots[0]?.rows[3]?.errorSummary).toBe("output");
     expect(first.render).not.toHaveBeenCalled();
     expect(second.render).not.toHaveBeenCalled();
-    expect(running.render).toHaveBeenCalledOnce();
+    expect(running.render).not.toHaveBeenCalled();
     expect(failed.render).not.toHaveBeenCalled();
     expect(malformed.render).toHaveBeenCalledOnce();
     handle?.uninstall();

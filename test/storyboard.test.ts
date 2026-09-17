@@ -23,6 +23,8 @@ function assistant(
     isStreaming: overrides.isStreaming ?? false,
     hasThinking: overrides.hasThinking ?? true,
     hasText: overrides.hasText ?? false,
+    hasFinalAnswer: overrides.hasFinalAnswer ?? false,
+    hasUnknownText: overrides.hasUnknownText ?? false,
     ...(overrides.assistantContent === undefined ? {} : { assistantContent: overrides.assistantContent }),
     ...(overrides.sourceOrder === undefined ? {} : { sourceOrder: overrides.sourceOrder }),
   };
@@ -141,13 +143,14 @@ describe("buildStoryboard", () => {
     ]);
   });
 
-  it("creates a muted note scene but leaves a final answer native", () => {
+  it("creates a quiet thinking note but leaves a final answer native", () => {
     const note = assistant([], { assistantRow: "note", hasThinking: true, hasText: false });
     const finalAnswer = assistant([], {
       assistantRow: "final",
       renderedAssistantLines: ["final answer"],
       hasThinking: false,
       hasText: true,
+      hasFinalAnswer: true,
     });
     const result = buildStoryboard([assistantChild(note), assistantChild(finalAnswer)]);
 
@@ -158,7 +161,7 @@ describe("buildStoryboard", () => {
     });
   });
 
-  it("supports a tool-only assistant scene when ownership is explicit", () => {
+  it("supports a direct-root tool-only turn when ownership is explicit", () => {
     const owner = assistant(["write-1"], {
       assistantRow: "tool-only",
       renderedAssistantLines: [],
@@ -243,7 +246,7 @@ describe("buildStoryboard", () => {
     ]);
   });
 
-  it("preserves scene state precedence", () => {
+  it("preserves internal response-state precedence", () => {
     const completeOwner = assistant(["ok"]);
     const failedTool = tool("failed", "command", { result: failure });
 
@@ -254,6 +257,38 @@ describe("buildStoryboard", () => {
       [tool("pending", "read", { isPartial: true, result: failure })],
     )).toBe("running");
     expect(deriveSceneState(assistant([], { hasThinking: true, hasText: false }), [])).toBe("note");
+  });
+
+  it("keeps final or unclassified text with tools completely native", () => {
+    for (const unsafe of [
+      assistant(["read-1"], { hasText: true, hasFinalAnswer: true }),
+      assistant(["read-1"], { hasText: true, hasUnknownText: true }),
+    ]) {
+      const children = [assistantChild(unsafe), toolChild(tool("read-1", "read"))];
+      expect(buildStoryboard(children).segments).toEqual([{ type: "native", children }]);
+    }
+  });
+
+  it("allows validated commentary to remain native content inside a turn block", () => {
+    const commentary = {
+      type: "commentary" as const,
+      row: "commentary",
+      renderedLines: [" user-visible update"],
+    };
+    const owner = assistant(["read-1"], {
+      hasText: true,
+      assistantContent: [commentary],
+      sourceOrder: [
+        { type: "assistant", contentIndex: 0 },
+        { type: "tool", toolCallId: "read-1" },
+      ],
+    });
+    const scene = sceneFrom(buildStoryboard([
+      assistantChild(owner),
+      toolChild(tool("read-1", "read")),
+    ]));
+
+    expect(scene.orderedChildren?.[0]).toEqual({ type: "assistant", content: commentary });
   });
 
   it("rejects duplicate ownership IDs instead of guessing", () => {

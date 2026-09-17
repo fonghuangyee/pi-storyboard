@@ -22,7 +22,7 @@ function fakeTui(): TUI {
 }
 
 describe("transcript replay", () => {
-  it("uses native Pi components and exposes the missing-marker cases", () => {
+  it("uses native Pi components inside closed turn story blocks", () => {
     initTheme("dark", false);
     const tui = fakeTui();
     const handle = installToolGroupingPatch({
@@ -49,12 +49,19 @@ describe("transcript replay", () => {
     expect(all).toContain("Edit 1 time");
     expect(all).toContain("Running test suite");
     expect(all).toContain("Checking ripgrep em dash handling");
+    expect(all).toContain("Locating exact types source files");
+    expect(all).toContain("I’ll separate what Pi’s documented schema proves");
     expect(all).toContain("Clarifying separator usage and error formatting");
     expect(all).toContain("Validation:");
     expect(all).toContain("Inspecting the existing row shape");
+    expect(all).toContain("native commentary");
     expect(all).toContain("Applying the settled replacement");
+    expect(all).not.toContain("Tool step");
+    expect(all).toContain("actions");
+    expect(all).toContain("├─");
+    expect(all).toContain("╰─");
     // The mixed thinking + final-text message is deliberately native, so its
-    // thinking paragraphs do not receive a Story Spine scene marker.
+    // thinking paragraphs do not receive turn-storyboard decoration.
     expect(all).toContain("Fixed.");
     expect(all.split("\n").every((line) => visibleWidth(line) <= 120)).toBe(true);
 

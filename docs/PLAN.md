@@ -1,30 +1,37 @@
 # Plan: `pi-tool-groups`
 
-> Status: the semantic tool-grouping baseline is complete. The approved next presentation phase is **Direction A — Story Spine** in [`STORYBOARD_PLAN.md`](./STORYBOARD_PLAN.md). All safety, privacy, native fallback, and presentation-only constraints in this document remain authoritative.
+> Status: the semantic tool-grouping baseline and the **thinking-led turn storyboard** are implemented. [`STORYBOARD_PLAN.md`](./STORYBOARD_PLAN.md) defines the presentation and documented Pi boundary. All safety, privacy, native fallback, and presentation-only constraints in this document remain authoritative.
 
-### Approved storyboard evolution
+### Approved turn-storyboard evolution
 
-Story Spine may treat a validated `AssistantMessageComponent` as a scene header/parent row and nest only its exactly matched tool-call rows beneath it. This is a narrow TUI composition change, not a harness feature.
+Pi documents a turn as one assistant response plus its tool calls. Pi does not persist a native visual “master block,” but a validated `AssistantMessage` and its exactly matched tool rows can be projected as one visual turn block:
+
+- `◉` marks native thinking at the start of a turn with tools;
+- `○` marks a thinking-only note;
+- `├─` marks an action child with more source-ordered content following;
+- `╰─` closes the final child in the turn;
+- `●` retains the existing per-tool state.
+
+The hierarchy means only “part of this turn,” never that thinking or commentary caused a call. Successive assistant responses remain separate closed blocks in one visual storyboard.
 
 It must:
 
 - operate only inside the existing guarded `Container.prototype.render` wrapper;
-- derive scenes from the TUI components already being rendered;
-- join assistant and tool rows only through validated source-order `toolCallId` values;
-- call native assistant/tool renderers at most once per render pass and never mutate their state;
+- derive turn-shaped blocks from TUI components already being rendered;
+- join tool calls and rows only through validated source-order `toolCallId` values;
+- preserve Pi's native assistant Markdown/thinking components and never mutate their state;
+- validate `TextSignatureV1.phase`; render `commentary` as complete native content in the block, keep final/unknown text native, and allow only thinking-start markers in mixed no-tool responses;
 - use no agent, turn, message, tool-execution, tool-call, tool-result, context, or provider event hooks;
 - use no `ctx.sessionManager`, custom messages, custom entries, model-facing tools, or parallel extension state;
-- make a complete scene native when tools are expanded, an edit is running, ownership is incomplete, or any private shape is incompatible;
-- preserve the existing minimal tool snapshots and never copy raw thinking, signatures, tool output, edit text, diffs, patches, or complete errors;
-- preserve Pi's native output padding, spacer rows, width budgeting, interaction coordinates, and theme roles; add only the Story Spine marker/rail/indent;
-- color the scene marker by aggregate state with `running > failed > complete-with-tools > settled-note`, never by unreliable last-completed-tool order;
+- keep expanded tools, incomplete matching, unsafe text phases, and incompatible private shapes native; collapsed running edits use compact pending rows and never embed Pi's native tool renderer inside a valid storyboard;
+- preserve minimal tool snapshots and never copy raw thinking, signatures, successful tool output, edit text, diffs, patches, or complete errors;
+- budget assistant and branch gutters before invoking native child/group renderers;
+- retain validated response/tool state for action markers and rows, while keeping ordinary paragraph thinking markers and rails muted, coloring the top-level action marker by turn state, and coloring thinking before a validated final answer by that answer's state;
 - retain the same no-I/O, no-network, no-subprocess, no-timer, and no-background-work guarantees.
-
-Where older wording below says that every visible assistant component is a hard group boundary, this approved scene-header exception supersedes it only when all Story Spine validation rules pass. Otherwise the older native-boundary behavior remains in force.
 
 ## 1. Objective
 
-Build a small, presentation-only Pi extension that groups adjacent eligible tool rows and presents validated assistant/tool ownership as a Story Spine, while preserving Pi's native tools, execution, session data, and all non-grouped rendering.
+Build a small, presentation-only Pi extension that groups adjacent eligible tool rows and renders validated assistant responses/tool batches as source-ordered turn storyboards, while preserving Pi's native tools, execution, session data, and all non-grouped rendering.
 
 > Render every eligible tool row, including failed calls, as a compact collapsed summary; adjacent rows of the same semantic group kind merge into one group. Failed rows use the same `●` marker in the theme's error color and show only a minimal sanitized error message separated by ` - `. This includes settled `edit` calls and all compatible built-in, custom, MCP, and subagent tools. Never replace or re-register a tool. When compatibility checks fail, render Pi's native transcript unchanged.
 
@@ -47,25 +54,25 @@ Edit 2 times
   ● src/service/UserRepository.java (2 replacements)
 ```
 
-Settled edits, whether successful or failed, use compact summaries while collapsed. Running and expanded edits remain Pi's original component and renderer; global expansion restores Pi's complete native diffs and diagnostics. A failed edit with malformed arguments still groups using the safe label `edit` plus its minimal error message.
+Running and settled edits, whether successful or failed, use compact summaries while collapsed. A running edit retains at most a validated path and running status; expanded edits restore Pi's complete native diffs and diagnostics. A failed edit with malformed arguments still groups using the safe label `edit` plus its minimal error message.
 
 ## 2. Confirmed platform constraints
 
 As of the dependency review for this plan:
 
 - Pi exposes custom tool renderers, but no public API for grouping existing transcript rows.
-- `AssistantMessageComponent` and `ToolExecutionComponent` are publicly exported by `@earendil-works/pi-coding-agent`, but the state needed for Story Spine (`lastMessage`, streaming state, `toolCallId`, `toolName`, `args`, `result`, `isPartial`, and `expanded`) is private implementation detail.
+- `AssistantMessageComponent` and `ToolExecutionComponent` are publicly exported by `@earendil-works/pi-coding-agent`, but the state needed for the turn storyboard (`lastMessage`, streaming state, text signatures, `toolCallId`, `toolName`, `args`, `result`, `isPartial`, and `expanded`) is private implementation detail.
 - Pi's transcript is a `Container` whose direct children include native assistant and tool-execution components.
 - Pi propagates the global tool-output expansion state to each tool row through `setExpanded()`.
 - Extensions are loaded directly from TypeScript through Jiti; a production build step is not required.
 
-Therefore the grouping baseline and Story Spine require one guarded private-API seam: wrapping `Container.prototype.render` and structurally reading native assistant/tool-row TUI state. All private knowledge must be isolated in `src/pi-adapter.ts`.
+Therefore the grouping baseline and turn storyboard require one guarded private-API seam: wrapping `Container.prototype.render` and structurally reading native assistant/tool-row TUI state. All private knowledge must be isolated in `src/pi-adapter.ts`.
 
 This is intentionally an interim design. Replace the patch if Pi adds a public transcript/group-rendering hook.
 
 ### Important transcript distinction
 
-Pi renders assistant prose/thinking in an `AssistantMessageComponent` and tool rows as separate transcript children, so the native visual tree can flatten a text/tool interleave. The assistant message still preserves its ordered `content` array. Story Spine uses that array to compose native assistant children and tool groups in source order, while treating the assistant message—not an individual thinking paragraph—as the ownership unit. `toolCallId` joins each tool row/result without implying causal ownership.
+Pi renders assistant prose/thinking in an `AssistantMessageComponent` and tool rows as separate transcript children, so the native visual tree can flatten a text/tool interleave. The assistant message still preserves its ordered `content` array. The storyboard uses that array for sequence and the validated assistant/tool batch as its turn-shaped boundary. Native thinking supplies the visible block header; this is a presentation hierarchy, not a persisted parent object. `toolCallId` joins each tool row/result without implying that a thinking or commentary item caused the call.
 
 ## 3. Scope
 
@@ -79,7 +86,7 @@ Singleton eligible rows are groups of one. This is intentional: every eligible c
 | `grep`, `find` | Search | 1 |
 | `ls` | List | 1 |
 | `write` | Write | 1 |
-| settled valid `edit` (successful or failed) | Edit | 1 |
+| collapsed `edit` (running, successful, or failed) | Edit | 1 |
 | `bash`, `powershell` | Command | 1 |
 | custom, unknown, MCP, and subagent tools | Tool | 1 |
 
@@ -87,10 +94,10 @@ Adjacent rows merge only when their semantic group kinds match. Generic Tool row
 
 ### Always leave native
 
-- running or expanded `edit` calls
+- expanded `edit` calls
 - rows whose error/result shape cannot be validated safely
 - user text and pure final-answer assistant text
-- assistant text/thinking unless it is reused through its native renderer as a validated Story Spine scene header
+- assistant text/thinking unless its native child is reused inside a validated visual turn block
 - compaction, branch, and custom-entry components
 - all tool rows while global expanded mode is active
 
@@ -119,7 +126,7 @@ A row is eligible only when all of the following are true:
 2. `expanded === false`.
 3. Its runtime shape passes adapter validation.
 4. If it failed, the adapter can extract a bounded minimal error summary without retaining the full result content.
-5. If `toolName === "edit"`, it also has a settled final result. Successful edits require validated path and replacement count; failed edits use those fields only when safely available and otherwise use the label `edit`.
+5. If `toolName === "edit"`, a running row retains only a validated path when available; settled successful edits require validated path and replacement count, while failed edits use those fields only when safely available and otherwise use the label `edit`.
 
 Image-producing rows are eligible while collapsed, but their result content is
 never included in the summary. When expanded, Pi's native image renderer is
@@ -138,14 +145,14 @@ bash + powershell                 -> CommandGroup(2)
 customA + mcpB + subagentC        -> ToolGroup(3)
 read + bash                       -> ReadGroup(1) + CommandGroup(1)
 read + edit(success) + read       -> ReadGroup(1) + EditGroup(1) + ReadGroup(1)
-read + edit(running) + read       -> ReadGroup(1) + NativeEdit + ReadGroup(1)
+read + edit(running) + read       -> ReadGroup(1) + EditGroup(1) + ReadGroup(1)
 ```
 
-Edit groups never merge with Write or generic Tool groups. A running, expanded, or incompatible edit is native and is a hard group boundary. Every validated settled failed edit remains in an Edit group even when its arguments are malformed.
+Edit groups never merge with Write or generic Tool groups. A collapsed running edit is eligible and remains a normal semantic boundary between unlike kinds; expanded or incompatible edits remain native. Every validated settled failed edit remains in an Edit group even when its arguments are malformed.
 
-A visible non-tool component breaks an action run in the source-order scene projection. The sole exception is a validated `AssistantMessageComponent` used as a Story Spine scene header: it may own only the contiguous direct tool-row window whose `toolCallId` set exactly matches its assistant message's source-order calls. The tool rows are then presented according to the assistant `content` array, not direct completion order. An assistant component that renders no visible lines may form a validated tool-only scene with the deterministic native-safe title `Tool step`; it is never used to expose hidden thinking. The adapter must never skip or absorb a user message, custom entry, spacer with meaningful separation, compaction/branch row, or unknown component. Any incomplete or mismatched scene is rendered entirely natively.
+A visible non-tool content item breaks an action run in the source-order projection. A validated `AssistantMessageComponent` may be projected only with the contiguous direct tool-row window whose `toolCallId` set exactly matches its source-order calls. Content and compact tool runs remain in the assistant `content` order, not direct completion order; visible thinking supplies the visual turn header, intermediate children stay on the rail, and the final child receives an end cap. If a tool-bearing response has no visible thinking, a presentation-only `Thinking...` header is inserted so every action remains under a thinking block. A running edit occupies its ordered action slot as a compact pending row; its native component keeps execution and preview state for expanded mode but is never rendered inside a valid collapsed storyboard. The adapter must never skip or absorb a user message, custom entry, spacer with meaningful separation, compaction/branch row, or unknown component. Any incomplete or mismatched response is rendered entirely natively.
 
-Every non-empty eligible run is replaced visually, including singleton and failed rows. This keeps each collapsed tool kind on the same compact presentation whether it appears alone or in a batch. Native rendering is restored whenever the row is expanded, incompatible, or otherwise outside the eligible scope. Edit rows additionally return to native rendering while running. A successful edit requires a validated path/count summary; a failed edit may fall back to the safe label `edit`.
+Every non-empty eligible run is replaced visually, including singleton, running, and failed rows. This keeps each collapsed tool kind on the same compact presentation whether it appears alone or in a batch. Native rendering is restored whenever the row is expanded, incompatible, or otherwise outside the eligible scope. A pending edit may use a validated path or the safe label `edit`; a successful edit requires a validated path/count summary, and a failed edit may fall back to the same safe label.
 
 ### Failure behavior
 
@@ -168,7 +175,7 @@ Run 3 commands
 
 The adapter must not parse or depend on tool-specific error categories. It extracts the last non-empty line from text result blocks, sanitizes it, and stores only that bounded summary. If there is no usable text, it uses the deterministic label `Failed`. Full output and diagnostics remain in Pi's row state and return in expanded mode.
 
-A running non-edit call, including a streaming Bash or PowerShell call, appears as a compact grouped row with a `syntaxKeyword`-colored running marker. If it later fails, the same grouped row changes to the error marker and minimal message. Running edits remain native so Pi's preview diff and preview errors stay visible; once settled, both successful and failed edits may group.
+Every running call, including Edit, Bash, and PowerShell, appears as a compact grouped row with a `syntaxKeyword`-colored running marker. A running edit shows at most its validated path. If a call later fails, the same grouped row changes to the error marker and minimal message. Pi's edit preview and preview errors remain available through explicit expansion.
 
 ### Expanded behavior
 
@@ -184,9 +191,9 @@ Expanded:  ungrouped native Pi rows
 
 This deliberately gives `Ctrl+O` one standard meaning: leave the compact group
 presentation and preview the original Pi TUI for every tool, including live
-command output and custom/MCP/subagent details. Under Story Spine, global
-expansion also removes the scene rail and delegates the complete affected scene
-to native assistant and tool rendering. Do not register a shortcut or hardcode
+command output and custom/MCP/subagent details. Under the turn storyboard,
+global expansion also removes storyboard decoration and delegates the complete
+affected response to native assistant and tool rendering. Do not register a shortcut or hardcode
 `Ctrl+O`; respect Pi's configured expansion state.
 
 ## 5. Rendering contract
@@ -235,7 +242,7 @@ Edit 2 times
   ● src/b.ts (1 replacement)
 ```
 
-Settled successful and failed edits use this summary. It includes the destination path and validated replacement count when safely available; a failed edit may fall back to the label `edit` and additionally includes the generic minimal error message. It never retains `oldText`, `newText`, diff, patch, or full result content. Running and expanded edits use Pi's native edit renderer.
+Running, successful, and failed edits use this compact summary while collapsed. A running edit includes at most its validated destination path; a settled edit adds the validated replacement count when safely available. A failed edit may fall back to the label `edit` and additionally includes the generic minimal error message. It never retains `oldText`, `newText`, diff, patch, or full result content. Expanded edits use Pi's native edit renderer.
 
 ### Command
 
@@ -261,12 +268,13 @@ Generic summaries must always include the tool name. Arguments use a sanitized c
 States:
 
 - `●` completed successfully, using the theme's success color
-- `●` pending/running, using the theme's `syntaxKeyword` color for non-edit tools
+- `●` pending/running, using the theme's `syntaxKeyword` color
 - `●` failed, using the theme's error color and a minimal error message
-- running edits and all expanded rows are never summarized
+- expanded rows are never summarized
 
 Use only the active Pi theme supplied by the session UI:
 
+- ordinary paragraph thinking markers and rails: `muted`; top-level action marker: turn state color; final-answer-adjacent thinking: final-answer state color
 - heading: `toolTitle`
 - completed: `success`
 - running: `syntaxKeyword`
@@ -315,8 +323,8 @@ pi-tool-groups/
 │   ├── index.ts          # Pi lifecycle; install/uninstall
 │   ├── grouping.ts       # pure grouping state machine
 │   ├── renderer.ts             # safe width-aware group summaries
-│   ├── storyboard.ts           # pure scene ownership/state rules
-│   ├── storyboard-renderer.ts  # responsive Story Spine rendering
+│   ├── storyboard.ts           # pure response matching/order rules
+│   ├── storyboard-renderer.ts  # responsive turn branches and end caps
 │   ├── tui-preview.ts          # preview gallery
 │   └── pi-adapter.ts           # the only private Pi/TUI knowledge
 └── test/
@@ -395,7 +403,7 @@ Installation must:
 
 The wrapped render must:
 
-1. Fast-path to the original renderer if there are no eligible tool groups or Story Spine note scenes.
+1. Fast-path to the original renderer if there are no eligible tool groups or thinking-only storyboard turns.
 2. Read but never modify `children`.
 3. Call each native child renderer at most once per container render pass.
 4. Wrap classification and custom rendering in `try/catch`.
@@ -529,7 +537,7 @@ Exit criterion: every supported row category is identified reliably without patc
 
 ### Phase 1 — pure grouping core
 
-Implement and test segmentation for Read, Search, List, Write, Edit, Command, and generic Tool groups, including singleton groups, failed rows that remain in matching groups, running edit boundaries, and native fallback policy.
+Implement and test segmentation for Read, Search, List, Write, Edit, Command, and generic Tool groups, including singleton groups, running and failed rows that remain in matching groups, and native fallback policy.
 
 Exit criterion: no Pi imports in `grouping.ts`, and all grouping matrix tests pass.
 
@@ -547,13 +555,14 @@ Exit criteria:
 
 ### Phase 3 — all tool kinds and live state
 
-Add `grep`/`find`, `ls`, `write`, settled `edit`, `bash`/`powershell`, and generic custom/unknown/MCP/subagent summaries. Add singleton and image summaries, compact running command markers, generic bounded failure summaries, argument sanitization, minimal edit snapshots, and narrow-width handling.
+Add `grep`/`find`, `ls`, `write`, running and settled `edit`, `bash`/`powershell`, and generic custom/unknown/MCP/subagent summaries. Add singleton and image summaries, compact running markers, generic bounded failure summaries, argument sanitization, minimal edit snapshots, and narrow-width handling.
 
 Exit criteria:
 
 - every compatible eligible tool has a compact collapsed summary;
+- collapsed running edits group using at most a validated path and running status;
 - settled successful and failed edits group using path, replacement count, status, and at most one bounded error summary;
-- running and expanded edits remain native;
+- expanded edits remain native;
 - settled failed edits remain grouped even when their arguments are malformed, using the safe label `edit` when needed;
 - failed rows remain in their semantic groups without error-type classification;
 - running commands group without copying or tailing output;
@@ -596,13 +605,13 @@ Start without a cross-render cache. Add a settled-group cache only if benchmarks
 | `ls ls` | ListGroup(2) |
 | `write write` | WriteGroup(2) |
 | `edit(success) edit(failed)` | EditGroup(2), failed item has minimal error |
-| `edit(running)` | native edit |
+| `edit(running)` | EditGroup(1), pending marker, validated path when available |
 | `edit(failed, malformed args)` | EditGroup(1), label `edit`, minimal error |
 | `bash powershell` | CommandGroup(2) |
 | `customA mcpB subagentC` | ToolGroup(3), retaining each tool name |
 | `read bash` | ReadGroup(1), CommandGroup(1) |
 | `read edit(success) read` | ReadGroup(1), EditGroup(1), ReadGroup(1) |
-| `bash edit(running) powershell` | CommandGroup(1), native edit, CommandGroup(1) |
+| `bash edit(running) powershell` | CommandGroup(1), EditGroup(1), CommandGroup(1) |
 | `read read text read` | ReadGroup(2), native text, ReadGroup(1) |
 | `read(success) read(failed) read(success)` | ReadGroup(3), failed item has minimal error |
 | `bash(running) bash(success)` | CommandGroup(2) |
@@ -620,7 +629,7 @@ Also test invisible assistant components between otherwise adjacent visual rows.
 - malformed/missing arguments;
 - offsets, limits, paths, globs, patterns, commands, and working directories;
 - write summaries never expose written content;
-- edit summaries show only path, replacement count, status, and optional bounded error summary and never copy or expose edit text, diff, patch, or full result details;
+- running edit summaries show at most a validated path and pending status; settled edit summaries add replacement count and optional bounded error summary, and neither form copies or exposes edit text, diff, patch, or full result details;
 - failed summaries use `●` with the theme's error color, a literal ` - ` separator, and the generic last-non-empty-line extraction rule;
 - error summaries default to `Failed`, are capped at 512 Unicode code points, and obey terminal width;
 - command summaries never expose full stdout/stderr, including failed commands;
@@ -644,7 +653,7 @@ Use fake component classes/prototypes to verify:
 - no mutation of child arrays or row objects;
 - a later third-party wrapper is not overwritten on uninstall;
 - malformed private row state stays native;
-- running and expanded edits preserve their original renderer and break groups;
+- running edits remain compact and never invoke their original renderer while collapsed; expanded edits preserve their original renderer;
 - settled failed edits with malformed arguments use the safe label `edit` and remain grouped;
 - settled successful and failed edit snapshots contain no `oldText`, `newText`, diff, patch, full result details, or full error output;
 - failed built-in/custom/MCP/subagent rows remain in their semantic groups when their result shape validates;
@@ -673,7 +682,7 @@ spawn(
 exec(
 ```
 
-Also prohibit read-side harness coupling that Story Spine does not need:
+Also prohibit read-side harness coupling that the render-time turn storyboard does not need:
 
 ```text
 sessionManager
@@ -699,15 +708,18 @@ Allowlist imports, command registration for the static preview, and only the lif
 Release v1 only when all of the following are true:
 
 - Every compatible eligible collapsed tool, including a singleton, uses its compact semantic group presentation.
-- A validated assistant work message and its exactly matched source-order tool rows render as one Story Spine scene with semantic action runs.
-- Mixed Read/Edit/Command/etc. action runs remain under the same assistant scene without reordering.
-- A no-tool thinking/work-note message may render as a note scene; pure final answers remain native.
-- Expanded tools, running edits, incomplete ownership, and incompatible scene state restore the complete affected scene to native rendering.
-- Story Spine uses no harness events, session reads, injected entries/messages, timers, or parallel transcript state.
+- A validated assistant response and its exactly matched source-order tool rows render as one thinking-led visual turn block without creating a persisted master record; ordinary paragraph thinking markers remain `muted`, the top-level action marker follows turn state, and final-answer-adjacent thinking follows final-answer state.
+- Mixed Read/Edit/Command/etc. action runs remain in exact response order; `├─` marks continuation and `╰─` closes the final child.
+- The visual hierarchy claims only turn membership, never causal ownership by a thinking/commentary block.
+- Validated commentary remains complete native Markdown; final-answer and unknown text remain native, with thinking-start markers allowed in mixed no-tool responses.
+- A no-tool thinking/work-note message may render as one quiet content node; pure final answers remain native.
+- Tool-only responses begin under a presentation-only `Thinking...` header and never invent a `Tool step` title.
+- Expanded tools, incomplete matching, and incompatible response state restore the complete affected response to native rendering; no native tool renderer is embedded inside a valid collapsed storyboard.
+- The turn storyboard uses no harness events, session reads, injected entries/messages, timers, or parallel transcript state.
 - Adjacent `grep`/`find` calls merge into Search groups, and adjacent `bash`/`powershell` calls merge into Command groups.
 - Custom, unknown, MCP, and subagent calls use generic Tool groups while retaining each tool name.
-- Settled successful and failed edits use Edit groups containing only path, replacement count, status, and optional bounded error summary.
-- Running and expanded edits remain byte-for-byte native for the same component state and width and break groups.
+- Running edits use Edit groups containing only a validated path when available and pending status; settled successful and failed edits add replacement count and optional bounded error summary.
+- Running edits never invoke their native renderer while collapsed; their Pi component still owns execution and preview state, and expanded edits restore the complete native container.
 - Settled failed edits with malformed arguments remain grouped using the safe label `edit`.
 - Edit snapshots and rendered output contain no `oldText`, `newText`, diff, patch, full result details, or full error output.
 - Validated failed calls remain in their semantic groups and use an error-colored `●` plus one generic minimal message.
@@ -735,7 +747,7 @@ Release v1 only when all of the following are true:
 | Full failed output hidden while collapsed | Show one generic error-colored summary line; global expansion restores Pi's complete native diagnostics |
 | Minimal message omits the most useful error context | Use a deterministic last-non-empty-line rule, retain no full output, and make expansion the source of complete diagnostics |
 | Error messages vary by tool/version | Do not classify or parse error types; treat all validated failures identically |
-| Edit preview or preview error hidden before execution | Keep every running edit native; group only after a final result settles |
+| Edit preview or preview error hidden while collapsed | Show a compact path/status row and make explicit expansion the source of Pi's native preview |
 | Large edit arguments/results duplicated by snapshots | Project only path, replacement count, status, and bounded error summary; never copy edit text, diff, patch, full result details, or full error output |
 | Settled edit diff hidden while collapsed | Show path/replacement count/status; global expansion restores Pi's native edit diff or diagnostic renderer |
 | Image content hidden in collapsed mode | Show path/status only; global expansion restores Pi's native image renderer |
@@ -760,4 +772,4 @@ Implementation should be checked against the current versions of:
 
 ## 14. One-line project brief
 
-> Build a zero-runtime-dependency, pure-TUI Pi extension that presents each validated assistant work message and its exactly matched tool calls as a responsive Story Spine scene, reuses compact semantic tool groups and bounded failure summaries, preserves source order and native expanded/running-edit rendering, never subscribes to or mutates the harness/session pipeline, reads private transcript state through one guarded adapter, and fails open to Pi's original UI on any incompatibility.
+> Build a zero-runtime-dependency, pure-TUI Pi extension that presents each validated assistant response and exactly matched tool batch as a thinking-led, explicitly closed visual turn block without inventing a persisted master record; reuse compact semantic tool groups and bounded failure summaries, preserve native Markdown and source order, never subscribe to or mutate the harness/session pipeline, read private transcript state through one guarded adapter, and fail open to Pi's original UI on any incompatibility.

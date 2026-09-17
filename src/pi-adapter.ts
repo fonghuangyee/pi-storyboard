@@ -27,13 +27,16 @@ import {
   buildStoryboard,
   type AssistantSceneSnapshot,
   type StoryboardAssistantContent,
+  type StoryboardAssistantContentType,
   type StoryboardChild,
   type StoryboardSourceItem,
 } from "./storyboard.ts";
 import {
+  renderNativeThinkingMarkersLayout,
   renderStoryboardSceneLayout,
   storyboardAssistantWidth,
   type StoryboardAssistantRenderRegion,
+  type StoryboardMarkerColor,
 } from "./storyboard-renderer.ts";
 
 export const PATCH_MARKER = Symbol.for("pi-tool-groups.container.v1");
@@ -92,7 +95,7 @@ type CandidateClassification = {
   toolCallId?: string;
 };
 
-type AssistantContentKind = "thinking" | "text" | "native";
+type AssistantContentKind = StoryboardAssistantContentType;
 
 type AssistantMetadata = Omit<AssistantSceneSnapshot, "renderedAssistantLines" | "assistantContent" | "sourceOrder"> & {
   readonly contentKinds: readonly AssistantContentKind[];
@@ -138,6 +141,29 @@ function hasOwn(value: object, property: string): boolean {
 function hasOnlyKnownKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const known = new Set(keys);
   return Object.keys(value).every((key) => known.has(key));
+}
+
+type ValidatedTextPhase = "commentary" | "final_answer";
+
+/** Decode only Pi's documented TextSignatureV1 shape; all other metadata is opaque. */
+function validatedTextPhase(value: unknown): ValidatedTextPhase | undefined {
+  if (typeof value !== "string" || value.length === 0) return undefined;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (
+      !isRecord(parsed) ||
+      parsed.v !== 1 ||
+      typeof parsed.id !== "string" ||
+      parsed.id.length === 0
+    ) {
+      return undefined;
+    }
+    return parsed.phase === "commentary" || parsed.phase === "final_answer"
+      ? parsed.phase
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -335,11 +361,26 @@ function inspectToolRow(row: unknown): CandidateClassification | undefined {
   if (fields.expanded) return undefined;
 
   if (kind === "edit") {
-    // Pi's edit renderer can show a preview diff while execution is pending.
-    // Keep that native preview intact. Once the final result settles, retain
-    // only the path/count projection and, on failure, one generic error line.
-    if (fields.isPartial || fields.result === undefined) return undefined;
+    // A collapsed running edit is a compact pending row. Retain at most its
+    // validated path; Pi keeps the live preview state on its native component
+    // for explicit expanded mode, but the storyboard never renders that Box.
+    if (fields.isPartial || fields.result === undefined) {
+      const snapshot: ToolRowSnapshot = Object.freeze({
+        toolName: "edit",
+        args: summarizeEditPath(fields.args),
+        result: undefined,
+        isPartial: true,
+        expanded: false,
+      });
+      return {
+        kind,
+        snapshot,
+        ...(toolCallId === undefined ? {} : { toolCallId }),
+      };
+    }
 
+    // Once the final result settles, retain only the path/count projection
+    // and, on failure, one generic error line.
     const args = resultError === true
       ? summarizeEditArgs(fields.args) ?? summarizeEditPath(fields.args)
       : summarizeEditArgs(fields.args);
@@ -392,7 +433,7 @@ function isAssistant(row: unknown): row is AssistantMessageComponent {
 }
 
 /**
- * Read only the assistant metadata needed by the pure Story Spine model. Raw
+ * Read only the assistant metadata needed by the pure turn-storyboard model. Raw
  * thinking, tool arguments, signatures, and results never leave this adapter.
  * The source-order references deliberately retain only content kinds, indexes,
  * and tool-call IDs.
@@ -416,6 +457,8 @@ function inspectAssistantMetadata(row: unknown): AssistantMetadata | undefined {
   const sourceOrder: StoryboardSourceItem[] = [];
   let hasThinking = false;
   let hasText = false;
+  let hasFinalAnswer = false;
+  let hasUnknownText = false;
   let hasVisibleContent = false;
 
   const addAssistantContent = (kind: AssistantContentKind): void => {
@@ -430,9 +473,12 @@ function inspectAssistantMetadata(row: unknown): AssistantMetadata | undefined {
     if (rawBlock.type === "text") {
       if (typeof rawBlock.text !== "string") return undefined;
       if (rawBlock.text.trim().length > 0) {
+        const phase = validatedTextPhase(rawBlock.textSignature);
         hasText = true;
         hasVisibleContent = true;
-        addAssistantContent("text");
+        if (phase === "final_answer") hasFinalAnswer = true;
+        if (phase === undefined) hasUnknownText = true;
+        addAssistantContent(phase ?? "text");
       }
     } else if (rawBlock.type === "thinking") {
       const thinkingBlocks: string[] = [];
@@ -475,6 +521,8 @@ function inspectAssistantMetadata(row: unknown): AssistantMetadata | undefined {
     isStreaming: fields.isStreaming,
     hasThinking,
     hasText,
+    hasFinalAnswer,
+    hasUnknownText,
     contentKinds: Object.freeze(contentKinds),
     sourceOrder: Object.freeze(sourceOrder),
     hasVisibleContent,
@@ -575,6 +623,8 @@ function withAssistantLines(
     isStreaming: metadata.isStreaming,
     hasThinking: metadata.hasThinking,
     hasText: metadata.hasText,
+    hasFinalAnswer: metadata.hasFinalAnswer,
+    hasUnknownText: metadata.hasUnknownText,
   };
   if (presentation === undefined) return Object.freeze(base);
 
@@ -603,10 +653,44 @@ function invisibleClassification(row: unknown): ChildClassification {
 }
 
 /**
- * A scene occupies one mouse-layout entry. Header and thinking clicks are
- * translated back to the exact native assistant child that produced them;
- * rails, separators, and grouped summaries are presentation-only.
+ * A mixed no-tool assistant occupies one mouse-layout entry. Thinking clicks
+ * are translated to their native child; final/unknown text stays at native
+ * coordinates and is delegated to the original assistant.
  */
+class StoryboardThinkingMouseProxy implements Component {
+  constructor(
+    private readonly assistant: Component,
+    private readonly regions: readonly StoryboardAssistantRenderRegion[],
+  ) {}
+
+  render(_width: number): string[] {
+    return [];
+  }
+
+  invalidate(): void {}
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    const region = this.regions.find(
+      (candidate) => event.y >= candidate.start && event.y < candidate.start + candidate.height,
+    );
+    if (region !== undefined) {
+      if (event.x < region.prefixWidth) return { handled: true };
+      const result = (region.row as Component).handleMouse?.({
+        ...event,
+        x: event.x - region.prefixWidth,
+        width: Math.max(1, event.width - region.prefixWidth),
+        y: event.y - region.start + (region.sourceStart ?? 0),
+        height: region.sourceHeight ?? region.height,
+      });
+      return result ?? { handled: true };
+    }
+
+    // Final/unknown text remains at its native x-coordinate and is delegated
+    // to the original assistant component. Only thinking rows are shifted.
+    return this.assistant.handleMouse?.(event) ?? { handled: true };
+  }
+}
+
 class StoryboardSceneMouseProxy implements Component {
   constructor(
     private readonly assistant: Component,
@@ -637,15 +721,15 @@ class StoryboardSceneMouseProxy implements Component {
       const result = (region.row as Component).handleMouse?.({
         ...event,
         x: event.x - region.prefixWidth,
-        y: event.y - region.start,
+        y: event.y - region.start + (region.sourceStart ?? 0),
         width: regionWidth,
-        height: region.height,
+        height: region.sourceHeight ?? region.height,
       });
       return result ?? { handled: true };
     }
 
     // Ordered scenes have explicit regions for every native assistant child.
-    // Never feed a rail or grouped-tool coordinate to the original assistant,
+    // Never feed a rail or compact-tool coordinate to the original assistant,
     // whose private mouse layout still reflects the unprojected component.
     if (this.regions.length > 0) return { handled: true };
 
@@ -670,6 +754,16 @@ class StoryboardSceneMouseProxy implements Component {
 
 function validRenderedLines(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((line) => typeof line === "string");
+}
+
+function nativeThinkingMarkerColor(snapshot: AssistantSceneSnapshot): StoryboardMarkerColor {
+  if (!snapshot.hasFinalAnswer || snapshot.hasUnknownText) return "muted";
+  if (snapshot.stopReason === "error" || snapshot.stopReason === "aborted" || snapshot.stopReason === "length") {
+    return "error";
+  }
+  return snapshot.isStreaming || snapshot.stopReason === "pending"
+    ? "syntaxKeyword"
+    : "success";
 }
 
 function invokeOriginal(container: Container, state: PatchState, width: number): string[] {
@@ -723,9 +817,10 @@ function makeStoryboardChild(
 }
 
 /**
- * Attempt the Story Spine projection independently from the legacy grouping
- * path. Returning `requested: false` keeps existing tool-only containers and
- * older/incomplete assistant shapes on their unchanged baseline behavior.
+ * Attempt the turn-storyboard projection independently from the legacy
+ * grouping path. Tool-bearing assistant responses with no visible thinking
+ * receive a presentation-only placeholder; older/incomplete shapes still fall
+ * back to their unchanged native behavior.
  */
 function renderStoryboardIfRequested(
   container: Container,
@@ -748,7 +843,12 @@ function renderStoryboardIfRequested(
   }
 
   const storyboardRequested = [...metadata.values()].some(
-    (assistant) => assistant.expectedToolCallIds.length > 0 || (assistant.hasThinking && !assistant.hasText),
+    (assistant) => assistant.expectedToolCallIds.length > 0 || assistant.hasThinking,
+  );
+  const thinkingDecorationOwners = new Set<AssistantMessageComponent>(
+    [...metadata.entries()]
+      .filter(([, assistant]) => assistant.hasThinking && assistant.expectedToolCallIds.length === 0 && assistant.hasText)
+      .map(([assistant]) => assistant),
   );
   if (!storyboardRequested) return { requested: false };
 
@@ -778,7 +878,7 @@ function renderStoryboardIfRequested(
     nativeLines.set(child, lines);
     if (isAssistant(child) && assistantMetadata !== undefined) {
       let presentation: AssistantPresentation | undefined | null;
-      if (sceneOwners.has(child)) {
+      if (sceneOwners.has(child) || thinkingDecorationOwners.has(child)) {
         presentation = inspectAssistantPresentation(child, assistantMetadata, renderWidth, lines);
         if (presentation === undefined) return { requested: true };
       }
@@ -809,10 +909,28 @@ function renderStoryboardIfRequested(
   const rendered: string[] = [];
   const mouseChildren: Array<{ component: Component; height: number }> = [];
   const theme = options.getTheme();
+  const thinkingDecorations = new Map<Component, {
+    readonly lines: readonly string[];
+    readonly assistantRegions: readonly StoryboardAssistantRenderRegion[];
+  }>();
+  for (const owner of thinkingDecorationOwners) {
+    const snapshot = assistantSnapshots.get(owner);
+    if (snapshot?.assistantContent === undefined) continue;
+    const decoration = renderNativeThinkingMarkersLayout(
+      snapshot.renderedAssistantLines,
+      snapshot.assistantContent,
+      safeWidth,
+      theme,
+      nativeThinkingMarkerColor(snapshot),
+    );
+    thinkingDecorations.set(owner, decoration);
+  }
 
   const renderNative = (child: StoryboardChild): string[] => {
     const component = componentForStoryboardChild(child);
     if (component === undefined) throw new Error("native storyboard child is not renderable");
+    const decorated = thinkingDecorations.get(component);
+    if (decorated !== undefined) return [...decorated.lines];
     const cached = nativeLines.get(component);
     if (cached !== undefined) return cached;
     const lines = component.render(safeWidth);
@@ -865,7 +983,18 @@ function renderStoryboardIfRequested(
       rendered.push(...lines);
       const component = componentForStoryboardChild(child);
       if (component === undefined) throw new Error("native storyboard child is not renderable");
-      mouseChildren.push({ component, height: lines.length });
+      const decoration = thinkingDecorations.get(component);
+      if (decoration !== undefined) {
+        mouseChildren.push({
+          component: new StoryboardThinkingMouseProxy(
+            component,
+            decoration.assistantRegions,
+          ),
+          height: lines.length,
+        });
+      } else {
+        mouseChildren.push({ component, height: lines.length });
+      }
     }
   }
 
@@ -887,8 +1016,8 @@ function renderPatched(
       return storyboard.output ?? invokeOriginal(this, state, width);
     }
   } catch {
-    // Story Spine is an optional presentation layer. Any incompatible shape or
-    // renderer failure leaves the complete container native.
+    // The turn storyboard is an optional presentation layer. Any
+    // incompatible shape or renderer failure leaves the complete container native.
     return invokeOriginal(this, state, width);
   }
 

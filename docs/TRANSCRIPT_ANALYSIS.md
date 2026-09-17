@@ -1,32 +1,119 @@
-# Transcript analysis: missing leading symbols
+# Transcript analysis: Pi turns, ordered assistant output, and tool rows
 
-## Input reviewed
+## Inputs reviewed
 
 - Session: `01a0a830-040b-7266-8b72-ba8c6581a269`
 - Transcript: `/Users/fong/.pi/agent/sessions/--Users-fong-Documents-FHY-pi-tool-groups--/2026-09-16T03-08-34-187Z_01a0a830-040b-7266-8b72-ba8c6581a269.jsonl`
-- Real output: `/Users/fong/Desktop/Screenshot 2026-09-16 at 5.14.10 PM.png`
-- Approved reference: `/Users/fong/Desktop/Screenshot 2026-09-16 at 4.49.54 PM.png`
+- Mixed-phase session: `/Users/fong/.pi/agent/sessions/--Users-fong-Documents-FHY-selfapprove-selfapprove--/2026-09-16T12-32-57-547Z_01a0aa34-baca-753f-a85a-486dd8566423.jsonl`
+- Pi documentation: `docs/extensions.md` and `docs/session-format.md`
+- Installed agent-core lifecycle implementation and type declarations
+- Screenshots supplied during analysis, including the 5:14 PM, 9:59 PM, 10:31 PM, and 11:18 PM captures.
 
-The transcript is JSONL. Its `message` entries contain assistant messages,
-separate tool-result messages, and the tool-call IDs that connect them. Pi's
-session format does not define persisted `master`/`node` entry types; those are
-useful visual descriptions, not separate records. The transcript is also not a
-list of one assistant message per visible italic line.
+## Pi has turns, but no persisted visual master
 
-## What the screenshot is showing
-
-The top visible scene corresponds to JSONL entry **496**. That one assistant
-message contains four visible thinking paragraphs:
+Pi's lifecycle documentation distinguishes a low-level agent run from repeated turns:
 
 ```text
-Planning detailed width rendering tests
-Analyzing user rendering issue with long lines
-Confirming separator issue with ANSI widths
-Fixing dash separator and rendering check
+agent_start
+├─ turn_start
+│  ├─ assistant response
+│  ├─ tool calls/results
+│  └─ turn_end
+├─ turn_start ...             repeats while tools continue
+└─ agent_end
 ```
 
-It contains one following Bash call, `npm run check`, whose result is failed.
-The next scene boundaries are separate assistant messages:
+The documentation defines a turn as “one LLM response + tool calls.” Agent-core telemetry calls the same unit “One assistant response and its tool batch.” `turn_end` carries the assistant message and its tool results.
+
+Pi's JSONL session format nevertheless has no `master`, storyboard, or enclosing turn entry. It stores ordered assistant messages and separate tool-result messages. Session entry `id`/`parentId` represents branching, not visual ownership.
+
+The extension can therefore truthfully project one validated assistant response and its matching tool rows as a **visual turn block**, but it must not claim Pi persisted a master object. A later assistant response begins the next block. Those blocks form an ongoing storyboard while each remains explicitly closed.
+
+The current guarded render seam does not receive lifecycle `runId`/`turnId`. It cannot reliably draw one outer rail across multiple turns in restored sessions, so it does not merge blocks or infer an agent-run boundary from adjacency.
+
+## What Pi's native TUI flattens
+
+`AssistantMessageComponent` renders visible thinking/text content and skips tool calls. `InteractiveMode` appends each corresponding `ToolExecutionComponent` separately afterward. The native component tree can therefore display all assistant content before all tool rows even when the message says:
+
+```text
+thinking → read → commentary → thinking → edit
+```
+
+The assistant message's `content` array remains authoritative. The extension validates the contiguous direct tool-row window by ID and replays native assistant children plus compact tool runs in that source order. It restores display sequence only; it does not infer that a thought or commentary caused a call.
+
+## Visual conclusion
+
+Native thinking is the visual header for the turn-shaped block:
+
+```text
+◉ native thinking                                      N actions
+│
+├─ compact action run
+│  ● tool row
+│
+│ complete native commentary/thinking continuation
+│
+╰─ final compact action run
+   ● tool row
+```
+
+- `◉` indicates a turn with tools; `○` indicates a thinking-only note.
+- `├─` means another source child follows.
+- `╰─` explicitly closes the final child before the next assistant response.
+- `●` retains individual tool state.
+
+The header and count are render-time projections of the validated response/tool batch. They are not new messages or session records. The hierarchy communicates turn membership, not causal ownership.
+
+A tool-only response may contain an empty or absent visible thinking block. The renderer supplies a presentation-only `Thinking...` header so its action remains under a thinking block; no `Tool step` title is invented.
+
+## Thinking runs
+
+Pi may combine consecutive `thinking` blocks into one native Markdown child. The extension keeps that child intact rather than splitting paragraphs. The first native thinking child receives one turn marker, not one marker per wrapped line or paragraph. Later source-ordered thinking remains complete on the turn rail.
+
+Thinking visibility remains controlled by Pi's native global toggle and per-run mouse behavior.
+
+## Commentary and final answers
+
+The canonical Pi AI types define:
+
+```ts
+interface TextSignatureV1 {
+  v: 1;
+  id: string;
+  phase?: "commentary" | "final_answer";
+}
+```
+
+The OpenAI Responses adapter stores this phase in `TextContent.textSignature`.
+
+The 10:31 PM screenshot text beginning:
+
+```text
+I’ll separate what Pi’s documented schema proves from what it does not prove...
+```
+
+is validated commentary. Its transcript block has a valid V1 signature with `phase: "commentary"`, is followed by tool calls, and its message stops with `toolUse`.
+
+Commentary is user-visible intermediate output, not thinking and not a short-label contract. A scan of local Pi sessions found commentary containing long paragraphs, headings, lists, and fenced code; the largest observed block was 1,748 characters over 65 lines. The complete native Markdown child must remain intact within the turn.
+
+A validated `final_answer` remains complete native Pi output without storyboard decoration. When a no-tool response also contains thinking, the thinking paragraphs receive `○` start markers while the final text stays unprefixed native output. Missing, malformed, legacy, or provider-opaque text signatures remain unknown and fail open for the text itself. Position and `stopReason` are not used to classify an individual text block. Unknown in-progress text also remains native until its phase is validated.
+
+## Width finding
+
+Native content must be rendered after deducting its actual structural gutter. The implemented budgets are:
+
+```text
+" ◉" / " │" + Pi-native assistant content
+" ├─" / " ╰─" + compact action group
+```
+
+At normal widths the assistant gutter is two cells and the branch gutter is three; Pi's own output padding supplies content separation. The renderer passes the reduced width into native thinking/Markdown and compact-group rendering before adding the prefix. This preserves Markdown wrapping, code blocks, tables, links, OSC behavior, and terminal width.
+
+At narrow widths the leading margin is removed. At the smallest width, decoration yields to content.
+
+## Supplied transcript tail
+
+The earlier tail contains these separate assistant messages/turn-shaped batches:
 
 | JSONL entry | Assistant content | Following call |
 |---:|---|---|
@@ -34,121 +121,25 @@ The next scene boundaries are separate assistant messages:
 | 498 | `Inspecting formatRow replacement failure` | settled `edit` |
 | 500 | `Running test suite` | successful `bash` — `npm run check` |
 | 502 | `Checking ripgrep em dash handling` | successful `bash` — `rg ...` |
-| 504 | two thinking paragraphs followed by final text | none |
+| 504 | thinking followed by final text | none |
 
-The tool-result entries following these messages update the corresponding
-`toolCallId`; they do not create another assistant/node header.
+Entry 496's thinking paragraphs belong to one native thinking run, not separate master records. Its tool batch closes with `╰─`; entry 498 starts the next visual block. Entry 504 is a final-answer response: its final text stays completely native while its preceding thinking paragraphs receive only the safe `○` start markers.
 
-## Why some lines have no leading symbol
+## Fixed replay diagnostic
 
-There are two different cases, and neither means that Pi lost a message.
+`/tool-groups-preview` includes **Transcript replay**, built from real Pi components:
 
-### 1. Continuation lines inside one assistant message
+- `AssistantMessageComponent` for recorded assistant responses;
+- `ToolExecutionComponent` for recorded calls;
+- real commentary and final-answer signatures;
+- a commentary-before-tools fixture matching the 10:31 PM case;
+- an interleaved thinking → read → commentary → thinking → edit fixture;
+- deliberately reversed direct tool-row order to verify ID mapping.
 
-Pi's `AssistantMessageComponent` renders consecutive `thinking` blocks inside
-one component. In the supplied screenshot, the marker on
-`Planning detailed width rendering tests` identifies the assistant scene. The
-following thinking paragraphs are continuation content from that same
-component, so they are indented continuation lines rather than new scene
-headers.
+The fixture is checked-in data only. The live extension never reads session files, executes tools, or maintains a second transcript.
 
-The Story Spine renderer follows the approved preview: one `◉` identifies one
-assistant message that owns tools. It does not put a new marker on every
-wrapped line or every thinking paragraph.
-
-### 2. A mixed thinking + final-text assistant message
-
-Entry 504 has thinking content **and** a final text answer, but no tool calls.
-It is not a thinking-only work-note scene. It remains Pi-native, which is why
-its thinking and final answer do not receive a Story Spine marker in the real
-output.
-
-This is intentional. A final answer must retain Pi's native Markdown, padding,
-OSC integration, and error handling. Making every assistant message into a
-scene would require a broader visual policy and would decorate ordinary final
-answers just to add a marker.
-
-A thinking-only assistant message with no text and no tools is different: it is
-a `○` note scene. An assistant message with matching tool calls is a `◉` scene.
-A plain final answer remains native and unmarked.
-
-## What the Pi documentation and source establish
-
-The reviewed Pi documentation is:
-
-- `@earendil-works/pi-coding-agent/docs/session-format.md`
-- `@earendil-works/pi-coding-agent/docs/tui.md`
-- `@earendil-works/pi-coding-agent/docs/extensions.md`
-
-The relevant implementation facts in Pi 0.85.1 are:
-
-1. Session entries form a JSONL tree through `id` and `parentId`. An assistant
-   `message` stores an ordered `content` array; tool results refer to calls by
-   `toolCallId`.
-2. `AssistantMessageComponent` owns the visible assistant content. Its native
-   `updateContent()` groups consecutive thinking blocks into a Markdown
-   component and adds native spacer/padding rows.
-3. `ToolExecutionComponent` is a separate transcript child. It owns the
-   call/result display and its native leading spacer, expansion state, and
-   renderer state.
-4. Pi's public extension APIs support custom messages, custom entries, widgets,
-   and individual tool renderers, but do not expose a public API for replacing
-   the existing transcript's assistant-plus-following-tools composition.
-5. The existing adapter therefore uses only its guarded render-time
-   `Container.prototype.render` seam. It reads validated private fields and
-   delegates native components; it does not subscribe to agent/message/tool
-   events or alter the session.
-
-The important consequence is that the correct ownership unit is the assistant
-**message**, not an individual thinking paragraph. The assistant `content`
-array is authoritative for presentation order: a thinking block between two
-tool calls ends the first contiguous group, even when both calls have the same
-semantic kind. The strongest state join key remains each tool-call ID matched
-to its tool result/native tool component; it must not be inferred from a
-thinking paragraph.
-
-There is an important distinction between transcript order and Pi's default
-visual tree. `AssistantMessageComponent` renders the assistant's thinking/text
-content and skips `toolCall` blocks. `InteractiveMode` then appends each
-`ToolExecutionComponent` to the chat container. Thus Pi's native tree can
-flatten an ordered `thinking → tool → thinking → tool` message into assistant
-content followed by tool rows, even though the session data retains the exact
-order. An exact ordered Story Spine therefore needs a presentation-only
-wrapper/projection; it does not require changing the agent, session, message,
-or tool structures.
-
-## Preview added for faithful testing
-
-`/tool-groups-preview` now includes **Transcript replay**. It uses a checked-in
-fixture of the supplied transcript tail and constructs real Pi components:
-
-- `AssistantMessageComponent` for each recorded assistant message;
-- `ToolExecutionComponent` for each recorded tool call;
-- a real `Container` holding them in transcript order;
-- the installed Story Spine adapter to render that container.
-
-The fixture covers the exact cases above: one assistant message with several
-thinking paragraphs and one failed Bash call, separate edit/Bash scenes, and a
-mixed thinking-plus-final-text message that stays native. It also includes a
-small source-order seam fixture with `thinking → read → thinking → edit`; its
-real tool components are deliberately inserted in the opposite direct-child
-order to verify ID mapping. The replay has local keyboard scrolling and width
-checks so it can be compared with the real terminal output.
-
-The fixture is static by design. The extension does **not** read the session
-file at runtime, use `sessionManager`, persist a parallel transcript, execute
-tools, or change the approved independent `Storyboard / Spine` sample. The
-static sample remains the visual authority; the transcript replay is a
-component-fidelity diagnostic.
+The independent **Turn storyboard** preview is the fixed visual reference. It demonstrates thinking-led blocks, aggregate action counts, same-colored `│`/`├─`/`╰─` connectors, native commentary Markdown, presentation-only `Thinking...` headers for tool-only turns, compact pending edits with native previews reserved for expansion, bounded continuous-thinking display with a hidden-count line, mixed final-answer thinking markers, and native fallback cases.
 
 ## Conclusion
 
-The screenshot's unmarked lines are primarily native continuation content, plus
-the deliberately native mixed final-answer message. They are not missing
-`master/node` records. The transcript itself does provide enough information
-to preserve the exact source order for a Story Spine projection. The remaining
-constraint is visual: doing that within Pi requires a presentation wrapper
-that composes native assistant/tool renderers in content order, while retaining
-native fallback for cases the projection cannot safely own. It does not
-require changing Pi's harness or inventing causal ownership for thinking
-paragraphs.
+The preferred parent/child appearance is compatible with Pi's documented model when interpreted as a **visual turn projection**. Pi supplies a real assistant-response/tool-batch boundary; the extension supplies only the branch grammar. Each turn ends visibly before the next thinking block begins, while successive blocks can still read as one continuing storyboard. No persisted master record, causal claim, or cross-turn run identity is invented.

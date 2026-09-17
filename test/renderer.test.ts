@@ -147,6 +147,12 @@ describe("renderToolGroup", () => {
     expect(formatToolRow(row("edit", { path: "src/app.ts", replacementCount: 2 }))).toBe(
       "src/app.ts (2 replacements)",
     );
+    expect(formatToolRow({
+      toolName: "edit",
+      args: undefined,
+      isPartial: true,
+      expanded: false,
+    })).toBe("edit");
     expect(formatToolRow(row("bash", { command: "npm test" }))).toBe("npm test");
     expect(formatToolRow(row("powershell", { command: "Get-ChildItem", cwd: "src" }))).toBe(
       "Get-ChildItem (cwd src)",

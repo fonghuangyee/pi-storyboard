@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { renderStoryboardScene, sceneMarkerColor } from "../src/storyboard-renderer.ts";
+import {
+  renderNativeThinkingMarkersLayout,
+  renderStoryboardScene,
+  sceneMarkerColor,
+} from "../src/storyboard-renderer.ts";
 import { buildStoryboard, type StoryboardChild } from "../src/storyboard.ts";
 import type { ThemeLike } from "../src/renderer.ts";
 
 const theme: ThemeLike = {
-  fg: (color, text) => `<${color}>${text}`,
+  fg: (_color, text) => text,
   bold: (text) => text,
 };
 
@@ -21,6 +25,8 @@ function scene(): Extract<ReturnType<typeof buildStoryboard>["segments"][number]
         isStreaming: false,
         hasThinking: true,
         hasText: false,
+        hasFinalAnswer: false,
+        hasUnknownText: false,
       },
     },
     {
@@ -44,15 +50,15 @@ function scene(): Extract<ReturnType<typeof buildStoryboard>["segments"][number]
   return result;
 }
 
-describe("storyboard renderer", () => {
-  it("maps scene state to the agreed marker colors", () => {
+describe("turn storyboard renderer", () => {
+  it("maps story-block state to marker colors", () => {
     expect(sceneMarkerColor("running")).toBe("syntaxKeyword");
     expect(sceneMarkerColor("failed")).toBe("error");
     expect(sceneMarkerColor("complete")).toBe("success");
     expect(sceneMarkerColor("note")).toBe("muted");
   });
 
-  it("keeps thinking runs between tool groups in source order", () => {
+  it("renders ordered content under one thinking header and closes the final child", () => {
     const base = scene();
     const firstTool = base.actionRuns[0]!.rows[0]!;
     const secondTool = {
@@ -94,54 +100,166 @@ describe("storyboard renderer", () => {
     expect(output.indexOf("first thinking")).toBeLessThan(output.indexOf("read 1"));
     expect(output.indexOf("read 1")).toBeLessThan(output.indexOf("second thinking"));
     expect(output.indexOf("second thinking")).toBeLessThan(output.lastIndexOf("read 1"));
+    expect(lines.filter((line) => line.includes("◉"))).toHaveLength(1);
+    expect(output).toContain("├─ read 1");
+    expect(output).toContain("╰─ read 1");
+    expect(lines.at(-1)).toContain("╰─ read 1");
     expect(lines.every((line) => visibleWidth(line) <= 100)).toBe(true);
   });
 
-  it("does not duplicate a native spacer around assistant text before tools", () => {
+  it("keeps rich commentary native beneath thinking instead of promoting it to the title", () => {
     const base = scene();
-    const firstThinking = {
+    const thinking = {
       type: "thinking" as const,
-      row: "thinking-1",
-      renderedLines: [" first thinking"],
+      row: "thinking",
+      renderedLines: [" locating exact types"],
     };
     const spacer = {
       type: "native" as const,
       row: "spacer",
       renderedLines: [""],
     };
-    const text = {
-      type: "text" as const,
-      row: "text",
-      renderedLines: [" I'll verify the payload"],
+    const commentary = {
+      type: "commentary" as const,
+      row: "commentary",
+      renderedLines: [
+        " ## Findings",
+        "",
+        " - commentary can contain Markdown",
+        " ```ts",
+        " const final = false;",
+        " ```",
+      ],
     };
     const tool = base.actionRuns[0]!.rows[0]!;
     const ordered = {
       ...base,
       orderedChildren: [
-        { type: "assistant" as const, content: firstThinking },
+        { type: "assistant" as const, content: thinking },
         { type: "assistant" as const, content: spacer },
-        { type: "assistant" as const, content: text },
+        { type: "assistant" as const, content: commentary },
         { type: "tool" as const, tool },
       ],
     };
     const lines = renderStoryboardScene(
       ordered,
-      ["", " first thinking", "", " I'll verify the payload"],
-      100,
+      ["", ...thinking.renderedLines, "", ...commentary.renderedLines],
+      80,
       theme,
       (group) => ["", ` ${group.kind} ${group.rows.length}`],
     );
-    const textLine = lines.findIndex((line) => line.includes("I'll verify"));
-    expect(textLine).toBeGreaterThan(1);
-    expect(lines[textLine - 1]).toBe("   │");
-    expect(lines[textLine - 2]).not.toBe("   │");
+    const output = lines.join("\n");
+    expect(output).toContain("◉ locating exact types");
+    expect(output).toContain("│ ## Findings");
+    expect(output).toContain("│ - commentary can contain Markdown");
+    expect(output).toContain("│ ```ts");
+    expect(output.indexOf("Findings")).toBeLessThan(output.indexOf("read 1"));
+    expect(output).toContain("╰─ read 1");
+    expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
   });
 
-  it("keeps the rail width-safe and delegates child groups with reduced width", () => {
+  it("uses one color for the vertical rail and branch end caps", () => {
+    const coloredTheme: ThemeLike = {
+      fg: (color, text) => `[${color}:${text}]`,
+      bold: (text) => text,
+    };
+    const lines = renderStoryboardScene(
+      scene(),
+      ["", " thinking"],
+      80,
+      coloredTheme,
+      (group) => ["", ` ${group.kind} ${group.rows.length}`],
+    );
+    const output = lines.join("\\n");
+    expect(output).toContain("[success:◉]");
+    expect(output).toContain("[muted:│]");
+    expect(output).toContain("[muted:╰─]");
+    expect(output).not.toContain("[muted:◉]");
+    expect(output).not.toContain("[success:╰─]");
+  });
+
+  it("colors thinking before a completed final answer as successful", () => {
+    const coloredTheme: ThemeLike = {
+      fg: (color, text) => `[${color}:${text}]`,
+      bold: (text) => text,
+    };
+    const layout = renderNativeThinkingMarkersLayout(
+      ["", " thought", "", " final"],
+      [
+        { type: "thinking", row: "thinking", renderedLines: [" thought"] },
+        { type: "final_answer", row: "final", renderedLines: [" final"] },
+      ],
+      80,
+      coloredTheme,
+      "success",
+    );
+    expect(layout.lines.join("\\n")).toContain("[success:○]");
+    expect(layout.lines.join("\\n")).toContain(" final");
+  });
+
+  it("marks every separated thinking paragraph while leaving final text native", () => {
+    const content = [
+      {
+        type: "thinking" as const,
+        row: "thinking",
+        renderedLines: [" first thinking", "", " second thinking"],
+      },
+      { type: "native" as const, row: "spacer", renderedLines: [""] },
+      { type: "final_answer" as const, row: "final", renderedLines: [" final answer"] },
+    ];
+    const layout = renderNativeThinkingMarkersLayout(
+      ["", " first thinking", "", " second thinking", "", " final answer"],
+      content,
+      80,
+      theme,
+    );
+    const output = layout.lines.join("\\n");
+    expect(output).toContain("○ first thinking");
+    expect(output).toContain("○ second thinking");
+    expect(output).toContain(" final answer");
+    expect(output).not.toContain("○ final answer");
+    expect(layout.assistantRegions).toHaveLength(1);
+  });
+
+  it("uses a terminal content marker when native commentary is the final child", () => {
+    const base = scene();
+    const tool = base.actionRuns[0]!.rows[0]!;
+    const ordered = {
+      ...base,
+      orderedChildren: [
+        {
+          type: "assistant" as const,
+          content: { type: "thinking" as const, row: "thinking", renderedLines: [" checking"] },
+        },
+        { type: "tool" as const, tool },
+        {
+          type: "assistant" as const,
+          content: {
+            type: "commentary" as const,
+            row: "commentary",
+            renderedLines: [" closing commentary", " second line"],
+          },
+        },
+      ],
+    };
+    const lines = renderStoryboardScene(
+      ordered,
+      ["", " checking", "", " closing commentary", " second line"],
+      80,
+      theme,
+      (group) => ["", ` ${group.kind} ${group.rows.length}`],
+    );
+    expect(lines.join("\n")).toContain("├─ read 1");
+    expect(lines.join("\n")).toContain("╰ closing commentary");
+    expect(lines.at(-1)).toContain("second line");
+    expect(lines.at(-1)).not.toContain("│");
+  });
+
+  it("deducts each structural prefix before rendering native content and groups", () => {
     const widths: number[] = [];
     const lines = renderStoryboardScene(
       scene(),
-      [` assistant work${" ".repeat(60)}`],
+      [` assistant work${" ".repeat(40)}`],
       80,
       theme,
       (group, width) => {
@@ -150,56 +268,105 @@ describe("storyboard renderer", () => {
       },
     );
 
-    expect(widths).toEqual([74]);
-    expect(lines.join("\n")).toContain("<success>◉");
-    expect(lines).toContain("   ╰─ read 1 file");
+    expect(widths).toEqual([77]);
+    expect(lines.some((line) => line.startsWith(" ◉ assistant work"))).toBe(true);
+    expect(lines).toContain(" ╰─ read 1 file");
+    expect(lines).toContain("     ● src/a.ts");
     expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
 
-    for (const width of [1, 10, 30, 49, 80, 120]) {
+    for (const width of [1, 2, 10, 30, 49, 80, 120]) {
       const narrow = renderStoryboardScene(
         scene(),
         [" assistant work"],
         width,
         theme,
-        () => ["", " heading", " row"],
+        () => ["", " heading", "  row"],
       );
       expect(narrow.length).toBeGreaterThan(0);
       expect(narrow.every((line) => visibleWidth(line) <= width)).toBe(true);
     }
   });
 
-  it("keeps a streaming note as a note while using the running color", () => {
+  it("uses a quiet note marker for a thinking-only turn", () => {
     const note = {
       ...scene(),
-      state: "running" as const,
+      state: "note" as const,
       actionRuns: [],
       assistant: {
         ...scene().assistant,
         expectedToolCallIds: [],
-        isStreaming: true,
       },
+      orderedChildren: [{
+        type: "assistant" as const,
+        content: { type: "thinking" as const, row: "thinking", renderedLines: [" reviewing logic"] },
+      }],
     };
-    const lines = renderStoryboardScene(note, [" reviewing logic"], 80, theme, () => [""]);
-
-    expect(lines.join("\\n")).toContain("<syntaxKeyword>○");
-    expect(lines.join("\\n")).not.toContain("<syntaxKeyword>◉");
-    expect(lines.join("\\n")).toContain("note");
-    expect(lines.join("\\n")).not.toContain("action");
+    const lines = renderStoryboardScene(note, ["", " reviewing logic"], 80, theme, () => [""]);
+    expect(lines.join("\n")).toContain("○ reviewing logic");
+    expect(lines.join("\n")).not.toContain("action");
   });
 
-  it("uses the same narrow-width count rule for native and Tool step headers", () => {
+  it("collapses the middle of an overlong continuous thinking block", () => {
+    const thinkingLines = [
+      " thought 1",
+      "",
+      " thought 2",
+      "",
+      " thought 3",
+      "",
+      " thought 4",
+      "",
+      " thought 5",
+      "",
+      " thought 6",
+      "",
+      " thought 7",
+    ];
+    const base = scene();
+    const note = {
+      ...base,
+      state: "note" as const,
+      actionRuns: [],
+      assistant: {
+        ...base.assistant,
+        expectedToolCallIds: [],
+        hasThinking: true,
+      },
+      orderedChildren: [{
+        type: "assistant" as const,
+        content: { type: "thinking" as const, row: "thinking", renderedLines: thinkingLines },
+      }],
+    };
+    const lines = renderStoryboardScene(note, ["", ...thinkingLines], 100, theme, () => [""]);
+    const output = lines.join("\\n");
+    expect(output).toContain("thought 1");
+    expect(output).toContain("thought 2");
+    expect(output).toContain("… 3 thinking blocks collapsed …");
+    expect(output).toContain("thought 6");
+    expect(output).toContain("thought 7");
+    expect(output).not.toContain("thought 3");
+    expect(output).not.toContain("thought 4");
+    expect(output).not.toContain("thought 5");
+    expect(output.match(/○/gu)).toHaveLength(4);
+  });
+
+  it("puts a presentation-only thinking placeholder above a tool-only turn", () => {
     const toolOnly = scene();
     const emptyAssistant = {
       ...toolOnly.assistant,
       renderedAssistantLines: [],
+      hasThinking: false,
     };
-    const toolOnlyScene = { ...toolOnly, assistant: emptyAssistant };
-
-    const narrow = renderStoryboardScene(toolOnlyScene, [], 70, theme, () => ["", " heading"]);
-    expect(narrow.join("\\n")).toContain("Tool step");
-    expect(narrow.join("\\n")).not.toContain("1 action");
-
-    const wide = renderStoryboardScene(toolOnlyScene, [], 100, theme, () => ["", " heading"]);
-    expect(wide.join("\\n")).toContain("1 action");
+    const lines = renderStoryboardScene(
+      { ...toolOnly, assistant: emptyAssistant },
+      [],
+      100,
+      theme,
+      () => ["", " Write 1 file", "  ● a.txt"],
+    );
+    const output = lines.join("\n");
+    expect(output).toContain("◉ Thinking...");
+    expect(output).toContain("╰─ Write 1 file");
+    expect(output).not.toContain("Tool step");
   });
 });

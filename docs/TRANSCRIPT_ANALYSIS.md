@@ -497,12 +497,15 @@ Safe cross-turn grouping therefore requires a small **read-only session projecti
 - read `buildContextEntries()`/`getBranch()` only;
 - subscribe to public lifecycle events only to invalidate/rebuild ephemeral projection state;
 - never append, replace, inject, or mutate an entry/message;
+- create only extension-owned temporary records containing minimal IDs and boundary flags;
+- never add private properties to Pi messages, components, or session objects;
+- do not retain complete `AssistantMessage` objects, thinking signatures, tool output, diffs, or provider payloads in the projection;
 - clear all projection state on `session_shutdown`, resume, fork, new session, reload, and tree navigation;
 - continue isolating all private TUI component inspection in `src/pi-adapter.ts`;
 - join projected entries to components only through exact object identity and/or unique validated tool-call IDs;
 - fail open when the mapping is incomplete or ambiguous.
 
-This deliberately relaxes the old “never read session state or use lifecycle hooks” architecture rule. It does **not** relax the more important presentation-only rule: no agent, context, tool, or session behavior may change.
+This deliberately relaxes the old “never read session state or use lifecycle hooks” architecture rule. It does **not** relax the more important presentation-only rule: no agent, context, tool, or session behavior may change. A read-only projection is an extension-owned index, not an injected session attribute and not a model-context modification.
 
 Internal harness `runId`/`turnId` fields are not an acceptable shortcut. Use only public extension/session APIs.
 

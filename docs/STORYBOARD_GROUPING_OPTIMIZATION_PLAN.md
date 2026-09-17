@@ -214,9 +214,10 @@ Suggested output:
 ```ts
 type ProjectedAssistantTurn = {
   readonly entryId: string;
-  readonly assistant: AssistantMessage;
   readonly toolCallIds: readonly string[];
   readonly resultEntryIds: readonly string[];
+  readonly hasVisibleThinking: boolean;
+  readonly hasCommentary: boolean;
   readonly boundaryBefore: boolean;
   readonly boundaryAfter: boolean;
 };
@@ -227,7 +228,7 @@ type ProjectedWorkSpan = {
 };
 ```
 
-The final types should expose only the minimum immutable metadata needed by the renderer. Do not copy tool outputs, thinking signatures, written content, diffs, or provider payloads.
+These are extension-owned records, not attributes added to Pi objects. The final types should expose only the minimum immutable metadata needed by the renderer. Do not retain a full `AssistantMessage` reference or copy tool outputs, thinking text/signatures, written content, diffs, or provider payloads.
 
 ### Data source
 
@@ -387,8 +388,14 @@ Allowed new behavior:
 
 - read the active session through public read-only APIs;
 - listen to public lifecycle notifications for cache invalidation;
-- retain minimal ephemeral IDs/boundaries for presentation;
+- retain minimal ephemeral IDs/boundaries in extension-owned objects for presentation;
 - arrange validated native children and compact summaries differently.
+
+Explicitly prohibited:
+
+- adding private properties to `AssistantMessage`, `ToolExecutionComponent`, or any other Pi object;
+- modifying `message.content`, tool rows, session entries, or `ctx.sessionManager`;
+- persisting the projection as a custom entry or sending it to the model.
 
 ## 13. Implementation phases
 

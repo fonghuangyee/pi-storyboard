@@ -9,8 +9,9 @@ This document studies Pi's session model deeply enough to answer a narrower pres
 The important distinction is between **semantic ownership** and **visual grouping**:
 
 - a tool call belongs to exactly one assistant response and is joined to its result by `toolCallId`;
-- several validated assistant/tool turns may still be displayed inside one larger presentation-only work sequence;
-- that larger sequence is not a Pi turn, agent run, session entry, or model-facing object.
+- the renderer can compose source-ordered thinking/tool activity inside one validated assistant turn;
+- arbitrary historical turns remain separate because the session format does not expose a durable public agent-run boundary;
+- a narrow visual continuation can hide an empty/absent-thinking slot when a settled tool turn is directly adjacent to a previous visible-thinking turn, without changing ownership.
 
 ## Sources reviewed
 
@@ -88,7 +89,7 @@ The following terms must remain distinct:
 | Pi turn | Runtime unit: one assistant response plus that response's tool calls/results |
 | agent run | Runtime processing started for a prompt; it may contain many Pi turns |
 | action run | This extension's adjacent same-kind compact tool rows |
-| work span | Proposed presentation-only chain of validated Pi turns |
+| work span | Presentation-only composition of one validated Pi turn, or the restricted visible-root plus adjacent empty-thinking continuation; never a persisted run |
 | chapter | Proposed visible-thinking/action portion of a work span, bounded by narrative text or another hard boundary |
 
 A work span and chapter are UI terms only. They must never be presented as persisted Pi identities.
@@ -231,7 +232,7 @@ Other fields are not substitutes:
 - timestamps cannot establish ownership;
 - adjacency alone misses hidden custom messages and tree/compaction boundaries.
 
-Therefore exact historical agent-run reconstruction is not available from these session files. A larger grouping must use a deliberately weaker and truthful concept: a **presentation-only work span** defined by transcript structure.
+Therefore exact historical agent-run reconstruction is not available from these session files. General larger grouping would require a weaker presentation-only concept, so the production renderer enables only the constrained empty-thinking continuation: exact active-path ownership, consecutive projected turns, direct component adjacency, and no hard boundary are all required.
 
 ## 5. What Pi's native TUI does
 
@@ -365,15 +366,15 @@ The current storyboard can produce one root per tool-bearing assistant response.
 
 Within the 1,822 completed turns in measured spans:
 
-- 278 turns had empty or absent visible thinking and currently need synthetic headers;
+- 278 turns had empty or absent visible thinking;
 - 274 of those occurred after visible thinking already existed earlier in the same validated span;
 - only 4 spans began without visible thinking.
 
-If empty/absent turns inherit only the **visual work-span context**—not semantic thinking ownership—the repeated placeholder count could fall from 278 to 4. If a leading action group is allowed to be its own root, all synthetic `Thinking...` text can be removed.
+The implemented continuation lets an eligible empty/absent turn inherit only the **visual root** of the immediately preceding visible-thinking turn—not semantic thinking ownership. It therefore removes the orphan root without merging the whole historical work span. Leading empty work still uses an observable action root, and live/ambiguous cases wait or fall back natively.
 
-This is the strongest evidence for introducing a presentation work span above individual Pi turns.
+This is deliberately narrower than the earlier maximal work-span experiment, which became too large and made aggregate state coloring misleading.
 
-## 9. Proposed grouping model
+## 9. Production grouping model
 
 ### Layer 1: exact Pi turn ownership
 
@@ -385,33 +386,40 @@ assistant response + exact toolCallId set + matching tool rows/results
 
 Never merge or rewrite these source records.
 
-### Layer 2: presentation work span
+### Layer 2: active-path validation
 
-Combine adjacent validated turn projections under one outer storyboard only when:
+Validate each turn against the active branch and component stream:
 
-- they are consecutive on the active branch;
-- every turn's call/result ownership is complete and unique;
-- no user, system, custom message, summary, compaction, branch, visible custom-entry component, or unknown native component separates them;
-- source-order reconstruction succeeds for every included turn;
-- no row is expanded or otherwise requires native fallback.
+- every call/result ownership set must be complete and unique;
+- the turn must be on the selected active path;
+- no user, system, custom message, summary, compaction, branch, visible custom-entry component, or unknown native component may be reinterpreted;
+- source-order reconstruction must succeed;
+- no row may be expanded or require native fallback.
 
-The outer rail means only:
-
-> these validated work turns are consecutive in the displayed transcript with no intervening narrative boundary
-
-It does not mean they share a persisted run ID.
+This validates each storyboard and, only for the explicit continuation case, proves that adjacent scenes may share one visual root. Historical entries still cannot prove that two turns share an agent run.
 
 ### Layer 3: visible-thinking chapters
 
-Inside a work span:
+Inside one validated turn:
 
 - the first visible thinking run starts the root;
-- later visible thinking runs become continuation steps (`○`) rather than new top-level cards;
-- empty/absent thinking adds no text and no synthetic step;
-- same-kind tool rows may merge across an empty turn boundary when no visible source item intervenes;
+- later visible thinking runs become continuation steps (`○`) within that turn;
+- empty/absent thinking adds no fake text or synthetic step;
+- same-kind tool rows merge only within the original validated turn;
 - different tool kinds remain separate action runs;
 - commentary breaks out as full-width native prose and starts a new chapter afterward;
 - final/unknown text ends the work span and remains native.
+
+For an allowed continuation, the later empty-thinking turn contributes only its action runs:
+
+```text
+ ◉ Locating registerTool definitions
+ ├─ Run 1 command
+ ├─ Read 4 files
+ ╰─ Run 1 command
+```
+
+The later scenes remain separate ownership units, and same-kind groups across a turn boundary remain separate compact groups.
 
 Example:
 
@@ -462,7 +470,7 @@ The commentary remains exactly where the model emitted it. The post-commentary a
 
 ## 10. Long-span compaction in the UI
 
-A work span may contain dozens of turns; the local maximum was 103. One outer rail alone removes repeated roots but does not reduce all vertical volume.
+Historical measurement found transcript chains of dozens of turns, but those chains are not used as one visual storyboard because their agent-run ownership is unavailable.
 
 A second, optional presentation optimization can window only **settled successful middle chapters**:
 
@@ -485,7 +493,7 @@ Safety rules:
 - keep this as ephemeral UI state only;
 - do not modify or compact session/model context.
 
-This should be implemented only after work-span grouping and commentary breakout are proven stable.
+The work-span grouping and commentary breakout described here are implemented behind the read-only session projection and retain the native fallback when validation is incomplete.
 
 ## 11. Required architecture change
 
@@ -527,18 +535,18 @@ These may be supporting diagnostics, never ownership proof.
 
 ## 13. Final conclusion
 
-The current assistant-response storyboard is semantically exact but visually too fine-grained for real Pi sessions. Local history shows that long chains of assistant/tool turns are normal and that almost every empty-thinking turn follows visible thinking inside the same transcript work sequence.
+The assistant-response storyboard remains semantically exact while the implemented work-span layer reduces repetitive cards for validated active-path chains. Local history shows that long chains of assistant/tool turns are normal and that almost every empty-thinking turn follows visible thinking inside the same transcript work sequence.
 
-The safe optimization is not to merge assistant messages or thinking signatures. It is to add a larger, explicitly presentation-only work-span layer while preserving each Pi turn internally.
+The safe optimization is not to merge assistant messages or thinking signatures. It is to retain each Pi turn as an ownership unit while allowing a validated empty-thinking turn to continue beneath the previous visible-thinking root.
 
-Recommended presentation changes:
+Implemented presentation rules:
 
-1. group consecutive validated tool turns into one outer work span;
-2. show later visible thinking as continuation steps rather than new cards;
-3. omit empty/absent thinking placeholders inside an established span;
-4. use an action-root when a span starts without visible thinking;
-5. render validated commentary full-width like ordinary final text, at its original position, then resume a new storyboard chapter;
-6. optionally window settled middle chapters for very long spans;
+1. keep each validated Pi turn as its own scene and ownership unit;
+2. show later visible thinking within that turn as continuation steps rather than new cards;
+3. attach only directly adjacent settled empty/absent-thinking tool turns to a validated visible root;
+4. preserve per-turn action-group boundaries and exact source order;
+5. use an action root when no eligible preceding visible-thinking turn exists;
+6. render validated commentary full-width like ordinary final text, at its original position;
 7. fail open at every session, ownership, phase, component, expansion, or renderer ambiguity.
 
 The implementation sequence and acceptance criteria are defined in [`STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md`](./STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md).

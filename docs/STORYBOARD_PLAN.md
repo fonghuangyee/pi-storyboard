@@ -1,6 +1,6 @@
 # Plan: thinking-led turn storyboard
 
-> Status: **implemented.** This restores the clearer branch hierarchy without reintroducing a persisted or synthetic “master” object. The extension remains a presentation-only TUI projection and does not modify Pi's agent, messages, tools, context, or session pipeline.
+> Status: **implemented.** This restores the clearer branch hierarchy without reintroducing a persisted or synthetic “master” object. The extension remains a presentation-only TUI projection and does not modify Pi's agent, messages, tools, context, or session pipeline. A narrow empty-thinking continuation is enabled only by the separate read-only active-path projection described in [`STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md`](./STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md).
 
 ## 1. Documented Pi boundary
 
@@ -34,9 +34,9 @@ AssistantMessage.content = [
 
 Tool results are separate messages/components joined by `toolCallId`. Pi's session JSONL does not persist a `master`, visual story node, or turn wrapper around those entries.
 
-The extension therefore renders one validated assistant response and its exactly matched tool rows as a **visual turn block**. The block is a projection of Pi's documented turn boundary, not a new Pi record. A later assistant response starts the next block; consecutive blocks form the ongoing visual storyboard for the request.
+The extension therefore renders one validated assistant response and its exactly matched tool rows as a **visual turn block**. The block is a projection of Pi's documented turn boundary, not a new Pi record. A later response with visible thinking starts the next block. A directly adjacent settled response with empty/absent thinking may continue beneath the previous visible-thinking root, but its scene and tool ownership remain separate.
 
-The current render-only seam does not receive lifecycle run IDs. It therefore does not draw one outer rail across multiple turns or claim that adjacent restored messages share a particular run.
+The current render-only seam does not receive lifecycle run IDs. It therefore never draws a general outer rail across historical turns or claims that adjacent restored messages share a particular run; the empty-thinking continuation is a narrow layout rule validated by active-path IDs and hard-boundary flags.
 
 ## 2. Visual contract
 
@@ -65,13 +65,13 @@ Grammar:
 - `●` — one tool row with its existing running/success/error state;
 - `│` — the current turn continues.
 
-The header is native assistant content. It is not generated from tool metadata and does not represent a stored master object. Ordinary paragraph-level thinking markers use the muted theme color; the top-level action marker follows the turn state color. Thinking immediately before a validated final answer follows that answer's running/completed state. The optional action count is a render-time aggregate over the already validated turn.
+The header is native assistant content. It is not generated from tool metadata and does not represent a stored master object. Ordinary paragraph-level thinking markers use the muted theme color; the top-level action marker follows the turn state color. Thinking immediately before a validated final answer follows that answer's running/completed state. The optional action count is a render-time aggregate over the validated scene or restricted empty-thinking continuation.
 
-The hierarchy means only **“these items belong to the same Pi turn.”** It does not claim that a thinking or commentary block caused, planned, or semantically owns a tool call.
+The hierarchy means only **“these items belong to the same Pi turn”** within a scene. The limited continuation additionally means **“this later settled turn has no visible thinking and is directly adjacent in the validated active path”**; it does not create shared semantic ownership. The renderer never claims that a thinking or commentary block caused, planned, or semantically owns a tool call.
 
 ### Tool-only turn
 
-A tool-only response has no visible native thinking to use as a header, so the renderer inserts a presentation-only `Thinking...` placeholder. It is not stored in Pi's message/session data and does not invent a `Tool step` title:
+A tool-only response has no visible native thinking to use as a header. In the legacy/per-turn fallback the renderer inserts a presentation-only `Thinking...` placeholder. In a validated active-path work span, the first observable action becomes the root instead. Neither is stored in Pi's message/session data and neither invents a `Tool step` title:
 
 ```text
  ◉ Write 1 file
@@ -89,7 +89,7 @@ A tool-only response has no visible native thinking to use as a header, so the r
 
 ### Successive turns
 
-Each turn closes before the next native thinking header begins:
+Each separately validated work turn normally gets its own presentation chapter. A later turn with empty/absent thinking may be rendered as a continuation of the preceding visible-thinking chapter when active-path validation proves there is no hard boundary; source-order thinking blocks within each turn may continue under the same rail:
 
 ```text
  ◉ Inspecting documentation                                  1 action
@@ -98,13 +98,12 @@ Each turn closes before the next native thinking header begins:
      ● docs/extensions.md
      ● agent-loop.js
 
- ◉ Verifying the implementation                              1 action
- │
- ╰─ Run 1 command
-     ● npm test
+ ○ Applying the validated fix                              1 action
+ ╰─ Edit 1 file
+     ● src/index.ts
 ```
 
-This provides visual continuity without merging two assistant messages or pretending the render seam has an agent-run identity.
+A scene remains one assistant response plus its matched tools. A continuation may arrange multiple scenes beneath one visible root, without merging assistant messages or pretending the render seam has an agent-run identity.
 
 ## 3. Text phases
 
@@ -126,7 +125,7 @@ Commentary is not a label. It may contain long paragraphs, headings, lists, link
 
 A single continuous thinking block is visually capped at four paragraphs: the first two and last two remain visible, with a presentation-only count of the hidden middle paragraphs. This cap applies only to thinking; the native thinking component and its full content remain available through Pi's normal toggle.
 
-When a response begins with commentary and has no thinking child, the placeholder appears first so the tool remains under a thinking block, followed by the complete native commentary. A tool-only response likewise starts under the placeholder. While streaming, unknown text remains native until Pi supplies a validated phase.
+When a response begins with commentary and has no thinking child, the placeholder appears first in the legacy fallback so the tool remains under a thinking block, followed by the complete native commentary. In active-path mode, an empty-thinking response continues under an eligible preceding visible root; without such an anchor, its first action is the root. While streaming, unknown text remains native until Pi supplies a validated phase.
 
 A message containing final-answer or unknown text plus tool calls is rendered completely natively. For a no-tool mixed response, the extension may mark only the thinking child starts and leaves the final/unknown text unprefixed and native. It does not infer phase from position, wording, provider, or `stopReason`.
 
@@ -140,7 +139,7 @@ A message containing final-answer or unknown text plus tool calls is rendered co
 6. Any thinking, commentary, native diagnostic, or spacer ends the current tool run.
 7. Keep every assistant child complete and in its original position.
 8. Do not infer causal ownership between content and calls.
-9. Never merge separate assistant messages into one turn block.
+9. Never merge assistant-message ownership; only the explicit settled empty-thinking continuation may place multiple scenes in one visual layout span.
 
 Example:
 
@@ -206,7 +205,8 @@ Render the complete affected response through Pi's original path when:
 - a row is expanded;
 - private assistant/tool/component shape is incompatible;
 - native child extraction or mouse layout cannot be validated;
-- a renderer throws or returns an invalid shape.
+- a renderer throws or returns an invalid shape;
+- an empty-thinking continuation cannot prove consecutive active-path turns and no hard boundary.
 
 Pure final answers remain ordinary full-width Pi output without storyboard decoration.
 
@@ -280,7 +280,7 @@ The sole live integration seam remains the guarded `Container.prototype.render` 
 - parallel and out-of-order completion;
 - abort/error/length diagnostics;
 - restored sessions, compaction, fork/resume/new/reload;
-- multiple successive assistant/tool turns displayed as separate closed blocks;
+- multiple successive assistant/tool turns, including an empty-thinking continuation under the previous visible root;
 - theme switching and fullscreen mode.
 
 ## 11. Current implementation status

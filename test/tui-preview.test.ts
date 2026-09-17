@@ -66,9 +66,10 @@ describe("TuiPreview", () => {
     expect(scrolledStoryboard).toContain("Write 1 file");
     expect(scrolledStoryboard).toContain("Collapsed running edit");
     expect(scrolledStoryboard).toContain("README.md");
-    expect(scrolledStoryboard).toContain("thinking blocks collapsed");
+    expect(scrolledStoryboard).toContain("thinking steps behind the scenes");
     expect(scrolledStoryboard).toContain("Final answer");
     expect(scrolledStoryboard).toContain("Unknown text phase");
+    expect(scrolledStoryboard).toContain("Locating registerTool definitions");
     expect(scrolledStoryboard.split("\n").every((line) => visibleWidth(line) <= 100)).toBe(true);
 
     preview.handleInput("\u001b[D");

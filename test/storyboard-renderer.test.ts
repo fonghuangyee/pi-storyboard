@@ -178,6 +178,38 @@ describe("turn storyboard renderer", () => {
     expect(output).not.toContain("[success:╰─]");
   });
 
+  it("colors every thinking block from its owning turn state", () => {
+    const coloredTheme: ThemeLike = {
+      fg: (color, text) => `[${color}:${text}]`,
+      bold: (text) => text,
+    };
+    const base = scene();
+    const firstTool = base.actionRuns[0]!.rows[0]!;
+    const secondTool = { ...firstTool, toolCallId: "read-2", toolRow: "read-2" };
+    const ordered = {
+      ...base,
+      actionRuns: [
+        { kind: "read" as const, rows: [firstTool] },
+        { kind: "read" as const, rows: [secondTool] },
+      ],
+      orderedChildren: [
+        { type: "assistant" as const, content: { type: "thinking" as const, row: "first", renderedLines: [" first"] } },
+        { type: "tool" as const, tool: firstTool },
+        { type: "assistant" as const, content: { type: "thinking" as const, row: "second", renderedLines: [" second"] } },
+        { type: "tool" as const, tool: secondTool },
+      ],
+    };
+    const output = renderStoryboardScene(
+      ordered,
+      ["", " first", "", " second"],
+      80,
+      coloredTheme,
+      (group) => ["", ` ${group.kind} ${group.rows.length}`],
+    ).join("\\n");
+    expect(output).toContain("[success:◉]");
+    expect(output).toContain("[success:○]");
+  });
+
   it("colors thinking before a completed final answer as successful", () => {
     const coloredTheme: ThemeLike = {
       fg: (color, text) => `[${color}:${text}]`,
@@ -341,7 +373,8 @@ describe("turn storyboard renderer", () => {
     const output = lines.join("\\n");
     expect(output).toContain("thought 1");
     expect(output).toContain("thought 2");
-    expect(output).toContain("… 3 thinking blocks collapsed …");
+    expect(output).toContain("↳ 3 thinking steps behind the scenes");
+    expect(lines.find((line) => line.includes("behind the scenes"))).toMatch(/^ │ ↳/u);
     expect(output).toContain("thought 6");
     expect(output).toContain("thought 7");
     expect(output).not.toContain("thought 3");

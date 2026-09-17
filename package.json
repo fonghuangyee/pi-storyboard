@@ -1,7 +1,7 @@
 {
   "name": "pi-tool-groups",
   "version": "0.1.0",
-  "description": "Group collapsed Pi tool rows into source-ordered turn storyboards while preserving native fallbacks.",
+  "description": "Group collapsed Pi tool rows into source-ordered work-span storyboards while preserving native fallbacks.",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,

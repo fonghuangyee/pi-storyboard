@@ -7,6 +7,8 @@ import type {
   StoryboardOrderedChild,
   StoryboardScene,
   StoryboardToolSnapshot,
+  StoryboardWorkSpan,
+  StoryboardChapter,
 } from "./storyboard.ts";
 
 export type StoryboardGroupRenderer = (
@@ -104,6 +106,13 @@ function hasVisibleText(line: string): boolean {
   return stripTerminalSequences(line).trim().length > 0;
 }
 
+/** Preserve the native content column when inserting a presentation summary. */
+function thinkingTextIndent(lines: readonly string[]): string {
+  const firstVisible = lines.find(hasVisibleText);
+  if (firstVisible === undefined) return "";
+  return stripTerminalSequences(firstVisible).match(/^\s*/u)?.[0] ?? "";
+}
+
 function thinkingParagraphRanges(lines: readonly string[]): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
   let index = 0;
@@ -140,7 +149,7 @@ function thinkingParts(lines: readonly string[]): readonly ThinkingPart[] {
     lines: [],
     sourceStart: -1,
     sourceHeight: 0,
-    summary: `… ${hiddenCount} thinking ${hiddenCount === 1 ? "block" : "blocks"} collapsed …`,
+    summary: `↳ ${hiddenCount} thinking ${hiddenCount === 1 ? "step" : "steps"} behind the scenes`,
   });
   parts.push(...last.map((range) => ({
     lines: lines.slice(range.start, range.end),
@@ -161,11 +170,13 @@ function assistantMarkerPrefix(
   aggregate: boolean,
   layout: StoryLayout,
   theme: ThemeLike,
+  markerState: SceneState = scene.state,
+  hasActionsOverride?: boolean,
 ): string {
   if (layout.assistantPrefixWidth === 0) return "";
-  const hasActions = aggregate && scene.actionRuns.length > 0;
+  const hasActions = aggregate && (hasActionsOverride ?? scene.actionRuns.length > 0);
   const shape = hasActions ? "◉" : "○";
-  const color = hasActions ? sceneMarkerColor(scene.state) : "muted";
+  const color = hasActions ? sceneMarkerColor(markerState) : "muted";
   return `${layout.indent}${theme.fg(color, shape)}`;
 }
 
@@ -181,10 +192,19 @@ function renderAssistantHeader(
   aggregate: boolean,
   layout: StoryLayout,
   theme: ThemeLike,
+  markerState: SceneState = scene.state,
+  hasActionsOverride?: boolean,
+  actionCountOverride?: number,
 ): AssistantBlockLayout {
-  const marker = assistantMarkerPrefix(scene, aggregate, layout, theme);
+  const marker = assistantMarkerPrefix(scene, aggregate, layout, theme, markerState, hasActionsOverride);
   const rail = assistantRailPrefix(layout, theme);
-  const status = theme.fg("muted", statusText(scene));
+  const count = actionCountOverride ?? scene.actionRuns.reduce((total, run) => total + run.rows.length, 0);
+  const statusValue = actionCountOverride === undefined
+    ? statusText(scene)
+    : count === 0
+      ? "note"
+      : `${count} ${count === 1 ? "action" : "actions"}${markerState === "failed" ? " · failed" : ""}`;
+  const status = theme.fg("muted", statusValue);
   const lines: string[] = [];
   const regions: Array<Omit<StoryboardAssistantRenderRegion, "row">> = [];
   let markerPlaced = false;
@@ -195,7 +215,7 @@ function renderAssistantHeader(
     if (partIndex > 0) lines.push(fit(rail, width));
     if (part.summary !== undefined) {
       const summaryStart = lines.length;
-      lines.push(fit(`${rail}${theme.fg("muted", part.summary)}`, width));
+      lines.push(fit(`${rail}${thinkingTextIndent(nativeLines)}${theme.fg("muted", part.summary)}`, width));
       regions.push({
         start: summaryStart,
         height: 1,
@@ -344,6 +364,7 @@ function renderAssistantContinuation(
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
+  markerColor: StoryboardMarkerColor = "muted",
 ): AssistantBlockLayout {
   const rail = assistantRailPrefix(layout, theme);
   const terminalPrefix = layout.assistantPrefixWidth === 0
@@ -352,7 +373,7 @@ function renderAssistantContinuation(
   const terminalContinuation = " ".repeat(layout.assistantPrefixWidth);
   const thinkingMarker = layout.assistantPrefixWidth === 0
     ? ""
-    : `${layout.indent}${theme.fg("muted", "○")}`;
+    : `${layout.indent}${theme.fg(markerColor, "○")}`;
   const lines: string[] = [];
   const regions: Array<Omit<StoryboardAssistantRenderRegion, "row">> = [];
   const parts = content.type === "thinking"
@@ -365,7 +386,7 @@ function renderAssistantContinuation(
     if (partIndex > 0) lines.push(fit(rail, width));
     if (part.summary !== undefined) {
       const summaryStart = lines.length;
-      lines.push(fit(`${rail}${theme.fg("muted", part.summary)}`, width));
+      lines.push(fit(`${rail}${thinkingTextIndent(content.renderedLines)}${theme.fg("muted", part.summary)}`, width));
       regions.push({
         start: summaryStart,
         height: 1,
@@ -558,6 +579,7 @@ function orderedSceneLayout(
         safeWidth,
         layout,
         theme,
+        sceneMarkerColor(scene.state),
       );
       lines.push(...continuation.lines);
       for (const region of continuation.regions) {
@@ -655,6 +677,120 @@ export function renderStoryboardSceneLayout(
     : orderedSceneLayout(scene, nativeAssistantLines, width, theme, renderGroup);
 }
 
+function renderWorkChapter(
+  chapter: StoryboardChapter,
+  span: StoryboardWorkSpan,
+  width: number,
+  layout: StoryLayout,
+  theme: ThemeLike,
+  renderGroup: StoryboardGroupRenderer,
+  lines: string[],
+  regions: StoryboardAssistantRenderRegion[],
+): void {
+  const items = chapter.items;
+  if (items.length === 0) return;
+  const terminalIndex = items.length - 1;
+  const chapterActions = items.reduce(
+    (total, item) => total + (item.type === "action" ? item.run.rows.length : 0),
+    0,
+  );
+  const spanHasActions = span.chapters.some((candidate) => candidate.items.some((item) => item.type === "action"));
+
+  for (let index = 0; index < items.length; index++) {
+    const item = items[index]!;
+    if (index > 0) lines.push(fit(assistantRailPrefix(layout, theme), width));
+    const terminal = index === terminalIndex;
+    if (item.type === "thinking") {
+      const start = lines.length;
+      const block = index === 0
+        ? renderAssistantHeader(
+          item.scene,
+          item.content.renderedLines,
+          width,
+          true,
+          layout,
+          theme,
+          span.state,
+          spanHasActions,
+          chapterActions,
+        )
+        : renderAssistantContinuation(item.content, terminal, width, layout, theme, sceneMarkerColor(item.scene.state));
+      lines.push(...block.lines);
+      for (const region of block.regions) {
+        regions.push({ row: item.content.row, ...region, start: start + region.start });
+      }
+    } else if (index === 0) {
+      lines.push(...renderDirectActionRun(
+        item.run,
+        span.state,
+        width,
+        layout,
+        theme,
+        renderGroup,
+      ));
+    } else {
+      lines.push(...renderActionRun(
+        item.run,
+        terminal,
+        width,
+        layout,
+        theme,
+        renderGroup,
+      ));
+    }
+  }
+}
+
+/**
+ * Render a validated sequence of turn scenes as one presentation-only work
+ * span. Commentary is emitted with its native child at full width; it is not
+ * prefixed, summarized, or moved across the tool stream.
+ */
+export function renderStoryboardWorkSpanLayout(
+  span: StoryboardWorkSpan,
+  width: number,
+  theme: ThemeLike,
+  renderGroup: StoryboardGroupRenderer,
+): StoryboardSceneLayout {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const layout = layoutForWidth(safeWidth);
+  const firstScene = span.scenes[0];
+  if (firstScene === undefined) throw new Error("work span has no scenes");
+
+  const leading = leadingNativeLines(firstScene.assistant.renderedAssistantLines);
+  const lines = [...leading.leading];
+  const assistantRegions: StoryboardAssistantRenderRegion[] = [];
+  if (leading.count === 0) lines.push("");
+
+  for (let partIndex = 0; partIndex < span.parts.length; partIndex++) {
+    const part = span.parts[partIndex]!;
+    if (part.type === "chapter") {
+      renderWorkChapter(part, span, safeWidth, layout, theme, renderGroup, lines, assistantRegions);
+      continue;
+    }
+
+    if (lines.length > 0) lines.push("");
+    const start = lines.length;
+    for (const line of part.content.renderedLines) {
+      if (visibleWidth(line) > safeWidth) throw new Error("commentary exceeds terminal width");
+      lines.push(line);
+    }
+    if (part.content.renderedLines.length > 0) {
+      assistantRegions.push({
+        row: part.content.row,
+        start,
+        height: part.content.renderedLines.length,
+        prefixWidth: 0,
+        sourceStart: 0,
+        sourceHeight: part.content.renderedLines.length,
+      });
+    }
+    if (partIndex < span.parts.length - 1) lines.push("");
+  }
+
+  return { lines, assistantRegions };
+}
+
 /**
  * Decorate only native thinking children when a response also contains a
  * final/unknown text block. The text remains Pi-native and unprefixed; this
@@ -682,7 +818,7 @@ function renderThinkingMarkerBlock(
     if (partIndex > 0) lines.push(fit(rail, width));
     if (part.summary !== undefined) {
       const summaryStart = lines.length;
-      lines.push(fit(`${rail}${theme.fg("muted", part.summary)}`, width));
+      lines.push(fit(`${rail}${thinkingTextIndent(nativeLines)}${theme.fg("muted", part.summary)}`, width));
       regions.push({
         start: summaryStart,
         height: 1,

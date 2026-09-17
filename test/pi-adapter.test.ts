@@ -7,6 +7,7 @@ import {
   PATCH_MARKER,
 } from "../src/pi-adapter.ts";
 import type { ThemeLike, ToolRowSnapshot } from "../src/renderer.ts";
+import type { SessionProjection } from "../src/session-projection.ts";
 
 const theme: ThemeLike = {
   fg: (_color, text) => text,
@@ -166,6 +167,216 @@ describe("Container adapter", () => {
     expect(read.render).not.toHaveBeenCalled();
     expect(bash.render).not.toHaveBeenCalled();
     expect(following.render).toHaveBeenCalledOnce();
+    handle?.uninstall();
+  });
+
+  it("keeps settled web tools in a validated storyboard", () => {
+    const owner = storyboardAssistant(["researching"], ["web-1"]);
+    const ownerFields = owner as unknown as Record<string, unknown>;
+    const message = ownerFields.lastMessage as Record<string, unknown>;
+    const content = message.content as Array<Record<string, unknown>>;
+    content[1]!.name = "web_search";
+    const webSearch = tool("web_search", { queries: ["Pi"] }, result());
+    assignToolCallId(webSearch, "web-1");
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({
+        leafId: "result",
+        turns: [{
+          entryId: "assistant",
+          toolCallIds: ["web-1"],
+          resultEntryIds: ["result"],
+          hasVisibleThinking: true,
+          hasCommentary: false,
+          hasFinalAnswer: false,
+          hasUnknownText: false,
+          valid: true,
+          boundaryBefore: false,
+          boundaryAfter: false,
+        }],
+      }),
+      renderGroup: (group: { kind: string; rows: readonly ToolRowSnapshot[] }) => [
+        "",
+        ` ${group.kind} ${group.rows[0]?.toolName}`,
+      ],
+    });
+
+    const output = container(owner, webSearch).render(80).join("\\n");
+    expect(output).toContain("╰─ tool web_search");
+    expect(webSearch.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("keeps a live blocking tool in the storyboard before its session result exists", () => {
+    const owner = storyboardAssistant(["waiting for an answer"], ["ask-1"]);
+    const pendingQuestion = tool("ask_user_question", { questions: [] });
+    assignToolCallId(pendingQuestion, "ask-1");
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({ leafId: null, turns: [] }),
+      renderGroup: (group: { kind: string }) => ["", ` ${group.kind} question`],
+    });
+
+    const value = container(owner, pendingQuestion);
+    const output = value.render(80).join("\\n");
+    expect(output).toContain("◉waiting for an answer");
+    expect(output).toContain("╰─ tool question");
+    expect(pendingQuestion.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("continues a validated empty-thinking turn under the previous thinking root", () => {
+    const firstOwner = storyboardAssistant(["first thinking"], ["read-1"]);
+    const firstTool = tool("read", { path: "first.ts" }, result());
+    assignToolCallId(firstTool, "read-1");
+    const secondOwner = storyboardAssistant([""], ["read-2"], { thinking: false });
+    const secondTool = tool("read", { path: "second.ts" }, result());
+    assignToolCallId(secondTool, "read-2");
+    const session: SessionProjection = {
+      leafId: "a2",
+      turns: [
+        {
+          entryId: "a1",
+          toolCallIds: ["read-1"],
+          resultEntryIds: ["r1"],
+          hasVisibleThinking: true,
+          hasCommentary: false,
+          hasFinalAnswer: false,
+          hasUnknownText: false,
+          valid: true,
+          boundaryBefore: false,
+          boundaryAfter: false,
+        },
+        {
+          entryId: "a2",
+          toolCallIds: ["read-2"],
+          resultEntryIds: ["r2"],
+          hasVisibleThinking: false,
+          hasCommentary: false,
+          hasFinalAnswer: false,
+          hasUnknownText: false,
+          valid: true,
+          boundaryBefore: false,
+          boundaryAfter: false,
+        },
+      ],
+    };
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: (group: { kind: string; rows: readonly ToolRowSnapshot[] }) => [
+        "",
+        ` ${group.kind} ${group.rows.length}`,
+      ],
+    });
+    const output = container(firstOwner, firstTool, secondOwner, secondTool).render(80).join("\\n");
+    expect(output.match(/◉/gu)).toHaveLength(1);
+    expect(output).toContain("├─ read 1");
+    expect(output).toContain("╰─ read 1");
+    expect(output).not.toContain("Thinking...");
+    handle?.uninstall();
+  });
+
+  it("does not continue across a projected hard boundary", () => {
+    const firstOwner = storyboardAssistant(["first thinking"], ["read-1"]);
+    const firstTool = tool("read", { path: "first.ts" }, result());
+    assignToolCallId(firstTool, "read-1");
+    const secondOwner = storyboardAssistant([""], ["read-2"], { thinking: false });
+    const secondTool = tool("read", { path: "second.ts" }, result());
+    assignToolCallId(secondTool, "read-2");
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({
+        leafId: "a2",
+        turns: [
+          {
+            entryId: "a1",
+            toolCallIds: ["read-1"],
+            resultEntryIds: ["r1"],
+            hasVisibleThinking: true,
+            hasCommentary: false,
+            hasFinalAnswer: false,
+            hasUnknownText: false,
+            valid: true,
+            boundaryBefore: false,
+            boundaryAfter: true,
+          },
+          {
+            entryId: "a2",
+            toolCallIds: ["read-2"],
+            resultEntryIds: ["r2"],
+            hasVisibleThinking: false,
+            hasCommentary: false,
+            hasFinalAnswer: false,
+            hasUnknownText: false,
+            valid: true,
+            boundaryBefore: false,
+            boundaryAfter: false,
+          },
+        ],
+      }),
+      renderGroup: (group: { kind: string; rows: readonly ToolRowSnapshot[] }) => [
+        "",
+        ` ${group.kind} ${group.rows.length}`,
+      ],
+    });
+
+    const output = container(firstOwner, firstTool, secondOwner, secondTool).render(80).join("\\n");
+    expect(output.match(/◉/gu)).toHaveLength(2);
+    handle?.uninstall();
+  });
+
+  it("renders validated commentary at full native width before resuming work", () => {
+    const owner = assistant(["", "commentary 78"]);
+    const fields = owner as unknown as Record<string, unknown>;
+    const commentary = {
+      render: vi.fn((width: number) => [`commentary ${width}`]),
+      handleMouse: vi.fn(() => ({ handled: true })),
+    };
+    const spacer = { render: vi.fn(() => [""]) };
+    fields.lastMessage = {
+      role: "assistant",
+      content: [
+        { type: "text", text: "commentary", textSignature: JSON.stringify({ v: 1, id: "commentary", phase: "commentary" }) },
+        { type: "toolCall", id: "read-commentary", name: "read", arguments: {} },
+      ],
+      stopReason: "toolUse",
+    };
+    fields.isStreaming = false;
+    fields.contentContainer = {
+      children: [spacer, commentary],
+      mouseLayout: {
+        width: 78,
+        children: [{ component: spacer, height: 1 }, { component: commentary, height: 1 }],
+      },
+    };
+    const read = tool("read", { path: "commentary.ts" }, result());
+    assignToolCallId(read, "read-commentary");
+    const session: SessionProjection = {
+      leafId: "result",
+      turns: [{
+        entryId: "assistant",
+        toolCallIds: ["read-commentary"],
+        resultEntryIds: ["result"],
+        hasVisibleThinking: false,
+        hasCommentary: true,
+        hasFinalAnswer: false,
+        hasUnknownText: false,
+        valid: true,
+        boundaryBefore: false,
+        boundaryAfter: false,
+      }],
+    };
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: () => ["", " Read 1 file"],
+    });
+    const output = container(owner, read).render(80).join("\\n");
+    expect(output).toContain("commentary 80");
+    expect(output).not.toContain("│commentary 80");
+    expect(commentary.render).toHaveBeenCalledWith(80);
+    expect(output).toContain("◉");
     handle?.uninstall();
   });
 
@@ -583,7 +794,7 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("groups failures with only the last bounded error line", () => {
+  it("groups failures with only a useful bounded error line", () => {
     const failed = tool(
       "bash",
       { command: "npm run check" },
@@ -622,6 +833,45 @@ describe("Container adapter", () => {
     expect(snapshots[1]?.rows[0]?.result).toEqual({ content: [], isError: true });
     expect(snapshots[2]?.rows[0]?.errorSummary).toHaveLength(512);
     for (const row of [failed, noText, long]) expect(row.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("chooses a useful diagnostic instead of a trailing structural line", () => {
+    const validationFailure = tool("edit", { path: "test/tui-preview.test.ts" }, {
+      content: [{
+        type: "text",
+        text: [
+          'Validation failed for tool "edit":',
+          "  - edits: must have required properties edits",
+          "",
+          "Received arguments:",
+          "{",
+          '  "path": "test/tui-preview.test.ts",',
+          '  "offset": 60,',
+          '  "limit": 16',
+          "}",
+        ].join("\n"),
+      }],
+      details: {},
+      isError: true,
+    });
+    const structuralOnly = tool("bash", { command: "invalid" }, {
+      content: [{ type: "text", text: "{\n}" }],
+      details: {},
+      isError: true,
+    });
+    const snapshots: Array<{ rows: readonly ToolRowSnapshot[] }> = [];
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      renderGroup: (group) => {
+        snapshots.push(group);
+        return ["group"];
+      },
+    });
+
+    expect(container(validationFailure, structuralOnly).render(80)).toEqual(["group", "group"]);
+    expect(snapshots[0]?.rows[0]?.errorSummary).toBe("edits: must have required properties edits");
+    expect(snapshots[1]?.rows[0]?.errorSummary).toBeUndefined();
     handle?.uninstall();
   });
 

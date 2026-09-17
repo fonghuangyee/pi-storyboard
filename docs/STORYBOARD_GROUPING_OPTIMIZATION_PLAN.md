@@ -1,10 +1,10 @@
 # Plan: transcript-aware storyboard grouping
 
-> Status: **proposed, not implemented.** This plan supersedes the response-per-card presentation described in `STORYBOARD_PLAN.md` only after its session-aware validation and fallback requirements are implemented.
+> Status: **implemented conservatively.** The read-only active-session projection validates each restored turn. Production does not aggregate arbitrary historical turns, but it now allows a narrow visual continuation: directly adjacent settled tool turns with empty/absent thinking may render under the previous validated visible-thinking root. Pi-turn ownership, call IDs, and session entries remain separate.
 
 ## 1. Objective
 
-Reduce repetitive storyboards such as:
+Reduce repetition within one validated assistant response while preserving clear turn boundaries. General cross-turn aggregation remains disabled because historical sessions do not expose a durable public agent-run boundary. The one exception is a constrained visual continuation for immediately adjacent settled turns whose later thinking is empty/absent; this hides an empty visual slot without inventing an agent-run identity.
 
 ```text
 ◉ Inspecting files
@@ -17,7 +17,7 @@ Reduce repetitive storyboards such as:
 ╰─ Run 1 command
 ```
 
-into a smaller source-ordered work sequence:
+into compact source-ordered storyboards, with empty-thinking continuations attached to the preceding visible root:
 
 ```text
 ◉ Inspecting files
@@ -26,13 +26,10 @@ into a smaller source-ordered work sequence:
 ╰─ Run 1 command
 ```
 
-When later turns contain visible thinking, retain it as a continuation step rather than opening another top-level card:
+A later assistant response with visible thinking starts a new storyboard rather than being silently absorbed into the previous one. A validated later response with empty/absent thinking may continue beneath the previous root only under the explicit continuation rules below:
 
 ```text
-◉ Inspecting files
-├─ Read 3 files
-│
-○ Applying the validated fix
+◉ Applying the validated fix
 ├─ Edit 2 files
 ╰─ Run 1 command
 ```
@@ -41,20 +38,16 @@ The optimization must remain presentation-only. It must not concatenate messages
 
 ## 2. Updated visual semantics
 
-The current root means “one Pi turn.” The optimized root will mean:
-
-> a maximal validated sequence of consecutive work turns in the displayed active transcript
-
-This sequence is called a **work span**. It is not a persisted Pi run and must not be named or documented as one.
+The production root normally means “one validated Pi turn.” A restricted work span/chapter may contain one visible-thinking turn followed by directly adjacent settled tool turns with empty/absent thinking. This is a render-time composition, not a persisted Pi run, and must not be named or documented as one. Each tool remains owned by its original assistant response.
 
 Internal ownership remains unchanged:
 
 ```text
-work span
-├─ Pi turn A: assistant A + A's exact tools/results
-├─ Pi turn B: assistant B + B's exact tools/results
-└─ Pi turn C: assistant C + C's exact tools/results
+work span / storyboard
+└─ Pi turn: assistant + that response's exact tools/results
 ```
+
+A previous implementation experiment allowed arbitrary multiple turns here and produced misleading displays such as `152 actions · failed`. That broad cross-turn aggregation remains disabled; only the empty-thinking continuation is enabled.
 
 ### Marker grammar
 
@@ -86,7 +79,7 @@ This preserves the existing safety foundation.
 
 ### 3.2 Work-span projection
 
-Combine adjacent valid turn projections only when the read-only active session path and rendered component stream agree that no hard boundary intervenes.
+Validate each turn against the read-only active session path and rendered component stream. Do not combine arbitrary assistant responses. The session projection proves active-path membership, exact result ownership, and whether two adjacent tool turns have a hard boundary; it does not invent a durable run boundary that Pi does not persist. Only the explicit empty-thinking continuation may compose multiple scenes visually.
 
 A work span ends before or at:
 
@@ -116,24 +109,38 @@ Split a work span into chapters around narrative text:
 
 ### 3.4 Action-run projection
 
-Within a chapter:
+Within one validated turn/chapter:
 
 - merge adjacent same-kind tools;
-- an empty/absent thinking turn does not break an action run;
-- a visible thinking step breaks an action run;
+- an empty/absent thinking block does not create a fake action boundary;
+- a visible thinking block breaks an action run;
 - commentary/native boundaries break an action run;
 - preserve every tool row's source order and state.
 
-This allows sequential edits from several empty-thinking turns to appear as one truthful aggregate such as `Edit 3 files`, while the hidden Pi-turn boundaries remain intact in the model.
+Across an allowed empty-thinking continuation, preserve each original turn's action-group boundary even when adjacent groups have the same kind. The continuation removes the orphan root, not the ownership boundary. This keeps action summaries compact within one validated response while preserving every Pi-turn boundary.
+
+### 3.5 Empty-thinking continuation
+
+A later scene may continue under the previous visible-thinking root only when all of the following hold:
+
+- both scenes are settled and uniquely matched to consecutive active-path projected turns;
+- the first scene has visible thinking, actions, and no text/commentary;
+- every later scene has actions but no visible thinking, text, final-answer phase, or unknown phase;
+- the scenes are directly adjacent in the validated component projection;
+- the previous projected turn has no `boundaryAfter`, and the next has no `boundaryBefore`;
+- no expanded/incompatible row or native boundary occurs between them.
+
+The first scene renders `◉`; carried action groups render `├─`/`╰─`. Empty/absent thinking content and opaque signatures remain untouched and are simply omitted from the visual projection. Consecutive empty-thinking scenes may continue under the same root. A leading empty-thinking scene remains an action root, and a live unsettled scene waits for settlement rather than being attached speculatively.
 
 ## 4. Empty and absent thinking policy
 
 ### Established chapter
 
-When a validated turn has empty or absent visible thinking and follows work already inside the same chapter:
+When a validated turn has empty or absent visible thinking:
 
-- add no `Thinking...` text;
-- append its action runs to the chapter;
+- add no fake thinking content;
+- if it immediately follows an eligible visible-thinking root, render its observable actions as continuation children of that root;
+- otherwise use the first observable action as the storyboard root when the turn is rendered through the active-path projection;
 - retain its original thinking block/signature untouched.
 
 ### Leading tool-only work
@@ -152,7 +159,8 @@ This is preferred over a synthetic `Thinking...` header because it matches Pi's 
 During an unsettled stream:
 
 - retain the current safe per-turn/native rendering until ownership and phase are known;
-- attach the turn to an earlier chapter only after the current assistant/tool mapping is validated;
+- do not attach a live empty-thinking turn to an earlier chapter;
+- attach the turn to an earlier chapter only after the current assistant/tool mapping is settled and validated;
 - tolerate a presentation-only reflow after settlement;
 - never guess from partial JSON or temporary component adjacency.
 
@@ -299,9 +307,9 @@ type StoryboardBreakout =
 
 Key invariant:
 
-> A work span may contain multiple scenes, but every tool snapshot remains owned by exactly one original scene.
+> A normal work span contains one scene. The only multi-scene span is the constrained empty-thinking continuation: its first scene has visible thinking, later scenes have only settled actions, and every tool snapshot remains owned by exactly one original assistant response.
 
-Do not flatten ownership into one combined call-ID set.
+Do not flatten ownership into one combined call-ID set. A continuation is a visual layout span, not a reconstructed agent run.
 
 ## 9. Rendering algorithm
 
@@ -313,12 +321,13 @@ For each validated work span:
 4. render later visible thinking as `○` continuation steps;
 5. omit empty/absent thinking presentation;
 6. if no thinking exists before actions, promote the first action group to `◉` root;
-7. merge adjacent compatible action runs across suppressed empty-turn boundaries;
-8. calculate the final meaningful item and apply `╰─` there;
-9. derive aggregate state with `running > failed > complete > note`;
-10. retain each `●` row's individual state;
-11. width-check every final line;
-12. preserve native mouse regions for every visible native assistant child.
+7. for an allowed empty-thinking continuation, keep the first visible thinking as the only root and append later action groups without merging their turn boundaries;
+8. merge adjacent compatible action runs only within the original validated turn;
+9. calculate the final meaningful item and apply `╰─` there;
+10. derive aggregate state with `running > failed > complete > note`;
+11. retain each `●` row's individual state;
+12. width-check every final line;
+13. preserve native mouse regions for every visible native assistant child.
 
 Commentary is rendered outside this width budget at normal native assistant width.
 
@@ -417,7 +426,7 @@ Explicitly prohibited:
 1. Keep `StoryboardScene` unchanged as the ownership unit.
 2. Add pure work-span/chapter construction above scenes.
 3. Add empty-thinking suppression and action-root rules.
-4. Add same-kind merging across only suppressed empty-turn boundaries.
+4. Add same-kind merging only within the validated turn.
 
 ### Phase C — commentary breakout
 
@@ -470,16 +479,17 @@ Implement only after A–E pass and interactive output is approved.
 - historical error with dangling call;
 - currently running call without result.
 
-### Work spans
+### Work spans / turn splitting
 
-- one-turn span;
-- 100+ turn span;
+- one-turn storyboard;
+- separate adjacent visible-thinking turns remain separate;
 - visible thinking on every turn;
-- visible thinking followed by many empty/absent turns;
+- visible thinking followed by one or many settled empty/absent turns continues under one root;
 - leading empty/absent turn uses action root;
-- same-kind tools merge across empty-turn boundaries;
+- hard boundaries stop continuation;
+- same-kind tools merge only within one turn;
 - visible thinking breaks action merging;
-- user/custom/native boundary prevents cross-turn grouping.
+- user/custom/native boundaries remain native.
 
 ### Commentary
 
@@ -512,30 +522,25 @@ Implement only after A–E pass and interactive output is approved.
 
 ## 15. Documentation changes after implementation
 
-When the implementation lands:
+After implementation:
 
-1. update `README.md` to define work spans rather than response roots;
-2. mark this plan implemented;
-3. retain `STORYBOARD_PLAN.md` as the original turn-level design history, with a link here;
-4. update the preview with:
-   - a multi-turn span;
-   - suppressed empty thinking;
-   - an action-root span;
-   - commentary breakout;
-   - a hard-boundary fallback;
-5. update architecture claims that currently prohibit session reads and lifecycle hooks.
+1. keep `README.md` and `STORYBOARD_PLAN.md` aligned with one-storyboard-per-turn ownership plus the narrow empty-thinking continuation;
+2. retain the active-path projection as a read-only validation layer;
+3. keep preview coverage for suppressed thinking, action roots, empty-thinking continuation, commentary breakout, and hard-boundary fallback;
+4. document that arbitrary cross-turn aggregation is not enabled without a durable public run boundary.
 
 ## 16. Acceptance criteria
 
-The optimization is ready only when:
+The implementation is ready only when:
 
-- a long validated multi-turn chain renders under one outer work span;
-- empty/absent thinking does not create repeated `Thinking...` cards;
-- visible thinking remains complete and source ordered as continuation steps;
-- commentary renders full-width at its exact source position and work resumes afterward;
-- each tool remains owned by its original assistant response internally;
+- every validated assistant response retains its own scene and tool ownership;
+- adjacent settled empty/absent-thinking tool turns may continue beneath the previous visible-thinking root only when all continuation checks pass;
+- empty/absent thinking does not create fake thinking content;
+- visible thinking remains complete, source ordered, and state-colored;
+- commentary renders full-width at its exact source position;
+- each tool remains owned by its original assistant response;
 - live and restored settled transcripts match;
 - branch/compaction/custom boundaries are respected;
 - expansion restores Pi's complete native rendering;
 - every ambiguous case fails open;
-- all checks, package validation, and interactive lifecycle tests pass.
+- all checks and package validation pass.

@@ -24,20 +24,28 @@ import {
   type Segment,
 } from "./grouping.ts";
 import {
+  buildEmptyThinkingContinuation,
   buildStoryboard,
+  buildWorkSpan,
   type AssistantSceneSnapshot,
   type StoryboardAssistantContent,
   type StoryboardAssistantContentType,
   type StoryboardChild,
   type StoryboardSourceItem,
+  type StoryboardWorkSpan,
 } from "./storyboard.ts";
 import {
   renderNativeThinkingMarkersLayout,
   renderStoryboardSceneLayout,
+  renderStoryboardWorkSpanLayout,
   storyboardAssistantWidth,
   type StoryboardAssistantRenderRegion,
   type StoryboardMarkerColor,
 } from "./storyboard-renderer.ts";
+import {
+  matchesProjectedTurn,
+  type SessionProjection,
+} from "./session-projection.ts";
 
 export const PATCH_MARKER = Symbol.for("pi-tool-groups.container.v1");
 
@@ -48,6 +56,8 @@ export type PatchHandle = {
 export type ToolGroupingPatchOptions = {
   getTheme(): ThemeLike;
   renderGroup(group: GroupSnapshot, width: number, theme: ThemeLike): string[];
+  /** Optional active-path projection used to validate settled restored turns. */
+  getSessionProjection?(): SessionProjection | undefined;
 };
 
 type ContainerRender = (this: Container, width: number) => string[];
@@ -232,20 +242,47 @@ function minimalResult(isError: boolean): ToolResultSnapshot {
   return isError ? FAILED_RESULT : SUCCESSFUL_RESULT;
 }
 
+function isStructuralErrorLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return true;
+  if (/^[()[\]{};,.:]+$/u.test(trimmed)) return true;
+  // Do not mistake the tail of a serialized validation argument for the
+  // diagnostic itself (for example, a final `}` or `"limit": 16`).
+  return /^"[^"]+"\s*:/u.test(trimmed);
+}
+
+function isLikelyDiagnosticLine(line: string): boolean {
+  return /\b(?:error|fail(?:ed|ure)?|invalid|cannot|could not|must|required|missing|not found|exited|denied|abort(?:ed)?|exception|timeout)\b/iu.test(line);
+}
+
 function extractErrorSummary(value: unknown): string | undefined {
   if (!isRecord(value) || !Array.isArray(value.content)) return undefined;
 
-  let lastLine: string | undefined;
+  const lines: string[] = [];
   for (const rawBlock of value.content) {
     if (!isRecord(rawBlock) || typeof rawBlock.text !== "string") continue;
     for (const rawLine of rawBlock.text.split(/\r?\n|\r/u)) {
       const line = sanitizeDisplay(rawLine);
-      if (line.length > 0) lastLine = line;
+      if (!isStructuralErrorLine(line)) lines.push(line);
     }
   }
 
-  if (lastLine === undefined) return undefined;
-  return Array.from(lastLine).slice(0, MAX_ERROR_SUMMARY_CODE_POINTS).join("");
+  // Prefer a generic diagnostic over a trailing context/header line, while
+  // retaining the last useful line for tools whose output has no keywords.
+  let selected: string | undefined;
+  for (let index = lines.length - 1; index >= 0; index--) {
+    if (isLikelyDiagnosticLine(lines[index]!)) {
+      selected = lines[index];
+      break;
+    }
+  }
+  selected ??= lines.at(-1);
+  if (selected === undefined) return undefined;
+
+  // Validation output commonly uses a bullet for its useful message. The row
+  // already supplies its own separator, so avoid rendering ` - - message`.
+  selected = selected.replace(/^[-*•]\s+/u, "");
+  return Array.from(selected).slice(0, MAX_ERROR_SUMMARY_CODE_POINTS).join("");
 }
 
 type EditSummaryArgs = {
@@ -610,6 +647,26 @@ function inspectAssistantPresentation(
   return lineCursor === renderedAssistantLines.length ? { parts: Object.freeze(parts) } : undefined;
 }
 
+function widenCommentaryPresentation(
+  presentation: AssistantPresentation,
+  width: number,
+): AssistantPresentation | undefined {
+  const parts: StoryboardAssistantContent[] = [];
+  for (const part of presentation.parts) {
+    if (part.type !== "commentary") {
+      parts.push(part);
+      continue;
+    }
+    const rendered = (part.row as Component).render(width);
+    if (!validRenderedLines(rendered)) return undefined;
+    parts.push(Object.freeze({
+      ...part,
+      renderedLines: Object.freeze([...rendered]),
+    }));
+  }
+  return { parts: Object.freeze(parts) };
+}
+
 function withAssistantLines(
   metadata: AssistantMetadata,
   renderedAssistantLines: readonly string[],
@@ -816,11 +873,142 @@ function makeStoryboardChild(
   return { type: "native", row: child };
 }
 
+type WorkSpanPlan = {
+  readonly start: number;
+  readonly end: number;
+  readonly span: StoryboardWorkSpan;
+};
+
+type SessionSceneInfo = {
+  readonly segment: Extract<ReturnType<typeof buildStoryboard>["segments"][number], { type: "scene" }>;
+  readonly live: boolean;
+  readonly turnIndex?: number;
+};
+
+function hasCommentary(segment: SessionSceneInfo["segment"]): boolean {
+  return segment.assistant.assistantContent?.some((content) => content.type === "commentary") ?? false;
+}
+
+function canContinueEmptyThinking(
+  previous: SessionSceneInfo,
+  next: SessionSceneInfo,
+  session: SessionProjection,
+): boolean {
+  if (
+    previous.live ||
+    next.live ||
+    previous.turnIndex === undefined ||
+    next.turnIndex === undefined ||
+    next.turnIndex !== previous.turnIndex + 1 ||
+    previous.segment.assistant.hasText ||
+    next.segment.assistant.hasThinking ||
+    next.segment.assistant.hasText ||
+    next.segment.actionRuns.length === 0
+  ) {
+    return false;
+  }
+
+  const previousTurn = session.turns[previous.turnIndex];
+  const nextTurn = session.turns[next.turnIndex];
+  if (previousTurn === undefined || nextTurn === undefined) return false;
+  return !previousTurn.boundaryAfter && !nextTurn.boundaryBefore;
+}
+
+/**
+ * Plan ordinary one-turn storyboards plus the narrow visual continuation for
+ * directly adjacent settled turns whose later thinking is empty/absent. The
+ * session projection proves active-path ownership and hard boundaries; it does
+ * not create or imply a durable agent-run identity.
+ */
+function planSessionWorkSpans(
+  segments: ReturnType<typeof buildStoryboard>["segments"],
+  session: SessionProjection,
+): readonly WorkSpanPlan[] | undefined {
+  const usedTurns = new Set<number>();
+  const sceneInfo = new Map<number, SessionSceneInfo>();
+  let hasToolScene = false;
+
+  for (let index = 0; index < segments.length; index++) {
+    const segment = segments[index];
+    if (segment?.type !== "scene" || segment.assistant.expectedToolCallIds.length === 0) continue;
+    hasToolScene = true;
+
+    // A live assistant/tool scene is not complete in the public session path
+    // yet: Pi has not written its toolResult while the tool is executing. The
+    // direct TUI ownership checks above are still sufficient for this single
+    // scene, so keep the storyboard visible while a blocking tool such as
+    // ask_user_question owns the input overlay. The active-path index is only
+    // needed to prove settled turns belong to the current branch.
+    const live =
+      segment.state === "running" ||
+      segment.assistant.isStreaming ||
+      segment.assistant.stopReason === "pending";
+    let turnIndex: number | undefined;
+    if (!live) {
+      const matchingTurns = session.turns
+        .map((turn, candidateIndex) => ({ turn, candidateIndex }))
+        .filter(({ turn }) =>
+          matchesProjectedTurn(turn, segment.assistant.expectedToolCallIds) &&
+          turn.hasVisibleThinking === segment.assistant.hasThinking &&
+          turn.hasCommentary === hasCommentary(segment),
+        );
+      if (matchingTurns.length !== 1) return undefined;
+      turnIndex = matchingTurns[0]!.candidateIndex;
+      if (usedTurns.has(turnIndex)) return undefined;
+      usedTurns.add(turnIndex);
+    }
+
+    sceneInfo.set(index, Object.freeze({ segment, live, ...(turnIndex === undefined ? {} : { turnIndex }) }));
+  }
+
+  if (!hasToolScene) return Object.freeze([]);
+
+  const plans: WorkSpanPlan[] = [];
+  for (let index = 0; index < segments.length;) {
+    const first = sceneInfo.get(index);
+    if (first === undefined) {
+      index++;
+      continue;
+    }
+
+    const scenes: SessionSceneInfo["segment"][] = [first.segment];
+    let end = index;
+    let previous = first;
+    // Only a visible-thinking scene can anchor a continuation. Empty scenes
+    // without such an anchor remain truthful action roots on their own.
+    if (
+      !first.live &&
+      first.segment.assistant.hasThinking &&
+      !first.segment.assistant.hasText &&
+      first.segment.actionRuns.length > 0
+    ) {
+      for (let nextIndex = index + 1; nextIndex < segments.length; nextIndex++) {
+        const next = sceneInfo.get(nextIndex);
+        if (next === undefined || !canContinueEmptyThinking(previous, next, session)) break;
+        scenes.push(next.segment);
+        end = nextIndex;
+        previous = next;
+      }
+    }
+
+    const span = scenes.length > 1
+      ? buildEmptyThinkingContinuation(scenes)
+      : buildWorkSpan([first.segment]);
+    if (span === undefined) return undefined;
+    plans.push(Object.freeze({ start: index, end, span }));
+    index = end + 1;
+  }
+
+  return Object.freeze(plans);
+}
+
 /**
  * Attempt the turn-storyboard projection independently from the legacy
  * grouping path. Tool-bearing assistant responses with no visible thinking
- * receive a presentation-only placeholder; older/incomplete shapes still fall
- * back to their unchanged native behavior.
+ * use an action root in the active-path projection, or the legacy
+ * presentation-only placeholder when no session projection is available.
+ * Adjacent settled empty-thinking turns may continue under a validated
+ * visible-thinking root; older/incomplete shapes still fall back unchanged.
  */
 function renderStoryboardIfRequested(
   container: Container,
@@ -850,7 +1038,14 @@ function renderStoryboardIfRequested(
       .filter(([, assistant]) => assistant.hasThinking && assistant.expectedToolCallIds.length === 0 && assistant.hasText)
       .map(([assistant]) => assistant),
   );
-  if (!storyboardRequested) return { requested: false };
+  if (!storyboardRequested) {
+    // Once session-aware mode is installed, an unowned or incompatible tool
+    // row must not fall through to the legacy adjacency grouper.
+    if (options.getSessionProjection !== undefined && children.some((child) => child instanceof ToolExecutionComponent)) {
+      return { requested: true };
+    }
+    return { requested: false };
+  }
 
   const preSnapshots = new Map<AssistantMessageComponent, AssistantSceneSnapshot>();
   for (const [assistant, assistantMetadata] of metadata) {
@@ -881,6 +1076,14 @@ function renderStoryboardIfRequested(
       if (sceneOwners.has(child) || thinkingDecorationOwners.has(child)) {
         presentation = inspectAssistantPresentation(child, assistantMetadata, renderWidth, lines);
         if (presentation === undefined) return { requested: true };
+        if (
+          options.getSessionProjection !== undefined &&
+          presentation !== null &&
+          assistantMetadata.expectedToolCallIds.length > 0
+        ) {
+          presentation = widenCommentaryPresentation(presentation, safeWidth);
+          if (presentation === undefined) return { requested: true };
+        }
       }
       // `null` means that this is an older/test-shaped assistant component
       // without the native content container; retain the established whole
@@ -938,6 +1141,147 @@ function renderStoryboardIfRequested(
     nativeLines.set(component, lines);
     return lines;
   };
+
+  if (options.getSessionProjection !== undefined) {
+    const session = options.getSessionProjection();
+    if (session === undefined) return { requested: true };
+    const plans = planSessionWorkSpans(projection.segments, session);
+    if (plans === undefined) return { requested: true };
+
+    const planByStart = new Map(plans.map((plan) => [plan.start, plan]));
+    const covered = new Set<number>();
+    const workMembers = new Set<Component>();
+    const workMouse = new Map<Component, { component: Component; height: number }>();
+    const workLayouts = new Map<number, { readonly lines: readonly string[] }>();
+    const nativeMouse = new Map<Component, { component: Component; height: number }>();
+
+    for (const plan of plans) {
+      for (let index = plan.start; index <= plan.end; index++) {
+        covered.add(index);
+        const segment = projection.segments[index];
+        if (segment?.type !== "scene") throw new Error("work span segment is not a scene");
+        const assistant = componentForStoryboardChild({ type: "assistant", assistant: segment.assistant });
+        if (assistant === undefined) throw new Error("work span assistant is not renderable");
+        workMembers.add(assistant);
+        if (index !== plan.start) continue;
+        const layout = renderStoryboardWorkSpanLayout(
+          plan.span,
+          safeWidth,
+          theme,
+          options.renderGroup,
+        );
+        workLayouts.set(plan.start, layout);
+        const proxy = new StoryboardSceneMouseProxy(
+          assistant,
+          storyboardAssistantWidth(safeWidth),
+          nativeLines.get(assistant)?.length ?? 0,
+          Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth)),
+          layout.assistantRegions,
+        );
+        workMouse.set(assistant, { component: proxy, height: layout.lines.length });
+      }
+      for (let index = plan.start; index <= plan.end; index++) {
+        const segment = projection.segments[index];
+        if (segment?.type !== "scene") continue;
+        const toolChildren = segment.orderedChildren === undefined
+          ? segment.actionRuns.flatMap((run) => run.rows.map((row) => row.toolRow))
+          : segment.orderedChildren
+            .filter((child): child is Extract<typeof child, { type: "tool" }> => child.type === "tool")
+            .map((child) => child.tool.toolRow);
+        for (const row of toolChildren) {
+          if (!row || typeof (row as Component).render !== "function") throw new Error("work span tool is not renderable");
+          workMembers.add(row as Component);
+        }
+      }
+    }
+
+    for (let index = 0; index < projection.segments.length; index++) {
+      const plan = planByStart.get(index);
+      if (plan !== undefined) {
+        const layout = workLayouts.get(index);
+        if (layout === undefined) throw new Error("work span layout missing");
+        rendered.push(...layout.lines);
+        index = plan.end;
+        continue;
+      }
+      if (covered.has(index)) continue;
+      const segment = projection.segments[index];
+      if (segment?.type === "scene") {
+        const assistant = componentForStoryboardChild({ type: "assistant", assistant: segment.assistant });
+        if (assistant === undefined) throw new Error("scene assistant is not renderable");
+        const assistantLines = nativeLines.get(assistant);
+        if (assistantLines === undefined) throw new Error("scene assistant output missing");
+        const hasNativeLeadingSpacer = assistantLines.length > 0 && visibleWidth(assistantLines[0] ?? "") === 0;
+        if (!hasNativeLeadingSpacer) {
+          rendered.push("");
+        }
+        const sceneLayout = renderStoryboardSceneLayout(
+          segment,
+          assistantLines,
+          safeWidth,
+          theme,
+          options.renderGroup,
+        );
+        rendered.push(...sceneLayout.lines);
+        const height = sceneLayout.lines.length + (hasNativeLeadingSpacer ? 0 : 1);
+        nativeMouse.set(assistant, {
+          component: new StoryboardSceneMouseProxy(
+            assistant,
+            storyboardAssistantWidth(safeWidth),
+            assistantLines.length,
+            Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth)),
+            sceneLayout.assistantRegions,
+          ),
+          height,
+        });
+        continue;
+      }
+      if (segment?.type === "native") {
+        for (const child of segment.children) {
+          const lines = renderNative(child);
+          rendered.push(...lines);
+          const component = componentForStoryboardChild(child);
+          if (component === undefined) throw new Error("native child is not renderable");
+          const decoration = thinkingDecorations.get(component);
+          nativeMouse.set(component, {
+            component: decoration === undefined
+              ? component
+              : new StoryboardThinkingMouseProxy(component, decoration.assistantRegions),
+            height: lines.length,
+          });
+        }
+      }
+    }
+
+    // Rebuild the private container hit-test list in the original direct-child
+    // order. A work span has one proxy anchor and zero-height member rows.
+    const spanMouseChildren: Array<{ component: Component; height: number }> = [];
+    for (const child of children) {
+      const component = child as Component;
+      const anchor = workMouse.get(component);
+      if (anchor !== undefined) {
+        spanMouseChildren.push(anchor);
+        continue;
+      }
+      if (workMembers.has(component)) {
+        spanMouseChildren.push({ component: GROUP_MOUSE_SINK, height: 0 });
+        continue;
+      }
+      const native = nativeMouse.get(component);
+      if (native !== undefined) {
+        spanMouseChildren.push(native);
+        continue;
+      }
+      // Native tool rows outside a scene are not in nativeMouse until they are
+      // rendered here; this path is also the conservative incompatible-row
+      // fallback inside an otherwise valid session projection.
+      const lines = component.render(safeWidth);
+      if (!validRenderedLines(lines)) throw new Error("native child returned invalid lines");
+      spanMouseChildren.push({ component, height: lines.length });
+    }
+    setMouseLayout(container, safeWidth, spanMouseChildren);
+    return { requested: true, output: rendered };
+  }
 
   for (const segment of projection.segments) {
     if (segment.type === "scene") {

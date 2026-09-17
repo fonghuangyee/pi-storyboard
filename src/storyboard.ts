@@ -82,6 +82,45 @@ export type StoryboardScene = {
   readonly state: SceneState;
 };
 
+export type StoryboardChapterItem =
+  | {
+      readonly type: "thinking";
+      readonly scene: StoryboardScene;
+      readonly content: StoryboardAssistantContent;
+    }
+  | {
+      readonly type: "action";
+      readonly scene: StoryboardScene;
+      readonly run: StoryboardActionRun;
+    };
+
+export type StoryboardChapter = {
+  readonly type: "chapter";
+  readonly items: readonly StoryboardChapterItem[];
+};
+
+/** Validated commentary is deliberately a full-width native breakout. */
+export type StoryboardBreakout = {
+  readonly type: "commentary";
+  readonly scene: StoryboardScene;
+  readonly content: StoryboardAssistantContent;
+};
+
+export type StoryboardWorkSpanPart = StoryboardChapter | StoryboardBreakout;
+
+/**
+ * A presentation-only composition. It normally contains one validated turn;
+ * the restricted empty-thinking continuation may contain adjacent scenes while
+ * each scene remains its ownership unit.
+ */
+export type StoryboardWorkSpan = {
+  readonly type: "work-span";
+  readonly scenes: readonly StoryboardScene[];
+  readonly parts: readonly StoryboardWorkSpanPart[];
+  readonly chapters: readonly StoryboardChapter[];
+  readonly state: SceneState;
+};
+
 /** Children in this segment must be rendered entirely by Pi's native path. */
 export type StoryboardNativeSegment = {
   readonly type: "native";
@@ -428,4 +467,222 @@ export function buildStoryboard(
   }
 
   return Object.freeze({ segments: Object.freeze(segments) });
+}
+
+function hasVisibleRenderedContent(lines: readonly string[]): boolean {
+  return lines.some((line) => line.replace(/\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g, "").trim().length > 0);
+}
+
+function withoutLeadingEmptyLines(lines: readonly string[]): readonly string[] {
+  let start = 0;
+  while (start < lines.length && !hasVisibleRenderedContent([lines[start] ?? ""])) start++;
+  return lines.slice(start);
+}
+
+type WorkNode =
+  | { readonly type: "thinking"; readonly scene: StoryboardScene; readonly content: StoryboardAssistantContent }
+  | { readonly type: "commentary"; readonly scene: StoryboardScene; readonly content: StoryboardAssistantContent }
+  | { readonly type: "action"; readonly scene: StoryboardScene; readonly run: StoryboardActionRun };
+
+function sceneWorkNodes(scene: StoryboardScene): readonly WorkNode[] | undefined {
+  const nodes: WorkNode[] = [];
+  if (scene.orderedChildren === undefined) {
+    // Without native child composition there is no safe way to place a
+    // validated commentary block relative to the tools. Session-aware mode
+    // fails open instead of dropping that text from the work span.
+    if (scene.assistant.hasText) return undefined;
+    if (scene.assistant.hasThinking && hasVisibleRenderedContent(scene.assistant.renderedAssistantLines)) {
+      nodes.push({
+        type: "thinking",
+        scene,
+        content: Object.freeze({
+          type: "thinking",
+          row: scene.assistant.assistantRow,
+          renderedLines: Object.freeze([...withoutLeadingEmptyLines(scene.assistant.renderedAssistantLines)]),
+        }),
+      });
+    }
+    for (const run of scene.actionRuns) nodes.push({ type: "action", scene, run });
+    return Object.freeze(nodes);
+  }
+
+  let pendingKind: GroupKind | undefined;
+  let pendingRows: StoryboardToolSnapshot[] = [];
+  const flush = (): void => {
+    if (pendingKind === undefined || pendingRows.length === 0) return;
+    nodes.push({
+      type: "action",
+      scene,
+      run: Object.freeze({ kind: pendingKind, rows: Object.freeze([...pendingRows]) }),
+    });
+    pendingKind = undefined;
+    pendingRows = [];
+  };
+
+  for (const child of scene.orderedChildren) {
+    if (child.type === "tool") {
+      if (pendingKind !== child.tool.kind) flush();
+      pendingKind = child.tool.kind;
+      pendingRows.push(child.tool);
+      continue;
+    }
+    flush();
+    if (child.content.type === "thinking") {
+      if (hasVisibleRenderedContent(child.content.renderedLines)) {
+        nodes.push({ type: "thinking", scene, content: child.content });
+      }
+    } else if (child.content.type === "commentary") {
+      nodes.push({ type: "commentary", scene, content: child.content });
+    } else if (
+      child.content.type !== "native" ||
+      hasVisibleRenderedContent(child.content.renderedLines)
+    ) {
+      // Diagnostics and unclassified native content cannot safely be placed in
+      // a cross-turn rail. The adapter will keep this scene native.
+      return undefined;
+    }
+  }
+  flush();
+  return Object.freeze(nodes);
+}
+
+function aggregateWorkState(scenes: readonly StoryboardScene[]): SceneState {
+  if (scenes.some((scene) => scene.state === "running")) return "running";
+  if (scenes.some((scene) => scene.state === "failed")) return "failed";
+  if (scenes.some((scene) => scene.state === "complete")) return "complete";
+  return "note";
+}
+
+function makeChapter(items: readonly StoryboardChapterItem[]): StoryboardChapter | undefined {
+  return items.length === 0
+    ? undefined
+    : Object.freeze({ type: "chapter", items: Object.freeze([...items]) });
+}
+
+/**
+ * Build a presentation span for one or more already validated scenes. The
+ * normal work-span builder remains a single-turn projection. The optional
+ * continuation mode is deliberately narrower: one visible-thinking turn may
+ * be followed only by directly adjacent tool turns with no visible thinking.
+ * Tool ownership is still retained by each original scene.
+ */
+function buildWorkSpanInternal(
+  scenes: readonly StoryboardScene[],
+  continuation: boolean,
+): StoryboardWorkSpan | undefined {
+  if (!Array.isArray(scenes) || scenes.length === 0) return undefined;
+  if (!continuation && scenes.length !== 1) return undefined;
+  if (continuation) {
+    const first = scenes[0];
+    if (
+      first === undefined ||
+      first.type !== "scene" ||
+      !first.assistant.hasThinking ||
+      first.assistant.hasText ||
+      first.assistant.hasFinalAnswer ||
+      first.assistant.hasUnknownText ||
+      first.actionRuns.length === 0
+    ) {
+      return undefined;
+    }
+    for (const scene of scenes.slice(1)) {
+      if (
+        scene.type !== "scene" ||
+        scene.assistant.hasThinking ||
+        scene.assistant.hasText ||
+        scene.assistant.hasFinalAnswer ||
+        scene.assistant.hasUnknownText ||
+        scene.actionRuns.length === 0
+      ) {
+        return undefined;
+      }
+    }
+  }
+
+  const parts: StoryboardWorkSpanPart[] = [];
+  const chapters: StoryboardChapter[] = [];
+  let chapterItems: StoryboardChapterItem[] = [];
+  let hasMeaningfulItem = false;
+  let firstSceneHasThinking = false;
+
+  const flushChapter = (): void => {
+    const chapter = makeChapter(chapterItems);
+    if (chapter !== undefined) {
+      chapters.push(chapter);
+      parts.push(chapter);
+    }
+    chapterItems = [];
+  };
+
+  for (let sceneIndex = 0; sceneIndex < scenes.length; sceneIndex++) {
+    const scene = scenes[sceneIndex];
+    if (!scene || scene.type !== "scene") return undefined;
+    const nodes = sceneWorkNodes(scene);
+    if (nodes === undefined) return undefined;
+    for (const node of nodes) {
+      if (node.type === "thinking") {
+        if (continuation && sceneIndex === 0) firstSceneHasThinking = true;
+        chapterItems.push(Object.freeze({ type: "thinking", scene, content: node.content }));
+        hasMeaningfulItem = true;
+        continue;
+      }
+      if (node.type === "commentary") {
+        flushChapter();
+        const breakout = Object.freeze({ type: "commentary", scene, content: node.content });
+        parts.push(breakout);
+        continue;
+      }
+
+      const previous = chapterItems[chapterItems.length - 1];
+      // Preserve action-group boundaries when a continuation crosses from one
+      // Pi turn to the next. Same-kind tools still merge within their own
+      // validated scene, but a hidden thinking turn must not erase ownership
+      // boundaries merely because its compact label happens to match.
+      if (
+        previous?.type === "action" &&
+        previous.scene === scene &&
+        previous.run.kind === node.run.kind
+      ) {
+        chapterItems[chapterItems.length - 1] = Object.freeze({
+          type: "action",
+          scene: previous.scene,
+          run: Object.freeze({
+            kind: previous.run.kind,
+            rows: Object.freeze([...previous.run.rows, ...node.run.rows]),
+          }),
+        });
+      } else {
+        chapterItems.push(Object.freeze({ type: "action", scene, run: node.run }));
+      }
+      hasMeaningfulItem = true;
+    }
+  }
+  flushChapter();
+
+  if (!hasMeaningfulItem || (continuation && !firstSceneHasThinking)) return undefined;
+  return Object.freeze({
+    type: "work-span",
+    scenes: Object.freeze([...scenes]),
+    parts: Object.freeze(parts),
+    chapters: Object.freeze(chapters),
+    state: aggregateWorkState(scenes),
+  });
+}
+
+export function buildWorkSpan(
+  scenes: readonly StoryboardScene[],
+): StoryboardWorkSpan | undefined {
+  return buildWorkSpanInternal(scenes, false);
+}
+
+/**
+ * Build the restricted visual continuation used for empty-thinking turns.
+ * This is not an agent-run projection: the first scene supplies the visible
+ * thinking root and every later scene contributes only its observable actions.
+ */
+export function buildEmptyThinkingContinuation(
+  scenes: readonly StoryboardScene[],
+): StoryboardWorkSpan | undefined {
+  if (!Array.isArray(scenes) || scenes.length < 2) return undefined;
+  return buildWorkSpanInternal(scenes, true);
 }

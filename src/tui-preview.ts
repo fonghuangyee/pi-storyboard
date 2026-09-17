@@ -3,13 +3,15 @@ import { TranscriptReplay } from "./transcript-replay.ts";
 import { renderToolGroup, type GroupSnapshot, type ThemeLike } from "./renderer.ts";
 import {
   renderStoryboardScene,
+  renderStoryboardWorkSpanLayout,
   storyboardAssistantWidth,
 } from "./storyboard-renderer.ts";
-import type {
-  StoryboardActionRun,
-  StoryboardOrderedChild,
-  StoryboardScene,
-  StoryboardToolSnapshot,
+import {
+  buildEmptyThinkingContinuation,
+  type StoryboardActionRun,
+  type StoryboardOrderedChild,
+  type StoryboardScene,
+  type StoryboardToolSnapshot,
 } from "./storyboard.ts";
 import {
   Box,
@@ -379,7 +381,7 @@ type StoryboardPreviewItem =
   | { type: "thinking"; text: string }
   | { type: "commentary"; text: string };
 
-type StoryboardPreviewScene = {
+type StoryboardPreviewContent = {
   /** Native thinking content used as the visual turn-block header. */
   title?: string;
   state: "complete" | "running" | "failed" | "note";
@@ -387,6 +389,11 @@ type StoryboardPreviewScene = {
   /** Optional exact source-order sample following the native header. */
   items?: readonly StoryboardPreviewItem[];
   detail?: string;
+};
+
+type StoryboardPreviewScene = StoryboardPreviewContent & {
+  /** A settled empty-thinking scene rendered under this scene's root. */
+  continuation?: StoryboardPreviewContent;
 };
 
 const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
@@ -521,16 +528,15 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
     ],
   },
   {
-    title: "First assistant message · inspect",
+    title: "Locating registerTool definitions",
     state: "complete",
-    detail: "response boundary A",
-    groups: [{ kind: "read", rows: [SAMPLE_TOOL_GROUPS[0]!.rows[1]!] }],
-  },
-  {
-    title: "Second assistant message · verify",
-    state: "complete",
-    detail: "response boundary B · never merged with the previous response",
-    groups: [{ kind: "read", rows: [SAMPLE_TOOL_GROUPS[0]!.rows[1]!] }],
+    detail: "visible-thinking root",
+    groups: [{ kind: "command", rows: [SAMPLE_TOOL_GROUPS[5]!.rows[0]!] }],
+    continuation: {
+      state: "complete",
+      detail: "later settled turn · empty/absent thinking continues under the previous root",
+      groups: [{ kind: "read", rows: [SAMPLE_TOOL_GROUPS[0]!.rows[1]!] }],
+    },
   },
 ];
 
@@ -643,7 +649,7 @@ class TurnStoryboardSample implements Component {
     const groupTheme = toolGroupTheme(this.theme);
 
     rendered.push(storyFit(
-      `${indent}${this.theme.fg("accent", "◉")}/${this.theme.fg("muted", "○")} ${this.theme.fg("muted", "native thinking starts a visual Pi turn block (tools/note)")}`,
+      `${indent}${this.theme.fg("accent", "◉")}/${this.theme.fg("muted", "○")} ${this.theme.fg("muted", "native thinking starts a visual Pi turn block; work chapters may continue (tools/note)")}`,
       safeWidth,
     ));
     rendered.push(storyFit(
@@ -651,11 +657,11 @@ class TurnStoryboardSample implements Component {
       safeWidth,
     ));
     rendered.push(storyFit(
-      `${indent}${this.theme.fg("muted", "╰─")} ${this.theme.fg("dim", "final child closes the turn")}`,
+      `${indent}${this.theme.fg("muted", "╰─")} ${this.theme.fg("dim", "final child closes the scene/chapter")}`,
       safeWidth,
     ));
     rendered.push(storyFit(
-      `${indent}${this.theme.fg("dim", "boundary")} ${this.theme.fg("muted", "= no persisted master record · one assistant response + matched tool batch")}`,
+      `${indent}${this.theme.fg("dim", "boundary")} ${this.theme.fg("muted", "= no persisted master record · scenes retain one response + matched tools")}`,
       safeWidth,
     ));
     rendered.push(storyFit(
@@ -664,8 +670,22 @@ class TurnStoryboardSample implements Component {
     ));
 
     for (const preview of STORYBOARD_SCENES) {
+      const firstScene = this.previewScene(preview, safeWidth);
+      if (preview.continuation !== undefined) {
+        const continuationScene = this.previewScene(preview.continuation, safeWidth);
+        const span = buildEmptyThinkingContinuation([firstScene, continuationScene]);
+        if (span !== undefined) {
+          rendered.push(...renderStoryboardWorkSpanLayout(
+            span,
+            safeWidth,
+            toolGroupTheme(this.theme),
+            (group, groupWidth, theme) => renderToolGroup(group, groupWidth, theme),
+          ).lines);
+          continue;
+        }
+      }
       rendered.push(...renderStoryboardScene(
-        this.previewScene(preview, safeWidth),
+        firstScene,
         [""],
         safeWidth,
         toolGroupTheme(this.theme),

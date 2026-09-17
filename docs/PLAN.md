@@ -1,6 +1,6 @@
 # Plan: `pi-tool-groups`
 
-> Status: the semantic tool-grouping baseline and the **thinking-led turn storyboard** are implemented. [`STORYBOARD_PLAN.md`](./STORYBOARD_PLAN.md) defines the presentation and documented Pi boundary. All safety, privacy, native fallback, and presentation-only constraints in this document remain authoritative.
+> Status: the semantic tool-grouping baseline and thinking-led storyboard are implemented. The active-path projection validates restored turns; arbitrary historical turns are not aggregated because Pi does not persist a durable agent-run boundary. A narrow continuation may visually attach directly adjacent settled empty/absent-thinking tool turns to the previous visible-thinking root without merging ownership. [`STORYBOARD_PLAN.md`](./STORYBOARD_PLAN.md) defines the presentation boundary. All safety, privacy, native fallback, and presentation-only constraints remain authoritative.
 
 ### Approved turn-storyboard evolution
 
@@ -12,7 +12,7 @@ Pi documents a turn as one assistant response plus its tool calls. Pi does not p
 - `╰─` closes the final child in the turn;
 - `●` retains the existing per-tool state.
 
-The hierarchy means only “part of this turn,” never that thinking or commentary caused a call. Successive assistant responses remain separate closed blocks in one visual storyboard.
+Each storyboard scene remains exactly one Pi turn. A restricted visual continuation may contain multiple such scenes only when the first has visible thinking and later adjacent scenes have settled actions with empty/absent thinking. The hierarchy never claims that thinking or commentary caused a call, and arbitrary historical turns are not merged without a durable public run boundary.
 
 It must:
 
@@ -21,8 +21,8 @@ It must:
 - join tool calls and rows only through validated source-order `toolCallId` values;
 - preserve Pi's native assistant Markdown/thinking components and never mutate their state;
 - validate `TextSignatureV1.phase`; render `commentary` as complete native content in the block, keep final/unknown text native, and allow only thinking-start markers in mixed no-tool responses;
-- use no agent, turn, message, tool-execution, tool-call, tool-result, context, or provider event hooks;
-- use no `ctx.sessionManager`, custom messages, custom entries, model-facing tools, or parallel extension state;
+- use no agent, tool-execution, tool-call, tool-result, context, or provider mutation hooks; lifecycle notifications are read-only cache invalidation only;
+- use `ctx.sessionManager` only through its public read-only active-path methods; persist no projection, custom message, or custom entry and register no model-facing tools;
 - keep expanded tools, incomplete matching, unsafe text phases, and incompatible private shapes native; collapsed running edits use compact pending rows and never embed Pi's native tool renderer inside a valid storyboard;
 - preserve minimal tool snapshots and never copy raw thinking, signatures, successful tool output, edit text, diffs, patches, or complete errors;
 - budget assistant and branch gutters before invoking native child/group renderers;
@@ -108,8 +108,8 @@ The extension must not:
 - call `pi.registerTool()` or override any built-in tool;
 - call `pi.setActiveTools()`;
 - modify tool arguments, execution, updates, or results;
-- subscribe to agent, turn, message, tool-execution, tool-call, tool-result, context, provider, or `before_agent_start` hooks;
-- read or write `ctx.sessionManager`, append entries, inject messages, or maintain a parallel transcript model;
+- subscribe to agent, tool-call, tool-result, context, provider, or `before_agent_start` hooks; lifecycle notifications are used only to invalidate the ephemeral read-only projection;
+- write `ctx.sessionManager`, append entries, inject messages, or retain a parallel transcript; public active-path entries may be read into minimal extension-owned IDs and boundary flags;
 - modify prompts, model selection, messages, compaction, or the agent loop;
 - register model-facing tools or make LLM/network calls;
 - write files, spawn processes, start timers, or run background work;
@@ -150,7 +150,7 @@ read + edit(running) + read       -> ReadGroup(1) + EditGroup(1) + ReadGroup(1)
 
 Edit groups never merge with Write or generic Tool groups. A collapsed running edit is eligible and remains a normal semantic boundary between unlike kinds; expanded or incompatible edits remain native. Every validated settled failed edit remains in an Edit group even when its arguments are malformed.
 
-A visible non-tool content item breaks an action run in the source-order projection. A validated `AssistantMessageComponent` may be projected only with the contiguous direct tool-row window whose `toolCallId` set exactly matches its source-order calls. Content and compact tool runs remain in the assistant `content` order, not direct completion order; visible thinking supplies the visual turn header, intermediate children stay on the rail, and the final child receives an end cap. If a tool-bearing response has no visible thinking, a presentation-only `Thinking...` header is inserted so every action remains under a thinking block. A running edit occupies its ordered action slot as a compact pending row; its native component keeps execution and preview state for expanded mode but is never rendered inside a valid collapsed storyboard. The adapter must never skip or absorb a user message, custom entry, spacer with meaningful separation, compaction/branch row, or unknown component. Any incomplete or mismatched response is rendered entirely natively.
+A visible non-tool content item breaks an action run in the source-order projection. A validated `AssistantMessageComponent` may be projected only with the contiguous direct tool-row window whose `toolCallId` set exactly matches its source-order calls. Content and compact tool runs remain in the assistant `content` order, not direct completion order; visible thinking supplies the visual turn header, intermediate children stay on the rail, and the final child receives an end cap. If a tool-bearing response has no visible thinking, an active-path continuation may place its actions under the previous visible-thinking root only after exact session/boundary validation; otherwise its first action is the root (or the legacy fallback uses a presentation-only `Thinking...` header). A running edit occupies its ordered action slot as a compact pending row; its native component keeps execution and preview state for expanded mode but is never rendered inside a valid collapsed storyboard. The adapter must never skip or absorb a user message, custom entry, spacer with meaningful separation, compaction/branch row, or unknown component. Any incomplete or mismatched response is rendered entirely natively.
 
 Every non-empty eligible run is replaced visually, including singleton, running, and failed rows. This keeps each collapsed tool kind on the same compact presentation whether it appears alone or in a batch. Native rendering is restored whenever the row is expanded, incompatible, or otherwise outside the eligible scope. A pending edit may use a validated path or the safe label `edit`; a successful edit requires a validated path/count summary, and a failed edit may fall back to the same safe label.
 
@@ -173,7 +173,7 @@ Run 3 commands
   ● git status
 ```
 
-The adapter must not parse or depend on tool-specific error categories. It extracts the last non-empty line from text result blocks, sanitizes it, and stores only that bounded summary. If there is no usable text, it uses the deterministic label `Failed`. Full output and diagnostics remain in Pi's row state and return in expanded mode.
+The adapter must not parse or depend on tool-specific error categories. It extracts one useful line from text result blocks: structural tails such as a closing `}` and serialized JSON properties are skipped, and the last generic diagnostic-looking line is preferred when present. It sanitizes that bounded summary; if there is no usable text, it uses the deterministic label `Failed`. Full output and diagnostics remain in Pi's row state and return in expanded mode.
 
 Every running call, including Edit, Bash, and PowerShell, appears as a compact grouped row with a `syntaxKeyword`-colored running marker. A running edit shows at most its validated path. If a call later fails, the same grouped row changes to the error marker and minimal message. Pi's edit preview and preview errors remain available through explicit expansion.
 
@@ -290,7 +290,7 @@ Rendering requirements:
 - handle narrow widths without throwing;
 - use deterministic labels and preserve source order;
 - use a compact JSON fallback when recognized arguments are malformed or incomplete rather than guessing;
-- for failed rows, inspect text blocks generically, select the last non-empty sanitized line, cap the stored summary at 512 Unicode code points, and use `Failed` when no usable text exists;
+- for failed rows, inspect text blocks generically, select the last useful sanitized line while skipping structural tails and preferring a generic diagnostic-looking line, cap the stored summary at 512 Unicode code points, and use `Failed` when no usable text exists;
 - when a failure suffix competes with the main value for width, truncate the diagnostic first and preserve a recognizable path/command prefix; never let a one-cell middle ellipsis appear as an ambiguous `.`;
 - do not classify errors or parse tool-specific status formats;
 - read the current theme at render time so theme switches do not retain stale ANSI codes.
@@ -323,8 +323,9 @@ pi-tool-groups/
 │   ├── index.ts          # Pi lifecycle; install/uninstall
 │   ├── grouping.ts       # pure grouping state machine
 │   ├── renderer.ts             # safe width-aware group summaries
-│   ├── storyboard.ts           # pure response matching/order rules
-│   ├── storyboard-renderer.ts  # responsive turn branches and end caps
+│   ├── storyboard.ts           # pure scene/work-span matching and order rules
+│   ├── session-projection.ts   # minimal read-only active-path index
+│   ├── storyboard-renderer.ts  # responsive turn/span branches and end caps
 │   ├── tui-preview.ts          # preview gallery
 │   └── pi-adapter.ts           # the only private Pi/TUI knowledge
 └── test/
@@ -333,6 +334,8 @@ pi-tool-groups/
     ├── storyboard.test.ts
     ├── storyboard-renderer.test.ts
     ├── pi-adapter.test.ts
+    ├── session-projection.test.ts
+    ├── work-span.test.ts
     └── architecture.test.ts
 ```
 
@@ -630,7 +633,7 @@ Also test invisible assistant components between otherwise adjacent visual rows.
 - offsets, limits, paths, globs, patterns, commands, and working directories;
 - write summaries never expose written content;
 - running edit summaries show at most a validated path and pending status; settled edit summaries add replacement count and optional bounded error summary, and neither form copies or exposes edit text, diff, patch, or full result details;
-- failed summaries use `●` with the theme's error color, a literal ` - ` separator, and the generic last-non-empty-line extraction rule;
+- failed summaries use `●` with the theme's error color, a literal ` - ` separator, and the generic useful-line extraction rule;
 - error summaries default to `Failed`, are capped at 512 Unicode code points, and obey terminal width;
 - command summaries never expose full stdout/stderr, including failed commands;
 - generic summaries retain tool names and safely serialize arguments;
@@ -701,21 +704,23 @@ before_provider_headers
 after_provider_response
 ```
 
-Allowlist imports, command registration for the static preview, and only the lifecycle events `session_start` and `session_shutdown`. This test enforces intent; it is not a security sandbox.
+Allowlist imports, command registration for the static preview, and session lifecycle/message notifications used only for projection invalidation. This test enforces intent; it is not a security sandbox.
 
 ## 11. Acceptance criteria
 
 Release v1 only when all of the following are true:
 
 - Every compatible eligible collapsed tool, including a singleton, uses its compact semantic group presentation.
-- A validated assistant response and its exactly matched source-order tool rows render as one thinking-led visual turn block without creating a persisted master record; ordinary paragraph thinking markers remain `muted`, the top-level action marker follows turn state, and final-answer-adjacent thinking follows final-answer state.
+- A validated assistant response and its exactly matched source-order tool rows render as one thinking-led scene without creating a persisted master record; ordinary paragraph thinking markers remain `muted`, the top-level action marker follows turn state, and final-answer-adjacent thinking follows final-answer state.
+- Each settled scene is independently validated against the public active path; adjacent settled empty/absent-thinking scenes may continue beneath the previous visible root only when the explicit continuation checks pass. Hard boundaries, ambiguity, and unresolved streaming state fall back natively.
+- Empty/absent thinking does not create fake thinking content; continuation removes the orphan root, leading tool-only work without an eligible anchor uses an observable action root, and same-kind actions merge only within one validated scene/chapter.
 - Mixed Read/Edit/Command/etc. action runs remain in exact response order; `├─` marks continuation and `╰─` closes the final child.
-- The visual hierarchy claims only turn membership, never causal ownership by a thinking/commentary block.
-- Validated commentary remains complete native Markdown; final-answer and unknown text remain native, with thinking-start markers allowed in mixed no-tool responses.
+- The visual hierarchy claims only scene/chapter presentation membership, never causal ownership by a thinking/commentary block.
+- Validated commentary remains complete native Markdown and breaks out full-width at its exact source position; final-answer and unknown text remain native, with thinking-start markers allowed in mixed no-tool responses.
 - A no-tool thinking/work-note message may render as one quiet content node; pure final answers remain native.
-- Tool-only responses begin under a presentation-only `Thinking...` header and never invent a `Tool step` title.
+- Tool-only responses use a `Thinking...` placeholder only in the legacy fallback; a validated active-path turn promotes its first observable action instead.
 - Expanded tools, incomplete matching, and incompatible response state restore the complete affected response to native rendering; no native tool renderer is embedded inside a valid collapsed storyboard.
-- The turn storyboard uses no harness events, session reads, injected entries/messages, timers, or parallel transcript state.
+- The work-span projection uses no harness IDs, session writes, injected entries/messages, timers, or background work; it reads only public active-path APIs and retains minimal ephemeral metadata.
 - Adjacent `grep`/`find` calls merge into Search groups, and adjacent `bash`/`powershell` calls merge into Command groups.
 - Custom, unknown, MCP, and subagent calls use generic Tool groups while retaining each tool name.
 - Running edits use Edit groups containing only a validated path when available and pending status; settled successful and failed edits add replacement count and optional bounded error summary.
@@ -724,7 +729,7 @@ Release v1 only when all of the following are true:
 - Edit snapshots and rendered output contain no `oldText`, `newText`, diff, patch, full result details, or full error output.
 - Validated failed calls remain in their semantic groups and use an error-colored `●` plus one generic minimal message.
 - Error handling never classifies errors or parses tool-specific status formats.
-- Error summaries use the last non-empty sanitized text line, default to `Failed`, and are capped at 512 Unicode code points before width truncation.
+- Error summaries use the last useful sanitized text line, skip structural tails such as `}`, prefer a generic diagnostic-looking line, default to `Failed`, and are capped at 512 Unicode code points before width truncation.
 - Running commands use compact running markers without copying or tailing output.
 - Write summaries never show written content; successful command and generic summaries never show result contents; failed summaries show only the bounded error summary.
 - Image-producing calls use compact path/status summaries while collapsed and Pi's native image renderer when expanded.
@@ -745,7 +750,7 @@ Release v1 only when all of the following are true:
 | Global `Container` patch affects unrelated containers | Fast-path unless direct children contain validated tool rows |
 | Another extension patches the same prototype | Conservative restore, compatibility tests, document conflicts |
 | Full failed output hidden while collapsed | Show one generic error-colored summary line; global expansion restores Pi's complete native diagnostics |
-| Minimal message omits the most useful error context | Use a deterministic last-non-empty-line rule, retain no full output, and make expansion the source of complete diagnostics |
+| Minimal message omits the most useful error context | Skip structural tails, prefer a generic diagnostic-looking line, retain no full output, and make expansion the source of complete diagnostics |
 | Error messages vary by tool/version | Do not classify or parse error types; treat all validated failures identically |
 | Edit preview or preview error hidden while collapsed | Show a compact path/status row and make explicit expansion the source of Pi's native preview |
 | Large edit arguments/results duplicated by snapshots | Project only path, replacement count, status, and bounded error summary; never copy edit text, diff, patch, full result details, or full error output |

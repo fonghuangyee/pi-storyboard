@@ -487,7 +487,7 @@ pi-storyboard/
 ├── AGENTS.md                 # contributor/agent workflow rules
 ├── LICENSE
 ├── docs/
-│   └── DEVELOPMENT.md        # authoritative implementation document
+│   └── ARCHITECTURE.md       # authoritative implementation document
 ├── src/
 │   ├── index.ts              # extension command, lifecycle, projection cache
 │   ├── grouping.ts           # pure semantic grouping state machine

@@ -38,4 +38,4 @@ Use `Turn storyboard` for the fixed storyboard reference or `Transcript replay` 
 
 Pi's core packages are optional peer dependencies and are not bundled. The extension is feature-detected and fails back to Pi's native transcript when the required component shape is unavailable. Expanded tool mode always restores Pi's complete native rendering.
 
-For the implementation contract, architecture, safety invariants, compatibility notes, and maintainer workflow, see [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
+For the implementation contract, architecture, safety invariants, compatibility notes, and maintainer workflow, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

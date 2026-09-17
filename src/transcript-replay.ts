@@ -135,7 +135,7 @@ const TRANSCRIPT_TAIL: readonly ReplayAssistant[] = Object.freeze([
         id: "replay-502-bash",
         name: "bash",
         args: Object.freeze({
-          command: "rg -n '—|errorDetail|fitFailureDetails| - ' src/renderer.ts README.md docs/DEVELOPMENT.md test/renderer.test.ts | head -80",
+          command: "rg -n '—|errorDetail|fitFailureDetails| - ' src/renderer.ts README.md docs/ARCHITECTURE.md test/renderer.test.ts | head -80",
           timeout: 10,
         }),
         result: EMPTY_RESULT,

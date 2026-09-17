@@ -2,15 +2,16 @@
 
 ## Project instructions
 
-`pi-storyboard` is a presentation-only Pi extension. Before changing code, read [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md); it is the authoritative source of truth for the architecture, behavior, safety rules, compatibility assumptions, and verification requirements.
+`pi-storyboard` is a presentation-only Pi extension. Before changing code, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); it is the authoritative source of truth for the architecture, behavior, safety rules, compatibility assumptions, and verification requirements.
 
 ### Documentation is part of the implementation
 
-- Update `docs/DEVELOPMENT.md` in the same change whenever behavior, architecture, ownership rules, fallback behavior, lifecycle handling, dependencies, supported Pi versions, preview fixtures, tests, packaging, or future work changes.
+- `docs/ARCHITECTURE.md` is the authoritative explanation of the implemented architecture, behavior, safety rules, compatibility assumptions, and verification requirements.
+- Update `docs/ARCHITECTURE.md` in the same change whenever behavior, architecture, ownership rules, fallback behavior, lifecycle handling, dependencies, supported Pi versions, preview fixtures, tests, packaging, or implemented future work changes.
 - Keep examples, module descriptions, acceptance criteria, and test matrices aligned with the code.
 - Treat stale documentation as a defect, not as a follow-up task.
+- Dedicated planning documents in `docs/` are allowed for unimplemented proposals. They must not replace or contradict implementation truth; when a plan ships, fold the final behavior, acceptance criteria, and compatibility details into `docs/ARCHITECTURE.md` and update or retire the plan.
 - Keep `README.md` reserved for concise Pi extension marketplace usage: what the extension does, installation, user-facing preview/features, compatibility, and links to development documentation. Do not move internal design history or maintainer procedures into it.
-- Do not recreate the retired split documents in `docs/`; use `docs/DEVELOPMENT.md` as the single development document.
 
 ### Architecture boundaries
 
@@ -45,4 +46,4 @@ For package, README, manifest, dependency, or publish changes, also run:
 npm run package:check
 ```
 
-Review `git diff` afterward and confirm the implementation, tests, `docs/DEVELOPMENT.md`, and `README.md` tell the same story.
+Review `git diff` afterward and confirm the implementation, tests, `docs/ARCHITECTURE.md`, and `README.md` tell the same story.

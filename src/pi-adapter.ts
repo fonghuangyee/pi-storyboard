@@ -47,7 +47,7 @@ import {
   type SessionProjection,
 } from "./session-projection.ts";
 
-export const PATCH_MARKER = Symbol.for("pi-tool-groups.container.v1");
+export const PATCH_MARKER = Symbol.for("pi-storyboard.container.v1");
 
 export type PatchHandle = {
   uninstall(): void;

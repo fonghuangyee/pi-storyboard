@@ -106,7 +106,7 @@ const TRANSCRIPT_TAIL: readonly ReplayAssistant[] = Object.freeze([
         id: "replay-498-edit",
         name: "edit",
         args: Object.freeze({
-          path: "/Users/fong/Documents/FHY/pi-tool-groups/src/renderer.ts",
+          path: "/Users/fong/Documents/FHY/pi-storyboard/src/renderer.ts",
           edits: Object.freeze([{ oldText: "old", newText: "new" }]),
         }),
         result: EMPTY_RESULT,
@@ -135,7 +135,7 @@ const TRANSCRIPT_TAIL: readonly ReplayAssistant[] = Object.freeze([
         id: "replay-502-bash",
         name: "bash",
         args: Object.freeze({
-          command: "rg -n '—|errorDetail|fitFailureDetails| - ' src/renderer.ts README.md docs/PLAN.md test/renderer.test.ts | head -80",
+          command: "rg -n '—|errorDetail|fitFailureDetails| - ' src/renderer.ts README.md docs/DEVELOPMENT.md test/renderer.test.ts | head -80",
           timeout: 10,
         }),
         result: EMPTY_RESULT,

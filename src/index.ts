@@ -9,11 +9,11 @@ import { buildSessionProjection, type SessionProjection } from "./session-projec
  * the interactive TUI; session replacement/reload gets a fresh handle.
  */
 export default function (pi: ExtensionAPI): void {
-  pi.registerCommand("tool-groups-preview", {
-    description: "Preview tool groups and available pi-tui components",
+  pi.registerCommand("storyboard-preview", {
+    description: "Preview Pi storyboards and available pi-tui components",
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui") {
-        ctx.ui.notify("/tool-groups-preview is only available in interactive TUI mode", "warning");
+        ctx.ui.notify("/storyboard-preview is only available in interactive TUI mode", "warning");
         return;
       }
 

@@ -72,10 +72,10 @@ describe("renderToolGroup", () => {
         rows: [
           {
             ...row("edit", {
-              path: "/Users/fong/Documents/FHY/pi-tool-groups/test/renderer.test.ts",
+              path: "/Users/fong/Documents/FHY/pi-storyboard/test/renderer.test.ts",
               replacementCount: 2,
             }, { content: [], isError: true }),
-            errorSummary: "Could not find edits[0] in /Users/fong/Documents/FHY/pi-tool-groups/test/renderer.test.ts",
+            errorSummary: "Could not find edits[0] in /Users/fong/Documents/FHY/pi-storyboard/test/renderer.test.ts",
           },
         ],
       },
@@ -93,10 +93,10 @@ describe("renderToolGroup", () => {
           rows: [
             {
               ...row("edit", {
-                path: "/Users/fong/Documents/FHY/pi-tool-groups/test/renderer.test.ts",
+                path: "/Users/fong/Documents/FHY/pi-storyboard/test/renderer.test.ts",
                 replacementCount: 2,
               }, { content: [], isError: true }),
-              errorSummary: "Could not find edits[0] in /Users/fong/Documents/FHY/pi-tool-groups/test/renderer.test.ts",
+              errorSummary: "Could not find edits[0] in /Users/fong/Documents/FHY/pi-storyboard/test/renderer.test.ts",
             },
           ],
         },

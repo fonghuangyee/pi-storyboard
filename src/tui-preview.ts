@@ -219,7 +219,7 @@ const SAMPLE_TOOL_GROUPS: readonly GroupSnapshot[] = [
       {
         toolName: "read",
         args: {
-          path: "/Users/fong/Documents/FHY/pi-tool-groups/src/components/very-long-file-name.ts",
+          path: "/Users/fong/Documents/FHY/pi-storyboard/src/components/very-long-file-name.ts",
         },
         result: { content: [], isError: false },
         isPartial: false,

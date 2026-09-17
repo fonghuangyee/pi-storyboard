@@ -1,7 +1,7 @@
 {
-  "name": "pi-tool-groups",
+  "name": "pi-storyboard",
   "version": "0.1.0",
-  "description": "Group collapsed Pi tool rows into source-ordered work-span storyboards while preserving native fallbacks.",
+  "description": "Render validated Pi assistant turns as source-ordered storyboards with grouped tool actions and native fallbacks.",
   "type": "module",
   "license": "MIT",
   "sideEffects": false,

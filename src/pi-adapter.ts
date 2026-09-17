@@ -4,6 +4,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   Container,
+  stripTerminalSequences,
   visibleWidth,
   type Component,
   type TuiMouseEvent,
@@ -31,6 +32,7 @@ import {
   type StoryboardAssistantContent,
   type StoryboardAssistantContentType,
   type StoryboardChild,
+  type StoryboardSegment,
   type StoryboardSourceItem,
   type StoryboardWorkSpan,
 } from "./storyboard.ts";
@@ -151,6 +153,78 @@ function hasOwn(value: object, property: string): boolean {
 function hasOnlyKnownKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const known = new Set(keys);
   return Object.keys(value).every((key) => known.has(key));
+}
+
+type ExpansionStatusGap = {
+  readonly boundary: number;
+  readonly rows: readonly Component[];
+};
+
+type ExpansionStatusProjection = {
+  readonly children: readonly Component[];
+  readonly gaps: readonly ExpansionStatusGap[];
+  readonly toolOutputExpanded?: boolean;
+};
+
+/**
+ * Pi's global expansion shortcut appends a Spacer/Text status pair. If that
+ * happens while an assistant is still streaming its tool call, the later
+ * ToolExecutionComponent is appended after the status pair and no longer sits
+ * contiguously beside its owner. This exact, Pi-shaped status row is
+ * transcript-neutral; every other native child remains a hard ownership
+ * boundary.
+ */
+function piToolExpansionState(value: unknown): boolean | undefined {
+  if (!isRecord(value)) return undefined;
+  const fields = value as Record<string, unknown>;
+  if (
+    typeof fields.text !== "string" ||
+    fields.paddingX !== 1 ||
+    fields.paddingY !== 0
+  ) {
+    return undefined;
+  }
+  const text = stripTerminalSequences(fields.text).trim();
+  if (text === "Tool output: expanded") return true;
+  if (text === "Tool output: collapsed") return false;
+  return undefined;
+}
+
+function isPiStatusSpacer(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const fields = value as Record<string, unknown>;
+  return hasOwn(fields, "lines") && fields.lines === 1 && typeof fields.render === "function";
+}
+
+function projectExpansionStatusGaps(
+  children: readonly Component[],
+): ExpansionStatusProjection {
+  const projected: Component[] = [];
+  const gaps: ExpansionStatusGap[] = [];
+  let toolOutputExpanded: boolean | undefined;
+
+  for (let index = 0; index < children.length;) {
+    const spacer = children[index];
+    const status = children[index + 1];
+    const statusState = piToolExpansionState(status);
+    if (status !== undefined && isPiStatusSpacer(spacer) && statusState !== undefined) {
+      toolOutputExpanded = statusState;
+      gaps.push(Object.freeze({
+        boundary: projected.length,
+        rows: Object.freeze([spacer, status]),
+      }));
+      index += 2;
+      continue;
+    }
+    if (spacer !== undefined) projected.push(spacer);
+    index++;
+  }
+
+  return Object.freeze({
+    children: Object.freeze(projected),
+    gaps: Object.freeze(gaps),
+    ...(toolOutputExpanded === undefined ? {} : { toolOutputExpanded }),
+  });
 }
 
 type ValidatedTextPhase = "commentary" | "final_answer";
@@ -360,6 +434,14 @@ function elapsedFromPiState(value: unknown): number | undefined {
 
   const elapsed = end - value.startedAt;
   return Number.isFinite(elapsed) && elapsed >= 0 ? Math.round(elapsed) : undefined;
+}
+
+function toolExpandedState(row: unknown): boolean | undefined {
+  if (!(row instanceof ToolExecutionComponent) || !isRecord(row)) return undefined;
+  const fields = row as unknown as Record<string, unknown>;
+  return hasOwn(fields, "expanded") && typeof fields.expanded === "boolean"
+    ? fields.expanded
+    : undefined;
 }
 
 function inspectToolRow(row: unknown): CandidateClassification | undefined {
@@ -881,6 +963,12 @@ type SessionSceneInfo = {
   readonly turnIndex?: number;
 };
 
+/** Number of projected direct children consumed by one storyboard segment. */
+function storyboardSegmentChildCount(segment: StoryboardSegment): number {
+  if (segment.type === "native") return segment.children.length;
+  return 1 + segment.actionRuns.reduce((count, run) => count + run.rows.length, 0);
+}
+
 function hasCommentary(segment: SessionSceneInfo["segment"]): boolean {
   return segment.assistant.assistantContent?.some((content) => content.type === "commentary") ?? false;
 }
@@ -1013,8 +1101,16 @@ function renderStoryboardIfRequested(
   width: number,
   options: ToolGroupingPatchOptions,
 ): StoryboardAttempt {
-  const children = container.children.slice();
-  if (children.length === 0) return { requested: false };
+  const directChildren = container.children.slice();
+  if (directChildren.length === 0) return { requested: false };
+
+  // Only session-aware mode can safely bridge a Pi expansion status pair: the
+  // session projection still proves the assistant/tool ownership by call ID.
+  // The legacy adjacency grouper remains unchanged and therefore fails open.
+  const expansionStatus = options.getSessionProjection === undefined
+    ? undefined
+    : projectExpansionStatusGaps(directChildren);
+  const children = expansionStatus?.children.slice() ?? directChildren;
 
   const candidates = new Map<ToolExecutionComponent, CandidateClassification>();
   const metadata = new Map<AssistantMessageComponent, AssistantMetadata>();
@@ -1031,10 +1127,18 @@ function renderStoryboardIfRequested(
   const storyboardRequested = [...metadata.values()].some(
     (assistant) => assistant.expectedToolCallIds.length > 0 || assistant.hasThinking,
   );
+  // Pi's global expansion state also applies to no-tool assistant rows. Do not
+  // leave storyboard-only thinking markers on those rows while any native tool
+  // row (or the latest Pi status pair) says that native expansion is active.
+  const nativeExpansionActive =
+    expansionStatus?.toolOutputExpanded === true ||
+    children.some((child) => toolExpandedState(child) === true);
   const thinkingDecorationOwners = new Set<AssistantMessageComponent>(
-    [...metadata.entries()]
-      .filter(([, assistant]) => assistant.hasThinking && assistant.expectedToolCallIds.length === 0 && assistant.hasText)
-      .map(([assistant]) => assistant),
+    nativeExpansionActive
+      ? []
+      : [...metadata.entries()]
+        .filter(([, assistant]) => assistant.hasThinking && assistant.expectedToolCallIds.length === 0 && assistant.hasText)
+        .map(([assistant]) => assistant),
   );
   if (!storyboardRequested) {
     // Once session-aware mode is installed, an unowned or incompatible tool
@@ -1146,12 +1250,59 @@ function renderStoryboardIfRequested(
     const plans = planSessionWorkSpans(projection.segments, session);
     if (plans === undefined) return { requested: true };
 
+    const expansionGaps = expansionStatus?.gaps ?? [];
+    const gapLayouts = new Map<ExpansionStatusGap, readonly {
+      readonly component: Component;
+      readonly lines: readonly string[];
+    }[]>();
+    for (const gap of expansionGaps) {
+      const rows = gap.rows.map((component) => {
+        const lines = component.render(safeWidth);
+        if (!validRenderedLines(lines)) throw new Error("expansion status returned invalid lines");
+        return Object.freeze({ component, lines: Object.freeze([...lines]) });
+      });
+      gapLayouts.set(gap, Object.freeze(rows));
+    }
+
     const planByStart = new Map(plans.map((plan) => [plan.start, plan]));
     const covered = new Set<number>();
     const workMembers = new Set<Component>();
     const workMouse = new Map<Component, { component: Component; height: number }>();
     const workLayouts = new Map<number, { readonly lines: readonly string[] }>();
     const nativeMouse = new Map<Component, { component: Component; height: number }>();
+    // Normally the private Container mouse layout follows direct-child order.
+    // A bridged status pair is rendered after its atomic scene, so use the
+    // actual visual order only for that compatibility path.
+    const visualMouseChildren: Array<{ component: Component; height: number }> | undefined =
+      expansionGaps.length === 0 ? undefined : [];
+    let nextExpansionGap = 0;
+
+    const appendExpansionGap = (gap: ExpansionStatusGap): void => {
+      const rows = gapLayouts.get(gap);
+      if (rows === undefined) throw new Error("expansion status layout missing");
+      for (const row of rows) {
+        rendered.push(...row.lines);
+        visualMouseChildren?.push({ component: row.component, height: row.lines.length });
+      }
+    };
+
+    const appendExpansionGapsBefore = (boundary: number): void => {
+      while (nextExpansionGap < expansionGaps.length) {
+        const gap = expansionGaps[nextExpansionGap];
+        if (gap === undefined || gap.boundary !== boundary) break;
+        appendExpansionGap(gap);
+        nextExpansionGap++;
+      }
+    };
+
+    const appendExpansionGapsAfter = (start: number, end: number): void => {
+      while (nextExpansionGap < expansionGaps.length) {
+        const gap = expansionGaps[nextExpansionGap];
+        if (gap === undefined || gap.boundary <= start || gap.boundary > end) break;
+        appendExpansionGap(gap);
+        nextExpansionGap++;
+      }
+    };
 
     for (const plan of plans) {
       for (let index = plan.start; index <= plan.end; index++) {
@@ -1193,18 +1344,44 @@ function renderStoryboardIfRequested(
       }
     }
 
+    let projectedChildCursor = 0;
     for (let index = 0; index < projection.segments.length; index++) {
       const plan = planByStart.get(index);
       if (plan !== undefined) {
+        const segmentStart = projectedChildCursor;
+        let segmentEnd = segmentStart;
+        for (let segmentIndex = plan.start; segmentIndex <= plan.end; segmentIndex++) {
+          const segment = projection.segments[segmentIndex];
+          if (segment === undefined) throw new Error("work span segment missing");
+          segmentEnd += storyboardSegmentChildCount(segment);
+        }
+        appendExpansionGapsBefore(segmentStart);
+
         const layout = workLayouts.get(index);
         if (layout === undefined) throw new Error("work span layout missing");
         rendered.push(...layout.lines);
+        if (visualMouseChildren !== undefined) {
+          const first = projection.segments[plan.start];
+          if (first?.type !== "scene") throw new Error("work span anchor missing");
+          const assistant = componentForStoryboardChild({ type: "assistant", assistant: first.assistant });
+          if (assistant === undefined) throw new Error("work span assistant is not renderable");
+          const mouse = workMouse.get(assistant);
+          if (mouse === undefined) throw new Error("work span mouse layout missing");
+          visualMouseChildren.push(mouse);
+        }
+        projectedChildCursor = segmentEnd;
+        appendExpansionGapsAfter(segmentStart, segmentEnd);
         index = plan.end;
         continue;
       }
       if (covered.has(index)) continue;
       const segment = projection.segments[index];
-      if (segment?.type === "scene") {
+      if (segment === undefined) throw new Error("storyboard segment missing");
+      const segmentStart = projectedChildCursor;
+      const segmentEnd = segmentStart + storyboardSegmentChildCount(segment);
+      appendExpansionGapsBefore(segmentStart);
+
+      if (segment.type === "scene") {
         const assistant = componentForStoryboardChild({ type: "assistant", assistant: segment.assistant });
         if (assistant === undefined) throw new Error("scene assistant is not renderable");
         const assistantLines = nativeLines.get(assistant);
@@ -1232,52 +1409,68 @@ function renderStoryboardIfRequested(
           ),
           height,
         });
-        continue;
-      }
-      if (segment?.type === "native") {
+        if (visualMouseChildren !== undefined) {
+          visualMouseChildren.push(nativeMouse.get(assistant)!);
+        }
+      } else {
         for (const child of segment.children) {
           const lines = renderNative(child);
           rendered.push(...lines);
           const component = componentForStoryboardChild(child);
           if (component === undefined) throw new Error("native child is not renderable");
           const decoration = thinkingDecorations.get(component);
-          nativeMouse.set(component, {
+          const mouse = {
             component: decoration === undefined
               ? component
               : new StoryboardThinkingMouseProxy(component, decoration.assistantRegions),
             height: lines.length,
-          });
+          };
+          nativeMouse.set(component, mouse);
+          visualMouseChildren?.push(mouse);
         }
       }
+
+      projectedChildCursor = segmentEnd;
+      appendExpansionGapsAfter(segmentStart, segmentEnd);
+    }
+    while (nextExpansionGap < expansionGaps.length) {
+      const gap = expansionGaps[nextExpansionGap];
+      if (gap === undefined) throw new Error("expansion status gap missing");
+      appendExpansionGap(gap);
+      nextExpansionGap++;
     }
 
     // Rebuild the private container hit-test list in the original direct-child
     // order. A work span has one proxy anchor and zero-height member rows.
-    const spanMouseChildren: Array<{ component: Component; height: number }> = [];
-    for (const child of children) {
-      const component = child as Component;
-      const anchor = workMouse.get(component);
-      if (anchor !== undefined) {
-        spanMouseChildren.push(anchor);
-        continue;
+    if (visualMouseChildren !== undefined) {
+      setMouseLayout(container, safeWidth, visualMouseChildren);
+    } else {
+      const spanMouseChildren: Array<{ component: Component; height: number }> = [];
+      for (const child of children) {
+        const component = child as Component;
+        const anchor = workMouse.get(component);
+        if (anchor !== undefined) {
+          spanMouseChildren.push(anchor);
+          continue;
+        }
+        if (workMembers.has(component)) {
+          spanMouseChildren.push({ component: GROUP_MOUSE_SINK, height: 0 });
+          continue;
+        }
+        const native = nativeMouse.get(component);
+        if (native !== undefined) {
+          spanMouseChildren.push(native);
+          continue;
+        }
+        // Native tool rows outside a scene are not in nativeMouse until they are
+        // rendered here; this path is also the conservative incompatible-row
+        // fallback inside an otherwise valid session projection.
+        const lines = component.render(safeWidth);
+        if (!validRenderedLines(lines)) throw new Error("native child returned invalid lines");
+        spanMouseChildren.push({ component, height: lines.length });
       }
-      if (workMembers.has(component)) {
-        spanMouseChildren.push({ component: GROUP_MOUSE_SINK, height: 0 });
-        continue;
-      }
-      const native = nativeMouse.get(component);
-      if (native !== undefined) {
-        spanMouseChildren.push(native);
-        continue;
-      }
-      // Native tool rows outside a scene are not in nativeMouse until they are
-      // rendered here; this path is also the conservative incompatible-row
-      // fallback inside an otherwise valid session projection.
-      const lines = component.render(safeWidth);
-      if (!validRenderedLines(lines)) throw new Error("native child returned invalid lines");
-      spanMouseChildren.push({ component, height: lines.length });
+      setMouseLayout(container, safeWidth, spanMouseChildren);
     }
-    setMouseLayout(container, safeWidth, spanMouseChildren);
     return { requested: true, output: rendered };
   }
 

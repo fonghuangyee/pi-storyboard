@@ -121,6 +121,8 @@ The extension therefore reuses native assistant children and reconstructs only t
 
 Pi's native thinking renderer skips empty thinking runs. An empty `thinking: ""` block may still carry an opaque provider signature required for replay, so visual omission is permitted but message/content/signature mutation is not.
 
+Pi's global `app.tools.expand` action also appends a native spacer/status-text pair such as `Tool output: expanded` while the toggle is being reported. If that pair lands between a still-streaming assistant component and the tool component created by a later message update, it is not transcript content and can otherwise strand the tool outside its owner window. In session-aware mode the adapter recognizes only this exact Pi-shaped pair, proves the owner with the active-path tool-call IDs, and keeps the pair visible after the atomic scene. All other native children remain ownership boundaries; legacy adjacency mode does not bridge the pair.
+
 ## 3. Marketplace-facing behavior
 
 The public README contains the short installation and feature description. The complete contract is here.
@@ -287,7 +289,7 @@ running > failed > complete > note
 
 The final meaningful source child gets `╰─`; earlier action runs get `├─`. If native content is the final child, its terminal marker closes the scene instead.
 
-Pi's configured global tool expansion state is authoritative. Expanded mode is a hard boundary: all affected tool rows and storyboard decoration return to Pi's complete native rendering, including live output, edit diffs, images, custom details, and diagnostics. The extension does not register a shortcut or assume a particular key binding.
+Pi's configured global tool expansion state is authoritative. Expanded mode is a hard boundary: all affected tool rows and storyboard decoration return to Pi's complete native rendering, including live output, edit diffs, images, custom details, diagnostics, and no-tool thinking markers. The extension does not register a shortcut or assume a particular key binding.
 
 ## 4. Storyboard projection
 
@@ -533,6 +535,7 @@ The adapter feature-detects:
 - constructibility of `ToolExecutionComponent`;
 - native assistant/tool private fields needed for validation;
 - native assistant child and mouse-layout shapes;
+- the exact native spacer/status shape used by Pi's expansion feedback;
 - valid theme and group-renderer output.
 
 It reads native components but never mutates their messages, arguments, results, child arrays, or rendering state. The only extension-owned private marker is:
@@ -545,7 +548,7 @@ Symbol.for("pi-storyboard.container.v1")
 
 A patched container render follows this flow:
 
-1. Copy the direct child array for this pass.
+1. Copy the direct child array for this pass; in session-aware mode, project only the exact Pi expansion status pair out of ownership matching while retaining its native rows for output.
 2. Inspect assistant metadata and tool-row snapshots without retaining unsafe payloads.
 3. Build a preliminary storyboard to identify owners.
 4. Render each native non-tool child once at the correct width.
@@ -602,7 +605,7 @@ The complete affected region remains native when any of the following occurs:
 - final-answer, unknown, malformed, or in-progress text that cannot be safely classified;
 - unsupported assistant content or entry type;
 - session mapping ambiguity, active-path uncertainty, compaction/branch uncertainty, or a hard boundary;
-- a visible custom/native child between candidate scenes;
+- a visible custom/native child between candidate scenes (except the exact session-proven Pi expansion status pair described in [Section 2.4](#24-native-tui-behavior));
 - incompatible private component fields or mouse layout;
 - invalid native child/group output;
 - an exception in classification, projection, layout, or rendering;
@@ -660,7 +663,7 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, state colors, width budgets, and placeholder styling.
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, compaction, boundaries, and text phases.
 - `work-span.test.ts`: empty-thinking continuation, action roots, commentary suffix, source order, and no-placeholder cases.
-- `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, expansion, mouse translation, fallback, owner counting, and wrapper composition.
+- `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, expansion/status restoration, native thinking-marker restoration, mouse translation, fallback, owner counting, and wrapper composition.
 - `transcript-replay.test.ts`: native Pi components in the fixed diagnostic replay.
 - `tui-preview.test.ts`: current preview gallery and public `pi-tui` component coverage.
 - `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from `src/`.

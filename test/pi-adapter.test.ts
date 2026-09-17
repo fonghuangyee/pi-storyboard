@@ -115,6 +115,18 @@ function result(isError = false, content: unknown[] = [{ type: "text", text: "ou
   return { content, details: { source: "test" }, isError };
 }
 
+function expansionStatusRows(status = "collapsed"): [Record<string, unknown>, Record<string, unknown>] {
+  return [
+    { lines: 1, render: vi.fn(() => [""]) },
+    {
+      text: `Tool output: ${status}`,
+      paddingX: 1,
+      paddingY: 0,
+      render: vi.fn(() => [` status ${status}`]),
+    },
+  ];
+}
+
 function container(...children: unknown[]): Container {
   const value = new Container();
   value.children = children as never[];
@@ -1010,6 +1022,92 @@ describe("Container adapter", () => {
     }
     expect(imageA.render).not.toHaveBeenCalled();
     expect(imageB.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("restores a scene after Pi's expansion status split its direct children", () => {
+    const owner = storyboardAssistant(["thinking"], ["restore-read"]);
+    const row = tool("read", { path: "restore.ts" }, result(), true);
+    assignToolCallId(row, "restore-read");
+    const [statusSpacer, statusText] = expansionStatusRows("expanded");
+    const session: SessionProjection = {
+      leafId: "result",
+      turns: [{
+        entryId: "assistant",
+        toolCallIds: ["restore-read"],
+        resultEntryIds: ["result"],
+        hasVisibleThinking: true,
+        hasCommentary: false,
+        hasFinalAnswer: false,
+        hasUnknownText: false,
+        valid: true,
+        boundaryBefore: false,
+        boundaryAfter: false,
+      }],
+    };
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: () => ["", " restored group"],
+    });
+    const value = container(owner, statusSpacer, statusText, row);
+
+    expect(value.render(80)).toContain("native read");
+    (row as unknown as Record<string, unknown>).expanded = false;
+    statusText.text = "Tool output: collapsed";
+    statusText.render = vi.fn(() => [" status collapsed"]);
+
+    const restored = value.render(80).join("\\n");
+    expect(restored).toContain("restored group");
+    expect(restored).not.toContain("native read");
+    expect(restored).toContain("status collapsed");
+    expect(statusText.render).toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("does not leave storyboard thinking markers during native expansion", () => {
+    const owner = assistant(["", " thinking", "", " answer"]);
+    const ownerFields = owner as unknown as Record<string, unknown>;
+    ownerFields.lastMessage = {
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "work" },
+        {
+          type: "text",
+          text: "answer",
+          textSignature: JSON.stringify({ v: 1, id: "native-expansion", phase: "final_answer" }),
+        },
+      ],
+      stopReason: "stop",
+    };
+    ownerFields.isStreaming = false;
+    const leadingSpacer = { render: vi.fn(() => [""]) };
+    const thinking = { render: vi.fn(() => [" thinking"]) };
+    const betweenSpacer = { render: vi.fn(() => [""]) };
+    const answer = { render: vi.fn(() => [" answer"]) };
+    ownerFields.contentContainer = {
+      children: [leadingSpacer, thinking, betweenSpacer, answer],
+      mouseLayout: {
+        width: 80,
+        children: [
+          { component: leadingSpacer, height: 1 },
+          { component: thinking, height: 1 },
+          { component: betweenSpacer, height: 1 },
+          { component: answer, height: 1 },
+        ],
+      },
+    };
+    const expandedTool = tool("read", { path: "expanded.ts" }, result(), true);
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: () => ["bad"] });
+    const value = container(owner, expandedTool);
+
+    const native = value.render(80).join("\\n");
+    expect(native).toContain(" thinking");
+    expect(native).not.toContain("○");
+
+    (expandedTool as unknown as Record<string, unknown>).expanded = false;
+    const collapsed = value.render(80).join("\\n");
+    expect(collapsed).toContain("○");
     handle?.uninstall();
   });
 

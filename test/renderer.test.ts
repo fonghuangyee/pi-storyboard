@@ -8,6 +8,7 @@ import {
   type ThemeLike,
   type ToolRowSnapshot,
 } from "../src/renderer.ts";
+import { normalizePresentationSettings } from "../src/presentation-settings.ts";
 
 const theme: ThemeLike = {
   fg: (color, text) => `<${color}>${text}</${color}>`,
@@ -301,5 +302,27 @@ describe("renderToolGroup", () => {
         expect(visibleWidth(line)).toBeLessThanOrEqual(width);
       }
     }
+  });
+
+  it("trims file names and commands independently", () => {
+    const path = "/Users/fong/Documents/FHY/pi-storyboard/src/components/very-long-file-name.ts";
+    const command = "npm run test -- --reporter verbose --coverage --project storyboard";
+    const defaults = normalizePresentationSettings(undefined);
+    const noFileTrim = normalizePresentationSettings({
+      "pi-storyboard": { trimming: { fileNames: false, commands: true } },
+    });
+    const noCommandTrim = normalizePresentationSettings({
+      "pi-storyboard": { trimming: { fileNames: true, commands: false } },
+    });
+
+    const defaultPath = renderToolGroup({ kind: "read", rows: [row("read", { path })] }, 48, plainTheme, defaults)[2]!;
+    const untrimmedPath = renderToolGroup({ kind: "read", rows: [row("read", { path })] }, 48, plainTheme, noFileTrim)[2]!;
+    const defaultCommand = renderToolGroup({ kind: "command", rows: [row("bash", { command })] }, 48, plainTheme, defaults)[2]!;
+    const untrimmedCommand = renderToolGroup({ kind: "command", rows: [row("bash", { command })] }, 48, plainTheme, noCommandTrim)[2]!;
+
+    expect(defaultPath).toContain("file-name.ts");
+    expect(untrimmedPath).not.toContain("very-long-file-name.ts");
+    expect(defaultCommand).toContain("storyboard");
+    expect(untrimmedCommand).not.toContain("storyboard");
   });
 });

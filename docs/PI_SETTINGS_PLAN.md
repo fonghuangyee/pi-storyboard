@@ -1,6 +1,6 @@
 # Pi settings customization plan
 
-> **Status: not currently shipped.** This document describes the proposed presentation-only settings feature. Implemented behavior and compatibility truth belong in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+> **Status: implemented.** This document records the implementation contract for the presentation-only settings feature. The authoritative implemented design belongs in [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 This feature must not change scene ownership, tool eligibility, source order, native fallback, messages, session entries, model behavior, or the complete details available through Pi's native expansion.
 
@@ -10,7 +10,8 @@ The first settings version should support:
 
 1. independent middle-trimming switches for file/path values and shell commands;
 2. configurable storyboard symbols, including per-tool-kind dots and thinking/rail/branch symbols;
-3. configurable lifecycle/status colors and one structural color for the vertical rail and `L`-shaped branch markers.
+3. configurable lifecycle/status colors and one structural color for the vertical rail and `L`-shaped branch markers;
+4. an interactive `/storyboard-settings [global|project]` TUI page that saves the namespace and reloads Pi.
 
 The defaults must produce the current output:
 
@@ -59,32 +60,29 @@ The defaults must produce the current output:
 
 `toolDots` is optional; an absent kind-specific value falls back to `toolDot`. The exact public key may change if Pi adds a first-class extension-settings namespace, but the extension must use one namespaced object rather than adding unrelated top-level keys.
 
-## Pi settings integration
+## Pi settings integration and interactive page
 
-Pi settings are global at `~/.pi/agent/settings.json` and project-local at `.pi/settings.json`, with project values overriding global values. The project-local object must be ignored when `ctx.isProjectTrusted()` is false.
+Pi settings are global at `~/.pi/agent/settings.json` and project-local at `.pi/settings.json`, with project values overriding global values. The project-local object is ignored when `ctx.isProjectTrusted()` is false.
 
-The current installed Pi API exposes `SettingsManager.create()` publicly but does not expose a `SettingsManager` on `ExtensionContext`. The implementation must not reach through private context/session fields or parse settings files manually. The preferred compatibility bridge is a small read-only adapter around the public `SettingsManager` factory, created once during `session_start` with the current cwd and project-trust state. If Pi provides a public read-only extension-settings accessor before implementation, use that instead. In either case:
+The current Pi API exposes `SettingsManager.create()` publicly but not a settings manager on `ExtensionContext`. `src/presentation-settings-store.ts` creates the public manager at `session_start` and reads only the `pi-storyboard` namespace into an immutable `PresentationSettings` snapshot. It never uses private context/session fields for reads.
 
-- only the `pi-storyboard` namespace is copied into an immutable `PresentationSettings` snapshot;
-- no settings setter, `flush()`, or settings write is called;
-- the snapshot is discarded at `session_shutdown` and recreated for a new, resumed, forked, or reloaded session;
-- direct settings edits take effect at the next session/reload boundary; no polling, timer, watcher, or background task is added;
-- the active Pi theme is still read at render time, so changing a theme token updates configured colors without caching ANSI strings;
-- an unavailable or incompatible settings API silently uses the current defaults and does not disable storyboard rendering.
+`/storyboard-settings` is available only in interactive TUI mode. With no argument it asks for `global` or trusted `project` scope; either argument selects that scope directly. The page uses `SettingsList` plus text-input submenus for symbols. It exposes both trimming switches, the default and per-kind dots, thinking/placeholder/rail/branch symbols, all status/thinking/structure color tokens, reset-to-defaults, and Save and reload. Escape cancels without writing.
+
+Pi 0.85.1 has no public generic setter for extension namespaces. On explicit Save, the store reads the selected JSON file, replaces only the validated `pi-storyboard` object, writes it atomically, and preserves unrelated keys. This is the sole filesystem write in the extension and never runs in the renderer, lifecycle listeners, or background work. A successful save calls `ctx.reload()`; the new session lifecycle creates the active snapshot. An unavailable, malformed, or incompatible settings API uses the current defaults and does not disable storyboard rendering.
 
 ## Configuration validation and fallback
 
-`src/presentation-settings.ts` should contain the Pi-independent defaults, types, namespace merge, and validation. It should accept unknown JSON and return a complete immutable snapshot. Invalid fields fall back independently instead of invalidating the whole configuration.
+`src/presentation-settings.ts` contains the Pi-independent defaults, types, namespace merge, and validation. It accepts unknown JSON and returns a complete immutable snapshot. Invalid fields fall back independently instead of invalidating the whole configuration.
 
 - Trimming values must be booleans.
 - Symbols must be single-line, terminal-control-free, bounded display strings. Reject or default values containing ANSI/control sequences, line breaks, or excessive visible width. Do not allow settings to inject raw ANSI styling.
 - Color settings must be references to an allowlisted Pi theme color token, not raw ANSI or arbitrary escape sequences. Users who need a particular RGB value should define it in a Pi theme and select that theme token here.
-- Unknown group kinds, color names, nulls, malformed nested objects, and invalid strings use the nearest default.
+- Unknown group kinds, color names, nulls, malformed nested objects, and invalid strings use the nearest default; invalid project fields inherit the corresponding validated global field.
 - Settings errors must never become a reason to mutate Pi data or to bypass the existing native fallback rules.
 
 ## Trimming semantics
 
-`src/renderer.ts` should classify the main display value before fitting it. `trimming.fileNames` controls path-like values used by Read, List, Write, Edit, Search, and command `cwd` summaries. `trimming.commands` controls only the Bash/PowerShell command value. Timing, error diagnostics, tool names, and result-safety rules remain unchanged.
+`src/renderer.ts` classifies the main display value before fitting it. `trimming.fileNames` controls path-like values used by Read, List, Write, Edit, Search, and command `cwd` summaries. `trimming.commands` controls only the Bash/PowerShell command value. Timing, error diagnostics, tool names, and result-safety rules remain unchanged.
 
 When enabled, the affected value keeps the current middle-truncation behavior so both a useful prefix and filename/command tail can survive. When disabled, the value still has to satisfy Pi's one-line width contract; it uses ordinary width-bounded end truncation rather than allowing overflow or wrapping. Successful result output, write content, edit text/diffs, image data, and full command output remain excluded regardless of either switch.
 
@@ -100,25 +98,27 @@ The settings snapshot should be passed into the renderers as data; it must not e
 - Layout prefixes and mouse regions must measure the configured symbols with `visibleWidth()` instead of assuming the widths of `◉`, `○`, `│`, `├─`, or `╰─`. Every configured variant must retain the existing width and mouse-coordinate guarantees.
 - The presentation-only `Thinking...` label may change text, but it remains presentation-only and keeps Pi's thinking text style; it never becomes a message, session entry, or inferred reasoning block.
 
-## Planned module changes
+## Implementation map
 
-- `src/index.ts`: load the read-only settings snapshot at the session lifecycle boundary and provide it to the patch; continue to invalidate only session projection state on transcript events.
-- `src/presentation-settings.ts`: own defaults, trusted project/global namespace merging, allowlists, symbol sanitization, and immutable fallback behavior.
-- `src/pi-adapter.ts`: thread the snapshot through the existing guarded render path without using settings for ownership decisions; keep all private Pi/TUI inspection and mouse-layout patching here.
-- `src/renderer.ts`: add field-aware file/command trimming and configurable per-kind dots while preserving all safety and width checks.
-- `src/storyboard-renderer.ts`: replace hard-coded markers/colors with resolved settings and recalculate prefix widths, rails, closure, placeholders, and mouse translations.
-- `src/tui-preview.ts`: add a settings gallery showing defaults, custom symbols, per-kind dots, trimming modes, and color mappings.
+- `src/index.ts`: registers `/storyboard-settings`, loads the snapshot at the session lifecycle boundary, and provides it to the guarded patch while continuing to invalidate only session projection state on transcript events.
+- `src/presentation-settings.ts`: owns defaults, namespace merging, allowlists, symbol sanitization, and immutable fallback behavior.
+- `src/presentation-settings-store.ts`: owns public `SettingsManager` reads, trusted scope handling, atomic namespace-only writes, and settings-file preservation.
+- `src/presentation-settings-ui.ts`: owns the interactive TUI page and draft editing; it does not decide semantic ownership.
+- `src/pi-adapter.ts`: threads the snapshot through the existing guarded render path without using settings for ownership decisions; all private Pi/TUI inspection and mouse-layout patching remains here.
+- `src/renderer.ts`: applies field-aware file/command trimming and configurable per-kind dots while preserving all safety and width checks.
+- `src/storyboard-renderer.ts`: applies resolved markers/colors and recalculates prefix widths, rails, closure, placeholders, and mouse translations.
+- `src/tui-preview.ts`: includes a fixed defaults/custom-settings gallery without reading or writing user settings.
 - `src/storyboard.ts`, `src/grouping.ts`, and `src/session-projection.ts`: do not use presentation settings for semantic grouping, ownership, or active-path validation.
 
-## Verification plan
+## Verification status
 
-Add focused tests before implementation is considered complete:
+Implemented and covered by focused tests:
 
 - a new settings test suite for defaults, global/project precedence, untrusted project settings, per-field invalid fallback, control-character rejection, color-token validation, and immutable snapshots;
 - renderer cases proving file-name and command trimming are independent, disabled trimming remains width-safe at widths 1–200, and generic/error/detail safety is unchanged;
 - storyboard-renderer cases for every configurable marker, per-kind dots, custom marker widths, custom status/thinking/structure colors, long thinking summaries, commentary suffixes, closure, and narrow terminals;
 - adapter cases proving settings are threaded without mutating Pi objects, are refreshed across session reload/replacement, keep native expansion/fallback behavior unchanged, and preserve mouse translation;
-- preview tests for the configured/default fixture gallery;
-- manual verification of global versus project settings, project trust, `/reload`, live theme changes, expanded rows, streaming rows, Unicode symbols, and coexistence with another transcript patcher.
+- preview coverage includes the configured/default fixture gallery;
+- manual verification remains required for global versus project settings, project trust, `/storyboard-settings [global|project]`, `/reload`, live theme changes, expanded rows, streaming rows, Unicode symbols, and coexistence with another transcript patcher.
 
-Acceptance for this future feature requires that an absent or malformed setting produces the current presentation, valid settings affect only collapsed storyboard output, every line remains within the terminal width, and all existing ownership/privacy/native-fallback tests continue to pass. The implementation must update `docs/ARCHITECTURE.md`, the marketplace-facing README settings section, preview fixtures, and the compatibility/test matrices together, then run `npm run check` and `npm run package:check`.
+Acceptance is met when absent or malformed settings produce the current presentation, valid settings affect only collapsed storyboard output, every line remains within the terminal width, Save preserves unrelated Pi settings, and all ownership/privacy/native-fallback tests continue to pass. Any future behavior change must update `docs/ARCHITECTURE.md`, this contract, the marketplace-facing README, preview fixtures, and compatibility/test matrices together, then run `npm run check` and `npm run package:check`.

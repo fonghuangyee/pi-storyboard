@@ -6,8 +6,9 @@ import {
   installToolGroupingPatch,
   PATCH_MARKER,
 } from "../src/pi-adapter.ts";
-import type { ThemeLike, ToolRowSnapshot } from "../src/renderer.ts";
+import { renderToolGroup, type ThemeLike, type ToolRowSnapshot } from "../src/renderer.ts";
 import type { SessionProjection } from "../src/session-projection.ts";
+import { normalizePresentationSettings } from "../src/presentation-settings.ts";
 
 const theme: ThemeLike = {
   fg: (_color, text) => text,
@@ -179,6 +180,32 @@ describe("Container adapter", () => {
     expect(read.render).not.toHaveBeenCalled();
     expect(bash.render).not.toHaveBeenCalled();
     expect(following.render).toHaveBeenCalledOnce();
+    handle?.uninstall();
+  });
+
+  it("threads presentation settings through the guarded render path", () => {
+    const owner = storyboardAssistant(["assistant"], ["read-1"]);
+    const read = tool("read", { path: "a.ts" }, result());
+    assignToolCallId(read, "read-1");
+    const settings = normalizePresentationSettings({
+      symbols: {
+        thinkingRoot: "R",
+        rail: "!",
+        lastBranch: "E",
+        toolDots: { read: "r" },
+      },
+    });
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSettings: () => settings,
+      renderGroup: (group, width, groupTheme, passedSettings) =>
+        renderToolGroup(group, width, groupTheme, passedSettings),
+    });
+
+    const output = container(owner, read).render(80).join("\\n");
+    expect(output).toContain("Rassistant");
+    expect(output).toContain("E  Read 1 file");
+    expect(output).toContain("r a.ts");
     handle?.uninstall();
   });
 

@@ -9,6 +9,7 @@ A presentation-only Pi extension that turns collapsed tool activity into compact
 - Shows compact running and failed states while hiding successful output, file contents, diffs, and images; failures expose only one bounded line.
 - Preserves native Pi rendering for expanded rows, final answers, ambiguous content, and unsupported versions.
 - Includes a `/storyboard-preview` gallery for the grouped-tool and turn-storyboard presentations.
+- Includes `/storyboard-settings [global|project]` for interactive trimming, symbol, and color configuration.
 
 ## Install
 
@@ -33,6 +34,10 @@ In interactive TUI mode, run:
 ```
 
 Use `Turn storyboard` for the fixed storyboard reference or `Transcript replay` to inspect a small native-component transcript fixture. Press `Tab` to enter the preview, use `↑`/`↓` or PageUp/PageDown to browse, and press `Esc` to close.
+
+## Settings
+
+In interactive TUI mode, run `/storyboard-settings` to choose global or trusted project settings, or pass `global` or `project` directly. The page configures independent file/path and command trimming, per-kind dots, thinking/branch symbols, and theme color tokens. Saving reloads the extension automatically.
 
 ## Compatibility
 

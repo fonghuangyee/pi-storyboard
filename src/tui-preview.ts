@@ -1,6 +1,7 @@
 import type { Theme, ThemeColor } from "@earendil-works/pi-coding-agent";
 import { TranscriptReplay } from "./transcript-replay.ts";
 import { renderToolGroup, type GroupSnapshot, type ThemeLike } from "./renderer.ts";
+import { normalizePresentationSettings } from "./presentation-settings.ts";
 import {
   renderStoryboardScene,
   renderStoryboardWorkSpanLayout,
@@ -373,6 +374,107 @@ class ToolGroupsSample implements Component {
       rendered.push(...renderToolGroup(group, width, theme));
     }
     return rendered;
+  }
+
+  invalidate(): void {}
+}
+
+const SETTINGS_PREVIEW_GROUP: GroupSnapshot = {
+  kind: "read",
+  rows: [{
+    toolName: "read",
+    args: { path: "/Users/fong/Documents/FHY/pi-storyboard/src/very-long-file-name.ts" },
+    result: { content: [], isError: false },
+    isPartial: false,
+    expanded: false,
+  }],
+};
+
+const SETTINGS_PREVIEW_SETTINGS = normalizePresentationSettings({
+  "pi-storyboard": {
+    trimming: { fileNames: false, commands: true },
+    symbols: {
+      toolDot: "•",
+      toolDots: { read: "R" },
+      thinkingRoot: "◆",
+      thinkingStep: "·",
+      thinkingPlaceholder: "Waiting...",
+      hiddenThinking: "…",
+      rail: "┃",
+      branch: "╞═",
+      lastBranch: "╘═",
+    },
+    colors: {
+      status: { complete: "accent" },
+      thinking: { settled: "warning" },
+      structure: "syntaxString",
+    },
+  },
+});
+
+/** Preview the settings-controlled presentation without touching Pi settings. */
+class PresentationSettingsSample implements Component {
+  constructor(private readonly theme: Theme) {}
+
+  render(width: number): string[] {
+    const safeWidth = Math.max(1, Math.floor(width));
+    const groupTheme = toolGroupTheme(this.theme);
+    const defaults = normalizePresentationSettings(undefined);
+    const sceneTool = {
+      toolRow: "settings-preview-tool",
+      toolCallId: "settings-preview-tool",
+      kind: "read" as const,
+      snapshot: SETTINGS_PREVIEW_GROUP.rows[0]!,
+    };
+    const scene: StoryboardScene = {
+      type: "scene",
+      assistant: {
+        assistantRow: "settings-preview-assistant",
+        renderedAssistantLines: ["", " Inspecting settings"],
+        expectedToolCallIds: [sceneTool.toolCallId],
+        stopReason: "toolUse",
+        isStreaming: false,
+        hasThinking: true,
+        hasText: false,
+        hasFinalAnswer: false,
+        hasUnknownText: false,
+      },
+      actionRuns: [{ kind: "read", rows: [sceneTool] }],
+      orderedChildren: [
+        {
+          type: "assistant",
+          content: {
+            type: "thinking",
+            row: "settings-preview-thinking",
+            renderedLines: [" Inspecting settings"],
+          },
+        },
+        { type: "tool", tool: sceneTool },
+      ],
+      state: "complete",
+    };
+    const lines = [
+      this.theme.fg("accent", "Built-in defaults"),
+      this.theme.fg("dim", "Middle-trimmed paths and the original storyboard grammar."),
+      ...renderToolGroup(SETTINGS_PREVIEW_GROUP, safeWidth, groupTheme, defaults),
+      "",
+      this.theme.fg("accent", "Configured example"),
+      this.theme.fg("dim", "End-trimmed paths, per-kind dots, custom symbols, and theme tokens."),
+      ...renderStoryboardScene(
+        scene,
+        scene.assistant.renderedAssistantLines,
+        safeWidth,
+        groupTheme,
+        (group, groupWidth, theme, settings) => renderToolGroup(
+          group,
+          groupWidth,
+          theme,
+          settings ?? SETTINGS_PREVIEW_SETTINGS,
+        ),
+        SETTINGS_PREVIEW_SETTINGS,
+      ),
+    ];
+    return lines.map((line) => truncateToWidth(line, safeWidth, ""));
   }
 
   invalidate(): void {}
@@ -822,6 +924,11 @@ function createDefinitions(): PreviewDefinition[] {
       name: "Colors",
       description: "All Pi theme foreground colors using ●",
       create: ({ theme }) => new ColorPalette(theme),
+    },
+    {
+      name: "Storyboard settings",
+      description: "Default and custom trimming, symbols, dots, and colors",
+      create: ({ theme }) => new PresentationSettingsSample(theme),
     },
     {
       name: "Text",

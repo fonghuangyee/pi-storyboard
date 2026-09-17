@@ -5,6 +5,11 @@ import {
   visibleWidth,
 } from "@earendil-works/pi-tui";
 import type { GroupKind } from "./grouping.ts";
+import {
+  DEFAULT_PRESENTATION_SETTINGS,
+  type PresentationSettings,
+  type StoryboardColorName,
+} from "./presentation-settings.ts";
 
 /** Pi tool names are open-ended because extensions can add custom tools. */
 export type ToolName = string;
@@ -41,7 +46,7 @@ export type GroupSnapshot = {
 };
 
 export interface ThemeLike {
-  fg(color: "accent" | "text" | "toolTitle" | "success" | "muted" | "toolOutput" | "warning" | "error" | "syntaxKeyword" | "thinkingText", text: string): string;
+  fg(color: StoryboardColorName, text: string): string;
   bold?(text: string): string;
   italic?(text: string): string;
 }
@@ -132,6 +137,8 @@ function numberText(value: number): string {
 type ToolRowParts = {
   readonly main: string;
   readonly detail?: string;
+  readonly mainTrim?: "fileNames" | "commands";
+  readonly detailTrim?: "fileNames";
   /** Recognized tool arguments were malformed, so the caller must show the tool name. */
   readonly fallback?: boolean;
 };
@@ -159,6 +166,7 @@ function formatReadParts(args: unknown): ToolRowParts {
   if (limit !== undefined) range.push(`limit=${numberText(limit)}`);
   return {
     main: sanitizeDisplay(args.path),
+    mainTrim: "fileNames",
     detail: range.length > 0 ? ` (${range.join(", ")})` : undefined,
   };
 }
@@ -202,7 +210,7 @@ function formatGrepParts(args: unknown): ToolRowParts {
   if (safeGlob !== undefined) options.push(`glob ${quote(safeGlob)}`);
   if (limit !== undefined) options.push(`limit ${numberText(limit)}`);
   if (options.length > 0) label += ` (${options.join(", ")})`;
-  return { main: label };
+  return { main: label, mainTrim: "fileNames" };
 }
 
 function formatFindParts(args: unknown): ToolRowParts {
@@ -222,7 +230,7 @@ function formatFindParts(args: unknown): ToolRowParts {
   let label = `find ${quote(args.pattern)}`;
   if (path !== undefined) label += ` in ${sanitizeDisplay(path === "" ? "." : path)}`;
   if (limit !== undefined) label += ` (limit ${numberText(limit)})`;
-  return { main: label };
+  return { main: label, mainTrim: "fileNames" };
 }
 
 function formatLsParts(args: unknown): ToolRowParts {
@@ -237,6 +245,7 @@ function formatLsParts(args: unknown): ToolRowParts {
   // Pi's native ls treats an omitted or empty path as the current directory.
   return {
     main: sanitizeDisplay(path === undefined || path === "" ? "." : path),
+    mainTrim: "fileNames",
     detail: limit === undefined ? undefined : ` (limit ${numberText(limit)})`,
   };
 }
@@ -248,7 +257,7 @@ function formatWriteParts(args: unknown): ToolRowParts {
     typeof args.path === "string" &&
     args.path.length > 0
   ) {
-    return { main: sanitizeDisplay(args.path) };
+    return { main: sanitizeDisplay(args.path), mainTrim: "fileNames" };
   }
   if (
     !isRecord(args) ||
@@ -261,7 +270,7 @@ function formatWriteParts(args: unknown): ToolRowParts {
   }
 
   // Never display the content being written.
-  return { main: sanitizeDisplay(args.path) };
+  return { main: sanitizeDisplay(args.path), mainTrim: "fileNames" };
 }
 
 function formatEditParts(args: unknown): ToolRowParts {
@@ -276,7 +285,7 @@ function formatEditParts(args: unknown): ToolRowParts {
     typeof args.path === "string" &&
     args.path.length > 0
   ) {
-    return { main: sanitizeDisplay(args.path) };
+    return { main: sanitizeDisplay(args.path), mainTrim: "fileNames" };
   }
   if (
     !isRecord(args) ||
@@ -292,6 +301,7 @@ function formatEditParts(args: unknown): ToolRowParts {
 
   return {
     main: sanitizeDisplay(args.path),
+    mainTrim: "fileNames",
     detail: ` (${args.replacementCount} ${args.replacementCount === 1 ? "replacement" : "replacements"})`,
   };
 }
@@ -311,7 +321,12 @@ function formatShellParts(args: unknown): ToolRowParts {
   if (timeout === null || cwd === null) return fallbackParts(args);
 
   const detail = cwd === undefined ? undefined : ` (cwd ${sanitizeDisplay(cwd)})`;
-  return { main: sanitizeDisplay(args.command), detail };
+  return {
+    main: sanitizeDisplay(args.command),
+    mainTrim: "commands",
+    detail,
+    detailTrim: cwd === undefined ? undefined : "fileNames",
+  };
 }
 
 function formatGenericParts(row: ToolRowSnapshot): ToolRowParts {
@@ -388,6 +403,7 @@ function fitFailureDetails(
   width: number,
   prefixWidth: number,
   mainWidthHint: number,
+  failureColor: StoryboardColorName,
 ): { detail: string; mainWidth: number } {
   const separator = " - ";
   const separatorWidth = visibleWidth(separator);
@@ -398,7 +414,7 @@ function fitFailureDetails(
   const availableMainWidth = Math.max(0, width - prefixWidth - separatorWidth);
   const minimumMainWidth = Math.min(desiredMainWidth, availableMainWidth);
 
-  const fullErrorDetail = styled(theme, "error", `${separator}${failure}`);
+  const fullErrorDetail = styled(theme, failureColor, `${separator}${failure}`);
   const fullDetail = `${normalDetail}${fullErrorDetail}`;
   const fullMainWidth = width - prefixWidth - visibleWidth(fullDetail);
   if (fullMainWidth >= minimumMainWidth) {
@@ -413,7 +429,7 @@ function fitFailureDetails(
   const fittedNormalDetail = fit(normalDetail, normalBudget);
   const errorBudget = Math.max(0, suffixWidth - visibleWidth(fittedNormalDetail) - separatorWidth);
   const fittedFailure = truncateToWidth(failure, errorBudget, "");
-  const errorDetail = styled(theme, "error", `${separator}${fittedFailure}`);
+  const errorDetail = styled(theme, failureColor, `${separator}${fittedFailure}`);
   const detail = `${fittedNormalDetail}${errorDetail}`;
   return {
     detail,
@@ -490,10 +506,32 @@ function fitMiddle(line: string, width: number): string {
 
 function styled(
   theme: ThemeLike,
-  color: "accent" | "text" | "toolTitle" | "success" | "muted" | "toolOutput" | "warning" | "error" | "syntaxKeyword",
+  color: StoryboardColorName,
   text: string,
 ): string {
   return theme.fg(color, text);
+}
+
+function configuredMainFit(
+  value: string,
+  width: number,
+  trimMode: "fileNames" | "commands" | undefined,
+  settings: PresentationSettings,
+): string {
+  const middle = trimMode === undefined ||
+    (trimMode === "fileNames" ? settings.trimming.fileNames : settings.trimming.commands);
+  return middle ? fitMiddle(value, width) : fit(value, width);
+}
+
+function configuredDetailFit(
+  value: string,
+  width: number,
+  trimMode: "fileNames" | undefined,
+  settings: PresentationSettings,
+): string {
+  return trimMode === "fileNames" && settings.trimming.fileNames
+    ? fitMiddle(value, width)
+    : fit(value, width);
 }
 
 /** Render one compact group with only minimal failure text, never full result contents. */
@@ -501,6 +539,7 @@ export function renderToolGroup(
   group: GroupSnapshot,
   width: number,
   theme: ThemeLike,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
 ): string[] {
   const safeWidth = normaliseWidth(width);
   const title = theme.bold ? theme.bold(heading(group.kind, group.rows.length)) : heading(group.kind, group.rows.length);
@@ -513,22 +552,49 @@ export function renderToolGroup(
   for (const row of group.rows) {
     const failed = row.result?.isError === true;
     const complete = !failed && row.result !== undefined && !row.isPartial;
-    const marker = "●";
-    const color = failed ? "error" : complete ? "success" : "syntaxKeyword";
+    const color = failed
+      ? settings.colors.status.failed
+      : complete
+        ? settings.colors.status.complete
+        : settings.colors.status.running;
     const parts = formatRowParts(row);
     const main = styled(theme, "text", mainTextForRow(row, parts));
     const normalDetailText = `${parts.detail ?? ""}${elapsedDetail(row)}`;
     const normalDetail = normalDetailText === "" ? "" : styled(theme, "muted", normalDetailText);
     const failure = errorText(row);
+    const marker = settings.symbols.toolDots[group.kind] ?? settings.symbols.toolDot;
     const prefix = styled(theme, color, `  ${marker} `);
     const layout = failure === undefined
-      ? {
-          detail: normalDetail,
-          mainWidth: safeWidth - visibleWidth(prefix) - visibleWidth(normalDetail),
-        }
-      : fitFailureDetails(theme, normalDetail, failure, safeWidth, visibleWidth(prefix), visibleWidth(main));
+      ? (() => {
+          const available = Math.max(0, safeWidth - visibleWidth(prefix));
+          const minimumMainWidth = Math.min(
+            visibleWidth(main),
+            Math.max(1, Math.min(20, available)),
+          );
+          const detailBudget = Math.max(0, available - minimumMainWidth);
+          const detail = visibleWidth(normalDetail) > detailBudget
+            ? styled(
+              theme,
+              "muted",
+              configuredDetailFit(normalDetailText, detailBudget, parts.detailTrim, settings),
+            )
+            : normalDetail;
+          return {
+            detail,
+            mainWidth: Math.max(0, available - visibleWidth(detail)),
+          };
+        })()
+      : fitFailureDetails(
+        theme,
+        normalDetail,
+        failure,
+        safeWidth,
+        visibleWidth(prefix),
+        visibleWidth(main),
+        settings.colors.status.failed,
+      );
     const detail = layout.detail;
-    const rowLine = `${prefix}${fitMiddle(main, layout.mainWidth)}${detail}`;
+    const rowLine = `${prefix}${configuredMainFit(main, layout.mainWidth, parts.mainTrim, settings)}${detail}`;
     lines.push(visibleWidth(rowLine) <= safeWidth ? rowLine : fit(rowLine, safeWidth));
   }
 

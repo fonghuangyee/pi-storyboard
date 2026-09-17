@@ -16,7 +16,8 @@ The implementation is complete for the current design:
 - a narrow active-path continuation can hide directly adjacent empty/absent-thinking roots without merging ownership;
 - a same-response commentary-to-tool suffix can receive a fixed presentation-only `Thinking...` placeholder;
 - expanded or ambiguous content falls back to Pi's original renderer;
-- the guarded private adapter and pure projection layers are covered by unit tests.
+- `/storyboard-settings [global|project]` opens the interactive presentation-settings page and saves only the validated `pi-storyboard` namespace;
+- the guarded private adapter, settings validation/storage, and pure projection layers are covered by unit tests.
 
 Remaining release work is interactive verification against live streaming, expansion, theme changes, session replacement, and coexistence with other transcript-patching extensions. Optional long-span UI windowing is deliberately not shipped.
 
@@ -156,7 +157,7 @@ Markers mean:
 
 The hierarchy communicates presentation membership only. It never claims that a thought or commentary caused, planned, or semantically owns a tool call.
 
-Thinking markers use the assistant lifecycle color: `syntaxKeyword` while active and `success` once settled. They never turn red because a tool failed. The top-level action marker follows aggregate scene state, and each tool row retains its own success/running/error state.
+Thinking markers use the configured assistant lifecycle colors: active thinking defaults to `syntaxKeyword`, settled thinking defaults to `success`. They never turn red because a tool failed. The top-level action marker follows aggregate scene state, and each tool row retains its own configured success/running/error state.
 
 ### 3.2 Tool groups
 
@@ -274,7 +275,17 @@ Empty or absent thinking is semantically retained but visually empty:
 
 A continuous thinking block longer than four paragraphs shows the first two and last two, with an explicit presentation-only hidden count such as `↳ 2 thinking steps behind the scenes`. The native thinking component and full content remain available through Pi's normal thinking toggle. Commentary is never collapsed.
 
-### 3.7 State, closure, and expansion
+### 3.7 Presentation settings
+
+`/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path and command trimming toggles, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
+
+The command buffers edits until Save. Saving atomically replaces only the `pi-storyboard` namespace in the selected Pi settings file and preserves unrelated JSON. The project scope is unavailable when `ctx.isProjectTrusted()` is false. A successful save runs Pi's reload flow so the new immutable snapshot is active immediately; cancelling writes nothing. Non-TUI modes show a warning and perform no I/O.
+
+Settings are read from `~/.pi/agent/settings.json` and, for trusted projects, `.pi/settings.json`. Project values override global values; an invalid project field falls back to the corresponding validated global field so one bad project value cannot erase unrelated global customization. Invalid global values fall back independently to built-in defaults. Symbols cannot contain terminal controls or line breaks, and colors are allowlisted Pi theme tokens. The editor accepts short text input for symbols and cycles through the allowlisted color names. Theme ANSI strings are still generated at render time.
+
+The settings page is presentation-only: it does not change ownership, grouping, source order, native expansion, messages, session entries, tools, prompts, or model behavior.
+
+### 3.8 State, closure, and expansion
 
 Scene state follows:
 
@@ -467,7 +478,7 @@ The legacy grouping path allows an empty assistant component between visually ad
 - uses `visibleWidth()`, `sliceByColumn()`, and `truncateToWidth()` from `pi-tui`;
 - strips ANSI CSI/OSC and C0/C1 control sequences from model/tool-controlled display values;
 - flattens newlines, tabs, and other line-breaking controls;
-- uses middle truncation for long path/command/generic values so useful prefixes and filenames survive;
+- uses configured middle truncation for long path/file-name and command values by default, with independent ordinary end-truncation fallbacks when either setting is disabled;
 - reserves width for the literal failure separator before truncating the diagnostic;
 - never returns a line wider than the requested width, including widths from 1 through 200;
 - falls back to compact JSON for malformed recognized arguments without guessing;
@@ -496,8 +507,11 @@ pi-storyboard/
 │   ├── session-projection.ts  # pure public active-path index
 │   ├── storyboard-renderer.ts # rails, markers, chapters, width, closure
 │   ├── pi-adapter.ts         # all private Pi/TUI inspection and patching
+│   ├── presentation-settings.ts       # pure defaults, validation, and snapshots
+│   ├── presentation-settings-store.ts # Pi settings read/write boundary
+│   ├── presentation-settings-ui.ts    # interactive settings page
 │   ├── transcript-replay.ts  # fixed native-component replay fixture
-│   └── tui-preview.ts        # interactive preview gallery
+│   └── tui-preview.ts        # interactive preview gallery, including settings fixtures
 └── test/
     ├── architecture.test.ts
     ├── grouping.test.ts
@@ -508,6 +522,7 @@ pi-storyboard/
     ├── work-span.test.ts
     ├── pi-adapter.test.ts
     ├── transcript-replay.test.ts
+    ├── presentation-settings.test.ts
     └── tui-preview.test.ts
 ```
 
@@ -517,11 +532,13 @@ pi-storyboard/
 
 - exports the default Pi extension factory;
 - registers `/storyboard-preview`, which is available only in interactive TUI mode;
+- registers `/storyboard-settings [global|project]`, which is available only in interactive TUI mode;
 - listens to public lifecycle notifications only to invalidate the ephemeral session projection;
 - installs a fresh guarded patch on `session_start` in TUI mode;
+- reads a fresh validated presentation-settings snapshot at the same lifecycle boundary;
 - uninstalls it on `session_shutdown` and clears projection callbacks;
 - reads `ctx.sessionManager.buildContextEntries()` only inside a lazy, invalidated cache;
-- performs no session writes, tool registration, context mutation, or model-facing work.
+- performs no session writes, tool registration, context mutation, or model-facing work; the settings command is the only user-initiated filesystem write and is limited to its validated namespace.
 
 Projection invalidation currently responds to message/turn/agent/tool completion, compaction, tree, switch, and fork lifecycle notifications. Invalidating is the only purpose of those listeners.
 
@@ -575,6 +592,12 @@ Because the storyboard changes visible heights and prefixes, the adapter rebuild
 - zero-height entries for hidden grouped tool members.
 
 Branches and summaries are presentation-only mouse sinks. Native expansion and thinking toggles remain active.
+
+### 6.5 Presentation-settings boundary
+
+`src/presentation-settings.ts` has no Pi imports. It owns the namespaced schema, defaults, layered field validation, immutable snapshots, theme-token allowlist, and symbol safety checks. `src/presentation-settings-store.ts` is the only filesystem boundary: it uses Pi's public `SettingsManager` for reads and trust-aware global/project precedence, then performs an atomic user-requested namespace-only replacement when the settings page saves. It never writes session data or unrelated settings. The public settings factory is feature-detected through a namespace import; if it is unavailable, lifecycle loading keeps built-in defaults and the renderer remains installed. The interactive settings UI is dynamically imported only when its command is invoked.
+
+`src/presentation-settings-ui.ts` owns only the TUI editor. It edits a mutable draft, exposes text submenus for symbols and cycling lists for color tokens, and returns a validated snapshot to the command. It does not change the active renderer directly; `/reload` creates the new lifecycle snapshot. Renderer and storyboard code receive settings as data and never use them for ownership or fallback decisions.
 
 ## 7. Defensive patch and compatibility rules
 
@@ -631,7 +654,7 @@ The extension must never:
 - read session JSONL files from the renderer;
 - copy raw thinking, signatures, provider payloads, successful result content, written content, command output, edit text, diffs, patches, or full errors into extension state;
 - make network calls or LLM calls;
-- perform filesystem writes, subprocess work, timers, or background work.
+- perform filesystem writes outside the explicit user-initiated settings save boundary, subprocess work, timers, or background work.
 
 Allowed state is limited to immutable extension-owned snapshots and minimal ephemeral active-path IDs/boundary flags needed for presentation validation. All state is session-local, discarded on invalidation/shutdown, and never sent back to Pi's model or session.
 
@@ -658,15 +681,16 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 ### 9.2 Test responsibilities
 
 - `grouping.test.ts`: semantic adjacency, singleton groups, invisible assistant boundaries, and native segments.
-- `renderer.test.ts`: labels, argument summaries, sanitization, errors, timing, safe edit/write behavior, truncation, and widths 1–200.
+- `renderer.test.ts`: labels, argument summaries, sanitization, errors, timing, safe edit/write behavior, independent settings-controlled trimming, truncation, and widths 1–200.
+- `presentation-settings.test.ts`: defaults, validation, trust-aware precedence, immutability, namespace preservation, and atomic settings writes.
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, and native fallback.
-- `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, state colors, width budgets, and placeholder styling.
+- `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, and placeholder styling.
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, compaction, boundaries, and text phases.
 - `work-span.test.ts`: empty-thinking continuation, action roots, commentary suffix, source order, and no-placeholder cases.
-- `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, expansion/status restoration, native thinking-marker restoration, mouse translation, fallback, owner counting, and wrapper composition.
+- `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, settings threading, expansion/status restoration, native thinking-marker restoration, mouse translation, fallback, owner counting, and wrapper composition.
 - `transcript-replay.test.ts`: native Pi components in the fixed diagnostic replay.
-- `tui-preview.test.ts`: current preview gallery and public `pi-tui` component coverage.
-- `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from `src/`.
+- `tui-preview.test.ts`: current preview gallery, settings defaults/custom fixture, and public `pi-tui` component coverage.
+- `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from the renderer/adapter path; the explicit settings-store write boundary remains isolated.
 
 ### 9.3 Required semantic matrix
 
@@ -841,7 +865,8 @@ The implementation remains acceptable only when:
 - compact rows never expose successful output, write content, edit text/diffs, image data, or full errors;
 - all output respects terminal width and strips unsafe display controls;
 - no tools, messages, context, session entries, prompts, model settings, or agent behavior are changed;
-- no network, filesystem write, subprocess, timer, or background work is introduced;
+- `/storyboard-settings` writes only the validated `pi-storyboard` namespace after explicit user Save, preserving unrelated settings and never writing session data;
+- no network, subprocess, timer, or background work is introduced;
 - patch installation/uninstallation is idempotent and does not overwrite later wrappers;
 - tests and package validation pass;
 - this document and `AGENTS.md` remain aligned with the implementation.

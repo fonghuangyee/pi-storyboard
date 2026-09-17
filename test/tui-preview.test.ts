@@ -86,15 +86,19 @@ describe("TuiPreview", () => {
     preview.handleInput("\u001b[A");
     preview.handleInput("\u001b[A");
 
-    for (let index = 0; index < 21; index++) {
+    let gallery = "";
+    for (let index = 0; index < 22; index++) {
       const wideLines = preview.render(100);
       const narrowLines = preview.render(35);
+      gallery += `${wideLines.join("\n")}\n`;
       expect(wideLines.length).toBeGreaterThan(0);
       expect(narrowLines.length).toBeGreaterThan(0);
       expect(wideLines.every((line) => visibleWidth(line) <= 100)).toBe(true);
       expect(narrowLines.every((line) => visibleWidth(line) <= 35)).toBe(true);
       preview.handleInput("\u001b[B");
     }
+    expect(gallery).toContain("Configured example");
+    expect(gallery).toContain("╘═");
 
     preview.handleInput("\u001b");
     expect(closed).toBe(true);

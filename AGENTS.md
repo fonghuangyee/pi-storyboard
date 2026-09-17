@@ -22,7 +22,7 @@
 - Fail open to Pi's original native renderer on ambiguity, incompatible shapes, expanded rows, invalid phases, hard session boundaries, or renderer errors.
 - Never mutate Pi messages, components, tool calls, arguments, results, session entries, prompts, model settings, or context.
 - Never register/replace tools or add model-facing behavior.
-- Do not add network calls, filesystem writes, subprocesses, timers, background work, or session-file parsing.
+- Do not add network calls, subprocesses, timers, background work, or session-file parsing. The explicit user-initiated storyboard settings command may atomically write only its validated `pi-storyboard` namespace to Pi settings files when the user saves.
 - Keep collapsed summaries minimal: no successful result output, write content, command output, image data, edit text/diffs/patches, provider payloads, or full errors.
 
 ### Working tree and edits

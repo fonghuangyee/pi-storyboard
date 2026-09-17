@@ -1,5 +1,10 @@
 import { Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { GroupSnapshot, ThemeLike } from "./renderer.ts";
+import {
+  DEFAULT_PRESENTATION_SETTINGS,
+  type PresentationSettings,
+  type StoryboardColorName,
+} from "./presentation-settings.ts";
 import type {
   SceneState,
   StoryboardActionRun,
@@ -15,10 +20,11 @@ export type StoryboardGroupRenderer = (
   group: GroupSnapshot,
   width: number,
   theme: ThemeLike,
+  settings?: PresentationSettings,
 ) => string[];
 
-export type StoryboardMarkerColor = "muted" | "success" | "error" | "syntaxKeyword";
-export type StoryboardThinkingMarkerColor = "success" | "syntaxKeyword";
+export type StoryboardMarkerColor = StoryboardColorName;
+export type StoryboardThinkingMarkerColor = StoryboardColorName;
 
 /** A native assistant child and its visual range in a rendered story block. */
 export type StoryboardAssistantRenderRegion = {
@@ -41,6 +47,7 @@ type StoryLayout = {
   readonly assistantPrefixWidth: number;
   readonly branchPrefixWidth: number;
   readonly assistantWidth: number;
+  readonly settings: PresentationSettings;
 };
 
 const MAX_VISIBLE_THINKING_PARAGRAPHS = 4;
@@ -58,49 +65,85 @@ type AssistantBlockLayout = {
   readonly regions: readonly Omit<StoryboardAssistantRenderRegion, "row">[];
 };
 
-function layoutForWidth(width: number): StoryLayout {
+function firstDisplayCell(value: string, fallback: string): string {
+  return Array.from(value)[0] ?? fallback;
+}
+
+function padPrefix(value: string, width: number): string {
+  return `${value}${" ".repeat(Math.max(0, width - visibleWidth(value)))}`;
+}
+
+function layoutForWidth(
+  width: number,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+): StoryLayout {
   const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
   const proposedIndent = safeWidth >= 50 ? " " : "";
-  const proposedAssistantWidth = visibleWidth(`${proposedIndent}○`);
+  const indentWidth = visibleWidth(proposedIndent);
+  const terminalWidth = visibleWidth(firstDisplayCell(settings.symbols.lastBranch, "╰"));
+  const assistantSymbolWidth = Math.max(
+    visibleWidth(settings.symbols.thinkingRoot),
+    visibleWidth(settings.symbols.thinkingStep),
+    visibleWidth(settings.symbols.rail),
+    terminalWidth,
+  );
+  const proposedAssistantWidth = indentWidth + assistantSymbolWidth;
   const assistantPrefixWidth = proposedAssistantWidth < safeWidth ? proposedAssistantWidth : 0;
   const indent = assistantPrefixWidth === 0 ? "" : proposedIndent;
-  const proposedBranchWidth = visibleWidth(`${indent}├─`);
+  const proposedBranchWidth = Math.max(
+    visibleWidth(`${indent}${settings.symbols.branch}`),
+    visibleWidth(`${indent}${settings.symbols.lastBranch}`),
+    visibleWidth(`${indent}${settings.symbols.rail}`),
+  );
   const branchPrefixWidth = proposedBranchWidth < safeWidth ? proposedBranchWidth : 0;
   return {
     indent,
     assistantPrefixWidth,
     branchPrefixWidth,
     assistantWidth: Math.max(1, safeWidth - assistantPrefixWidth),
+    settings,
   };
 }
 
 /** Width supplied to native assistant content before adding the story gutter. */
-export function storyboardAssistantWidth(width: number): number {
-  return layoutForWidth(width).assistantWidth;
+export function storyboardAssistantWidth(
+  width: number,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+): number {
+  return layoutForWidth(width, settings).assistantWidth;
 }
 
 /** Every native assistant item uses the same measured gutter width. */
-export function storyboardAssistantContinuationWidth(width: number): number {
-  return storyboardAssistantWidth(width);
+export function storyboardAssistantContinuationWidth(
+  width: number,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+): number {
+  return storyboardAssistantWidth(width, settings);
 }
 
 /** Action-root markers communicate the aggregate scene state. */
-export function sceneMarkerColor(state: SceneState): StoryboardMarkerColor {
+export function sceneMarkerColor(
+  state: SceneState,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+): StoryboardMarkerColor {
   switch (state) {
     case "running":
-      return "syntaxKeyword";
+      return settings.colors.status.running;
     case "failed":
-      return "error";
+      return settings.colors.status.failed;
     case "complete":
-      return "success";
+      return settings.colors.status.complete;
     case "note":
-      return "muted";
+      return settings.colors.status.note;
   }
 }
 
 /** Thinking markers communicate thinking lifecycle, not tool outcome. */
-export function thinkingMarkerColor(state: SceneState): StoryboardThinkingMarkerColor {
-  return state === "running" ? "syntaxKeyword" : "success";
+export function thinkingMarkerColor(
+  state: SceneState,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+): StoryboardThinkingMarkerColor {
+  return state === "running" ? settings.colors.thinking.active : settings.colors.thinking.settled;
 }
 
 function fit(line: string, width: number): string {
@@ -137,7 +180,10 @@ function thinkingParagraphRanges(lines: readonly string[]): Array<{ start: numbe
  * the hidden count explicit. This changes only presentation; the native row
  * and its full text remain available behind the existing thinking toggle.
  */
-function thinkingParts(lines: readonly string[]): readonly ThinkingPart[] {
+function thinkingParts(
+  lines: readonly string[],
+  settings: PresentationSettings,
+): readonly ThinkingPart[] {
   const ranges = thinkingParagraphRanges(lines);
   if (ranges.length <= MAX_VISIBLE_THINKING_PARAGRAPHS) {
     return [{ lines, sourceStart: 0, sourceHeight: lines.length }];
@@ -155,7 +201,7 @@ function thinkingParts(lines: readonly string[]): readonly ThinkingPart[] {
     lines: [],
     sourceStart: -1,
     sourceHeight: 0,
-    summary: `↳ ${hiddenCount} thinking ${hiddenCount === 1 ? "step" : "steps"} behind the scenes`,
+    summary: `${settings.symbols.hiddenThinking} ${hiddenCount} thinking ${hiddenCount === 1 ? "step" : "steps"} behind the scenes`,
   });
   parts.push(...last.map((range) => ({
     lines: lines.slice(range.start, range.end),
@@ -175,13 +221,19 @@ function assistantMarkerPrefix(
 ): string {
   if (layout.assistantPrefixWidth === 0) return "";
   const hasActions = aggregate && (hasActionsOverride ?? scene.actionRuns.length > 0);
-  const shape = hasActions ? "◉" : "○";
-  return `${layout.indent}${theme.fg(thinkingMarkerColor(markerState), shape)}`;
+  const shape = hasActions ? layout.settings.symbols.thinkingRoot : layout.settings.symbols.thinkingStep;
+  return padPrefix(
+    `${layout.indent}${theme.fg(thinkingMarkerColor(markerState, layout.settings), shape)}`,
+    layout.assistantPrefixWidth,
+  );
 }
 
 function assistantRailPrefix(layout: StoryLayout, theme: ThemeLike): string {
   if (layout.assistantPrefixWidth === 0) return "";
-  return `${layout.indent}${theme.fg("muted", "│")}`;
+  return padPrefix(
+    `${layout.indent}${theme.fg(layout.settings.colors.structure, layout.settings.symbols.rail)}`,
+    layout.assistantPrefixWidth,
+  );
 }
 
 function renderAssistantHeader(
@@ -199,14 +251,14 @@ function renderAssistantHeader(
   const lines: string[] = [];
   const regions: Array<Omit<StoryboardAssistantRenderRegion, "row">> = [];
   let markerPlaced = false;
-  const parts = thinkingParts(nativeLines);
+  const parts = thinkingParts(nativeLines, layout.settings);
 
   for (let partIndex = 0; partIndex < parts.length; partIndex++) {
     const part = parts[partIndex]!;
     if (partIndex > 0) lines.push(fit(rail, width));
     if (part.summary !== undefined) {
       const summaryStart = lines.length;
-      lines.push(fit(`${rail}${thinkingTextIndent(nativeLines)}${theme.fg("muted", part.summary)}`, width));
+      lines.push(fit(`${rail}${thinkingTextIndent(nativeLines)}${theme.fg(layout.settings.colors.structure, part.summary)}`, width));
       regions.push({
         start: summaryStart,
         height: 1,
@@ -278,7 +330,7 @@ function thinkingPlaceholderLines(
   };
   const contentWidth = Math.max(1, width - layout.assistantPrefixWidth);
   return new Markdown(
-    "**Thinking...**",
+    `**${layout.settings.symbols.thinkingPlaceholder}**`,
     1,
     0,
     markdownTheme,
@@ -326,14 +378,22 @@ function renderSyntheticThinkingPlaceholder(
 
 function branchPrefix(last: boolean, layout: StoryLayout, theme: ThemeLike): string {
   if (layout.branchPrefixWidth === 0) return "";
-  return `${layout.indent}${theme.fg("muted", last ? "╰─" : "├─")}`;
+  return padPrefix(
+    `${layout.indent}${theme.fg(
+      layout.settings.colors.structure,
+      last ? layout.settings.symbols.lastBranch : layout.settings.symbols.branch,
+    )}`,
+    layout.branchPrefixWidth,
+  );
 }
 
 function groupContinuationPrefix(last: boolean, layout: StoryLayout, theme: ThemeLike): string {
   if (layout.branchPrefixWidth === 0) return "";
-  return last
-    ? `${layout.indent}  `
-    : `${layout.indent}${theme.fg("muted", "│")} `;
+  if (last) return " ".repeat(layout.branchPrefixWidth);
+  return padPrefix(
+    `${layout.indent}${theme.fg(layout.settings.colors.structure, layout.settings.symbols.rail)}`,
+    layout.branchPrefixWidth,
+  );
 }
 
 function renderActionRun(
@@ -349,7 +409,7 @@ function renderActionRun(
     kind: run.kind,
     rows: Object.freeze(run.rows.map((row) => row.snapshot)),
   });
-  const groupLines = renderGroup(group, groupWidth, theme);
+  const groupLines = renderGroup(group, groupWidth, theme, layout.settings);
   if (!Array.isArray(groupLines) || !groupLines.every((line) => typeof line === "string")) {
     throw new Error("storyboard group renderer returned invalid lines");
   }
@@ -383,7 +443,7 @@ function renderDirectActionRun(
     kind: run.kind,
     rows: Object.freeze(run.rows.map((row) => row.snapshot)),
   });
-  const groupLines = renderGroup(group, groupWidth, theme);
+  const groupLines = renderGroup(group, groupWidth, theme, layout.settings);
   if (!Array.isArray(groupLines) || !groupLines.every((line) => typeof line === "string")) {
     throw new Error("storyboard group renderer returned invalid lines");
   }
@@ -392,7 +452,13 @@ function renderDirectActionRun(
 
   const marker = layout.assistantPrefixWidth === 0
     ? ""
-    : `${layout.indent}${theme.fg(sceneMarkerColor(state), "◉")}`;
+    : padPrefix(
+      `${layout.indent}${theme.fg(
+        sceneMarkerColor(state, layout.settings),
+        layout.settings.symbols.thinkingRoot,
+      )}`,
+      layout.assistantPrefixWidth,
+    );
   const continuation = " ".repeat(layout.assistantPrefixWidth);
   return contentLines.map((line, index) => fit(`${index === 0 ? marker : continuation}${line}`, width));
 }
@@ -409,20 +475,30 @@ function renderAssistantContinuation(
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
-  markerColor: StoryboardThinkingMarkerColor = "success",
+  markerColor?: StoryboardThinkingMarkerColor,
 ): AssistantBlockLayout {
   const rail = assistantRailPrefix(layout, theme);
+  const terminalSymbol = firstDisplayCell(layout.settings.symbols.lastBranch, "╰");
   const terminalPrefix = layout.assistantPrefixWidth === 0
     ? ""
-    : `${layout.indent}${theme.fg("muted", "╰")}`;
+    : padPrefix(
+      `${layout.indent}${theme.fg(layout.settings.colors.structure, terminalSymbol)}`,
+      layout.assistantPrefixWidth,
+    );
   const terminalContinuation = " ".repeat(layout.assistantPrefixWidth);
   const thinkingMarker = layout.assistantPrefixWidth === 0
     ? ""
-    : `${layout.indent}${theme.fg(markerColor, "○")}`;
+    : padPrefix(
+      `${layout.indent}${theme.fg(
+        markerColor ?? layout.settings.colors.thinking.settled,
+        layout.settings.symbols.thinkingStep,
+      )}`,
+      layout.assistantPrefixWidth,
+    );
   const lines: string[] = [];
   const regions: Array<Omit<StoryboardAssistantRenderRegion, "row">> = [];
   const parts = content.type === "thinking"
-    ? thinkingParts(content.renderedLines)
+    ? thinkingParts(content.renderedLines, layout.settings)
     : [{ lines: content.renderedLines, sourceStart: 0, sourceHeight: content.renderedLines.length }];
 
   let firstVisibleOverall = true;
@@ -431,7 +507,7 @@ function renderAssistantContinuation(
     if (partIndex > 0) lines.push(fit(rail, width));
     if (part.summary !== undefined) {
       const summaryStart = lines.length;
-      lines.push(fit(`${rail}${thinkingTextIndent(content.renderedLines)}${theme.fg("muted", part.summary)}`, width));
+      lines.push(fit(`${rail}${thinkingTextIndent(content.renderedLines)}${theme.fg(layout.settings.colors.structure, part.summary)}`, width));
       regions.push({
         start: summaryStart,
         height: 1,
@@ -538,9 +614,10 @@ function orderedSceneLayout(
   width: number,
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
+  settings: PresentationSettings,
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
-  const layout = layoutForWidth(safeWidth);
+  const layout = layoutForWidth(safeWidth, settings);
   const nodes = orderedRenderNodes(scene.orderedChildren ?? []);
   const nativeLeading = leadingNativeLines(nativeAssistantLines);
   const lines = [...nativeLeading.leading];
@@ -624,7 +701,7 @@ function orderedSceneLayout(
         safeWidth,
         layout,
         theme,
-        thinkingMarkerColor(scene.state),
+        thinkingMarkerColor(scene.state, layout.settings),
       );
       lines.push(...continuation.lines);
       for (const region of continuation.regions) {
@@ -651,9 +728,10 @@ function legacySceneLayout(
   width: number,
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
+  settings: PresentationSettings,
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
-  const layout = layoutForWidth(safeWidth);
+  const layout = layoutForWidth(safeWidth, settings);
   const leading = leadingNativeLines(nativeAssistantLines);
   const body = nativeAssistantLines.slice(leading.count);
   const lines = [...leading.leading];
@@ -716,10 +794,11 @@ export function renderStoryboardSceneLayout(
   width: number,
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
 ): StoryboardSceneLayout {
   return scene.orderedChildren === undefined
-    ? legacySceneLayout(scene, nativeAssistantLines, width, theme, renderGroup)
-    : orderedSceneLayout(scene, nativeAssistantLines, width, theme, renderGroup);
+    ? legacySceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings)
+    : orderedSceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings);
 }
 
 function renderWorkChapter(
@@ -756,7 +835,7 @@ function renderWorkChapter(
           span.state,
           spanHasActions,
         )
-        : renderAssistantContinuation(item.content, terminal, width, layout, theme, thinkingMarkerColor(item.scene.state));
+        : renderAssistantContinuation(item.content, terminal, width, layout, theme, thinkingMarkerColor(item.scene.state, layout.settings));
       lines.push(...block.lines);
       for (const region of block.regions) {
         regions.push({ row: item.content.row, ...region, start: start + region.start });
@@ -793,9 +872,10 @@ export function renderStoryboardWorkSpanLayout(
   width: number,
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
-  const layout = layoutForWidth(safeWidth);
+  const layout = layoutForWidth(safeWidth, settings);
   const firstScene = span.scenes[0];
   if (firstScene === undefined) throw new Error("work span has no scenes");
 
@@ -845,22 +925,25 @@ function renderThinkingMarkerBlock(
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
-  markerColor: StoryboardThinkingMarkerColor = "success",
+  markerColor: StoryboardThinkingMarkerColor = DEFAULT_PRESENTATION_SETTINGS.colors.thinking.settled,
 ): AssistantBlockLayout {
   const rail = assistantRailPrefix(layout, theme);
   const thinkingMarker = layout.assistantPrefixWidth === 0
     ? ""
-    : `${layout.indent}${theme.fg(markerColor, "○")}`;
+    : padPrefix(
+      `${layout.indent}${theme.fg(markerColor, layout.settings.symbols.thinkingStep)}`,
+      layout.assistantPrefixWidth,
+    );
   const lines: string[] = [];
   const regions: Array<Omit<StoryboardAssistantRenderRegion, "row">> = [];
-  const parts = thinkingParts(nativeLines);
+  const parts = thinkingParts(nativeLines, layout.settings);
 
   for (let partIndex = 0; partIndex < parts.length; partIndex++) {
     const part = parts[partIndex]!;
     if (partIndex > 0) lines.push(fit(rail, width));
     if (part.summary !== undefined) {
       const summaryStart = lines.length;
-      lines.push(fit(`${rail}${thinkingTextIndent(nativeLines)}${theme.fg("muted", part.summary)}`, width));
+      lines.push(fit(`${rail}${thinkingTextIndent(nativeLines)}${theme.fg(layout.settings.colors.structure, part.summary)}`, width));
       regions.push({
         start: summaryStart,
         height: 1,
@@ -900,10 +983,11 @@ export function renderNativeThinkingMarkersLayout(
   assistantContent: readonly StoryboardAssistantContent[],
   width: number,
   theme: ThemeLike,
-  markerColor: StoryboardThinkingMarkerColor = "success",
+  markerColor: StoryboardThinkingMarkerColor = DEFAULT_PRESENTATION_SETTINGS.colors.thinking.settled,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
-  const layout = layoutForWidth(safeWidth);
+  const layout = layoutForWidth(safeWidth, settings);
   const contentLineCount = assistantContent.reduce(
     (total, content) => total + content.renderedLines.length,
     0,
@@ -939,6 +1023,7 @@ export function renderStoryboardScene(
   width: number,
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
 ): string[] {
-  return [...renderStoryboardSceneLayout(scene, nativeAssistantLines, width, theme, renderGroup).lines];
+  return [...renderStoryboardSceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings).lines];
 }

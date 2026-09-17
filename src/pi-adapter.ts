@@ -42,12 +42,17 @@ import {
   renderStoryboardWorkSpanLayout,
   storyboardAssistantWidth,
   type StoryboardAssistantRenderRegion,
+  type StoryboardGroupRenderer,
   type StoryboardThinkingMarkerColor,
 } from "./storyboard-renderer.ts";
 import {
   matchesProjectedTurn,
   type SessionProjection,
 } from "./session-projection.ts";
+import {
+  DEFAULT_PRESENTATION_SETTINGS,
+  type PresentationSettings,
+} from "./presentation-settings.ts";
 
 export const PATCH_MARKER = Symbol.for("pi-storyboard.container.v1");
 
@@ -57,7 +62,9 @@ export type PatchHandle = {
 
 export type ToolGroupingPatchOptions = {
   getTheme(): ThemeLike;
-  renderGroup(group: GroupSnapshot, width: number, theme: ThemeLike): string[];
+  renderGroup: StoryboardGroupRenderer;
+  /** Optional live presentation settings snapshot; absent means built-in defaults. */
+  getSettings?(): PresentationSettings;
   /** Optional active-path projection used to validate settled restored turns. */
   getSessionProjection?(): SessionProjection | undefined;
 };
@@ -895,10 +902,13 @@ function validRenderedLines(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((line) => typeof line === "string");
 }
 
-function nativeThinkingMarkerColor(snapshot: AssistantSceneSnapshot): StoryboardThinkingMarkerColor {
+function nativeThinkingMarkerColor(
+  snapshot: AssistantSceneSnapshot,
+  settings: PresentationSettings,
+): StoryboardThinkingMarkerColor {
   return snapshot.isStreaming || snapshot.stopReason === "pending"
-    ? "syntaxKeyword"
-    : "success";
+    ? settings.colors.thinking.active
+    : settings.colors.thinking.settled;
 }
 
 function invokeOriginal(container: Container, state: PatchState, width: number): string[] {
@@ -1103,6 +1113,7 @@ function renderStoryboardIfRequested(
 ): StoryboardAttempt {
   const directChildren = container.children.slice();
   if (directChildren.length === 0) return { requested: false };
+  const settings = options.getSettings?.() ?? DEFAULT_PRESENTATION_SETTINGS;
 
   // Only session-aware mode can safely bridge a Pi expansion status pair: the
   // session projection still proves the assistant/tool ownership by call ID.
@@ -1168,7 +1179,7 @@ function renderStoryboardIfRequested(
     if (!child || typeof child.render !== "function") return { requested: true };
     const assistantMetadata = isAssistant(child) ? metadata.get(child) : undefined;
     const renderWidth = assistantMetadata !== undefined && sceneOwners.has(child)
-      ? storyboardAssistantWidth(safeWidth)
+      ? storyboardAssistantWidth(safeWidth, settings)
       : safeWidth;
     const lines = child.render(renderWidth);
     if (!validRenderedLines(lines)) return { requested: true };
@@ -1226,7 +1237,8 @@ function renderStoryboardIfRequested(
       snapshot.assistantContent,
       safeWidth,
       theme,
-      nativeThinkingMarkerColor(snapshot),
+      nativeThinkingMarkerColor(snapshot, settings),
+      settings,
     );
     thinkingDecorations.set(owner, decoration);
   }
@@ -1318,13 +1330,14 @@ function renderStoryboardIfRequested(
           safeWidth,
           theme,
           options.renderGroup,
+          settings,
         );
         workLayouts.set(plan.start, layout);
         const proxy = new StoryboardSceneMouseProxy(
           assistant,
-          storyboardAssistantWidth(safeWidth),
+          storyboardAssistantWidth(safeWidth, settings),
           nativeLines.get(assistant)?.length ?? 0,
-          Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth)),
+          Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth, settings)),
           layout.assistantRegions,
         );
         workMouse.set(assistant, { component: proxy, height: layout.lines.length });
@@ -1396,15 +1409,16 @@ function renderStoryboardIfRequested(
           safeWidth,
           theme,
           options.renderGroup,
+          settings,
         );
         rendered.push(...sceneLayout.lines);
         const height = sceneLayout.lines.length + (hasNativeLeadingSpacer ? 0 : 1);
         nativeMouse.set(assistant, {
           component: new StoryboardSceneMouseProxy(
             assistant,
-            storyboardAssistantWidth(safeWidth),
+            storyboardAssistantWidth(safeWidth, settings),
             assistantLines.length,
-            Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth)),
+            Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth, settings)),
             sceneLayout.assistantRegions,
           ),
           height,
@@ -1497,15 +1511,16 @@ function renderStoryboardIfRequested(
         safeWidth,
         theme,
         options.renderGroup,
+        settings,
       );
       const sceneLines = [...sceneLayout.lines];
       rendered.push(...sceneLines);
       mouseChildren.push({
         component: new StoryboardSceneMouseProxy(
           assistant,
-          storyboardAssistantWidth(safeWidth),
+          storyboardAssistantWidth(safeWidth, settings),
           assistantLines.length,
-          Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth)),
+          Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth, settings)),
           sceneLayout.assistantRegions,
         ),
         height: sceneLines.length,
@@ -1638,7 +1653,7 @@ function renderPatched(
               kind: segment.kind,
               rows: Object.freeze(rows),
             });
-            const lines = options.renderGroup(group, width, options.getTheme());
+            const lines = options.renderGroup(group, width, options.getTheme(), options.getSettings?.() ?? DEFAULT_PRESENTATION_SETTINGS);
             if (!validRenderedLines(lines)) throw new Error("group renderer returned invalid lines");
             groupLines.set(segment, lines);
             const anchor = members[0];

@@ -1,5 +1,16 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { installToolGroupingPatch, type PatchHandle } from "./pi-adapter.ts";
+import {
+  DEFAULT_PRESENTATION_SETTINGS,
+  type PresentationSettings,
+} from "./presentation-settings.ts";
+import {
+  createPresentationSettingsManager,
+  editablePresentationSettings,
+  readPresentationSettings,
+  writePresentationSettings,
+  type PresentationSettingsScope,
+} from "./presentation-settings-store.ts";
 import { renderToolGroup } from "./renderer.ts";
 import { TuiPreview } from "./tui-preview.ts";
 import { buildSessionProjection, type SessionProjection } from "./session-projection.ts";
@@ -9,6 +20,54 @@ import { buildSessionProjection, type SessionProjection } from "./session-projec
  * the interactive TUI; session replacement/reload gets a fresh handle.
  */
 export default function (pi: ExtensionAPI): void {
+  pi.registerCommand("storyboard-settings", {
+    description: "Configure Pi storyboard presentation settings",
+    handler: async (args, ctx) => {
+      if (ctx.mode !== "tui") {
+        ctx.ui.notify("/storyboard-settings is only available in interactive TUI mode", "warning");
+        return;
+      }
+
+      const requestedScope = args.trim();
+      let scope: PresentationSettingsScope | undefined =
+        requestedScope === "global" || requestedScope === "project" ? requestedScope : undefined;
+      if (requestedScope !== "" && scope === undefined) {
+        ctx.ui.notify("Usage: /storyboard-settings [global|project]", "warning");
+        return;
+      }
+      if (scope === "project" && !ctx.isProjectTrusted()) {
+        ctx.ui.notify("Project settings are unavailable until this project is trusted", "warning");
+        return;
+      }
+
+      if (scope === undefined) {
+        const choices = ctx.isProjectTrusted() ? ["global", "project"] : ["global"];
+        const selected = await ctx.ui.select(
+          "Save storyboard settings to:",
+          choices.map((choice) => choice === "global" ? "Global settings" : "Project settings"),
+        );
+        if (selected === undefined) return;
+        scope = selected === "Project settings" ? "project" : "global";
+      }
+
+      try {
+        const manager = createPresentationSettingsManager(ctx);
+        const source = readPresentationSettings(manager);
+        const initial = editablePresentationSettings(source, scope);
+        // Load the optional settings UI only for the user-initiated command so
+        // an older Pi without SettingsList cannot disable storyboard rendering.
+        const { openPresentationSettings } = await import("./presentation-settings-ui.ts");
+        const result = await openPresentationSettings(ctx, initial, scope);
+        if (result === null) return;
+        writePresentationSettings(ctx.cwd, scope, result);
+        ctx.ui.notify("Storyboard settings saved; reloading Pi extensions...", "info");
+        await ctx.reload();
+      } catch (error) {
+        ctx.ui.notify(`Could not save storyboard settings: ${String(error)}`, "error");
+      }
+    },
+  });
+
   pi.registerCommand("storyboard-preview", {
     description: "Preview Pi storyboards and available pi-tui components",
     handler: async (_args, ctx) => {
@@ -24,6 +83,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   let patch: PatchHandle | undefined;
+  let presentationSettings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS;
   let invalidateProjection: () => void = () => undefined;
 
   const invalidate = (): void => invalidateProjection();
@@ -43,6 +103,13 @@ export default function (pi: ExtensionAPI): void {
     patch?.uninstall();
     patch = undefined;
     invalidateProjection = () => undefined;
+    presentationSettings = DEFAULT_PRESENTATION_SETTINGS;
+    try {
+      const manager = createPresentationSettingsManager(ctx);
+      presentationSettings = readPresentationSettings(manager).effective;
+    } catch {
+      // Malformed or unavailable settings must never disable native/storyboard rendering.
+    }
     if (ctx.mode !== "tui") return;
 
     const sessionManager = ctx.sessionManager;
@@ -75,7 +142,9 @@ export default function (pi: ExtensionAPI): void {
 
     patch = installToolGroupingPatch({
       getTheme: () => ctx.ui.theme,
-      renderGroup: (group, width, theme) => renderToolGroup(group, width, theme),
+      getSettings: () => presentationSettings,
+      renderGroup: (group, width, theme, settings) =>
+        renderToolGroup(group, width, theme, settings ?? presentationSettings),
       getSessionProjection,
     });
   });
@@ -83,6 +152,7 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_shutdown", () => {
     patch?.uninstall();
     patch = undefined;
+    presentationSettings = DEFAULT_PRESENTATION_SETTINGS;
     invalidateProjection = () => undefined;
   });
 }

@@ -7,7 +7,8 @@ import {
   thinkingMarkerColor,
 } from "../src/storyboard-renderer.ts";
 import { buildStoryboard, type StoryboardChild } from "../src/storyboard.ts";
-import type { ThemeLike } from "../src/renderer.ts";
+import { renderToolGroup, type ThemeLike } from "../src/renderer.ts";
+import { normalizePresentationSettings } from "../src/presentation-settings.ts";
 
 const theme: ThemeLike = {
   fg: (_color, text) => text,
@@ -430,5 +431,111 @@ describe("turn storyboard renderer", () => {
     expect(output).toContain("◉ Thinking...");
     expect(output).toContain("╰─ Write 1 file");
     expect(output).not.toContain("Tool step");
+  });
+
+  it("reserves width for the widest configured structural prefixes", () => {
+    const settings = normalizePresentationSettings({
+      "pi-storyboard": {
+        symbols: {
+          thinkingRoot: "ROOT",
+          thinkingStep: "s",
+          rail: "RAIL",
+          branch: "B",
+          lastBranch: "LAST",
+        },
+      },
+    });
+    const base = scene();
+    const secondRun = {
+      ...base.actionRuns[0]!,
+      rows: [...base.actionRuns[0]!.rows],
+    };
+    const ordered = {
+      ...base,
+      actionRuns: [base.actionRuns[0]!, secondRun],
+      orderedChildren: [
+        {
+          type: "assistant" as const,
+          content: { type: "thinking" as const, row: "thinking", renderedLines: [" thinking"] },
+        },
+        { type: "tool" as const, tool: base.actionRuns[0]!.rows[0]! },
+        { type: "tool" as const, tool: secondRun.rows[0]! },
+      ],
+    };
+
+    for (const width of [1, 4, 10, 20, 80]) {
+      const lines = renderStoryboardScene(
+        ordered,
+        ["", " thinking"],
+        width,
+        theme,
+        () => ["", " heading", " continuation"],
+        settings,
+      );
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+    }
+
+    const lines = renderStoryboardScene(
+      ordered,
+      ["", " thinking"],
+      80,
+      theme,
+      () => ["", " heading", " continuation"],
+      settings,
+    );
+    expect(lines.some((line) => line.includes("RAIL"))).toBe(true);
+    expect(lines.some((line) => line.includes("LAST"))).toBe(true);
+  });
+
+  it("uses configured symbols and colors without changing scene ownership", () => {
+    const settings = normalizePresentationSettings({
+      "pi-storyboard": {
+        symbols: {
+          thinkingRoot: "R",
+          thinkingStep: "s",
+          thinkingPlaceholder: "Waiting",
+          hiddenThinking: "h",
+          rail: "!",
+          branch: "=>",
+          lastBranch: "END",
+          toolDots: { read: "r" },
+        },
+        colors: {
+          status: { complete: "warning" },
+          thinking: { settled: "accent" },
+          structure: "syntaxString",
+        },
+      },
+    });
+    const coloredTheme: ThemeLike = {
+      fg: (color, text) => `[${color}:${text}]`,
+      bold: (text) => text,
+    };
+    const base = scene();
+    const secondRun = {
+      ...base.actionRuns[0]!,
+      rows: [...base.actionRuns[0]!.rows],
+    };
+    const output = renderStoryboardScene(
+      { ...base, actionRuns: [base.actionRuns[0]!, secondRun] },
+      ["", " thinking"],
+      80,
+      coloredTheme,
+      (group, groupWidth, groupTheme, passedSettings) => renderToolGroup(
+        group,
+        groupWidth,
+        groupTheme,
+        passedSettings ?? settings,
+      ),
+      settings,
+    ).join("\n");
+
+    expect(output).toContain("[accent:R]");
+    expect(output).toContain("[warning:  r ]");
+    expect(output).toContain("[syntaxString:!]");
+    expect(output).toContain("[syntaxString:=>]");
+    expect(output).toContain("[syntaxString:END]");
+    expect(output).not.toContain("[success:R]");
   });
 });

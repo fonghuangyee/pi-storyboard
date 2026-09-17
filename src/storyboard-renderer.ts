@@ -1,4 +1,4 @@
-import { stripTerminalSequences, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { GroupSnapshot, ThemeLike } from "./renderer.ts";
 import type {
   SceneState,
@@ -18,6 +18,7 @@ export type StoryboardGroupRenderer = (
 ) => string[];
 
 export type StoryboardMarkerColor = "muted" | "success" | "error" | "syntaxKeyword";
+export type StoryboardThinkingMarkerColor = "success" | "syntaxKeyword";
 
 /** A native assistant child and its visual range in a rendered story block. */
 export type StoryboardAssistantRenderRegion = {
@@ -83,7 +84,7 @@ export function storyboardAssistantContinuationWidth(width: number): number {
   return storyboardAssistantWidth(width);
 }
 
-/** The root marker communicates action state; ordinary paragraph markers stay muted. */
+/** Action-root markers communicate the aggregate scene state. */
 export function sceneMarkerColor(state: SceneState): StoryboardMarkerColor {
   switch (state) {
     case "running":
@@ -95,6 +96,11 @@ export function sceneMarkerColor(state: SceneState): StoryboardMarkerColor {
     case "note":
       return "muted";
   }
+}
+
+/** Thinking markers communicate thinking lifecycle, not tool outcome. */
+export function thinkingMarkerColor(state: SceneState): StoryboardThinkingMarkerColor {
+  return state === "running" ? "syntaxKeyword" : "success";
 }
 
 function fit(line: string, width: number): string {
@@ -159,12 +165,6 @@ function thinkingParts(lines: readonly string[]): readonly ThinkingPart[] {
   return parts;
 }
 
-function statusText(scene: StoryboardScene): string {
-  const count = scene.actionRuns.reduce((total, run) => total + run.rows.length, 0);
-  if (count === 0) return "note";
-  return `${count} ${count === 1 ? "action" : "actions"}${scene.state === "failed" ? " · failed" : ""}`;
-}
-
 function assistantMarkerPrefix(
   scene: StoryboardScene,
   aggregate: boolean,
@@ -176,8 +176,7 @@ function assistantMarkerPrefix(
   if (layout.assistantPrefixWidth === 0) return "";
   const hasActions = aggregate && (hasActionsOverride ?? scene.actionRuns.length > 0);
   const shape = hasActions ? "◉" : "○";
-  const color = hasActions ? sceneMarkerColor(markerState) : "muted";
-  return `${layout.indent}${theme.fg(color, shape)}`;
+  return `${layout.indent}${theme.fg(thinkingMarkerColor(markerState), shape)}`;
 }
 
 function assistantRailPrefix(layout: StoryLayout, theme: ThemeLike): string {
@@ -194,17 +193,9 @@ function renderAssistantHeader(
   theme: ThemeLike,
   markerState: SceneState = scene.state,
   hasActionsOverride?: boolean,
-  actionCountOverride?: number,
 ): AssistantBlockLayout {
   const marker = assistantMarkerPrefix(scene, aggregate, layout, theme, markerState, hasActionsOverride);
   const rail = assistantRailPrefix(layout, theme);
-  const count = actionCountOverride ?? scene.actionRuns.reduce((total, run) => total + run.rows.length, 0);
-  const statusValue = actionCountOverride === undefined
-    ? statusText(scene)
-    : count === 0
-      ? "note"
-      : `${count} ${count === 1 ? "action" : "actions"}${markerState === "failed" ? " · failed" : ""}`;
-  const status = theme.fg("muted", statusValue);
   const lines: string[] = [];
   const regions: Array<Omit<StoryboardAssistantRenderRegion, "row">> = [];
   let markerPlaced = false;
@@ -234,13 +225,7 @@ function renderAssistantHeader(
         !markerPlaced || (aggregate && !hasVisibleText(part.lines[index - 1] ?? ""))
       );
       if (startsParagraph) {
-        const contentLine = nativeLine.replace(/\s+$/u, "");
-        const withMarker = `${marker}${contentLine}`;
-        const canShowStatus = !markerPlaced && aggregate && width >= 80 && visibleWidth(withMarker) + 2 + visibleWidth(status) <= width;
-        const candidate = canShowStatus
-          ? `${withMarker}${" ".repeat(width - visibleWidth(withMarker) - visibleWidth(status))}${status}`
-          : `${marker}${nativeLine}`;
-        lines.push(fit(candidate, width));
+        lines.push(fit(`${marker}${nativeLine}`, width));
         markerPlaced = true;
       } else {
         lines.push(fit(`${rail}${nativeLine}`, width));
@@ -263,6 +248,47 @@ function renderAssistantHeader(
   return { lines, regions };
 }
 
+/**
+ * Mirror Pi's AssistantMessageComponent thinking child: a pi-tui Markdown
+ * component with output padding, thinking color, and italic default styling.
+ * The strong Markdown wrapper gives the fixed label the same bold+italic
+ * treatment as Pi's native bold thinking summaries.
+ */
+function thinkingPlaceholderLines(
+  width: number,
+  layout: StoryLayout,
+  theme: ThemeLike,
+): string[] {
+  const passthrough = (text: string): string => text;
+  const markdownTheme: MarkdownTheme = {
+    heading: passthrough,
+    link: passthrough,
+    linkUrl: passthrough,
+    code: passthrough,
+    codeBlock: passthrough,
+    codeBlockBorder: passthrough,
+    quote: passthrough,
+    quoteBorder: passthrough,
+    hr: passthrough,
+    listBullet: passthrough,
+    bold: (text) => theme.bold?.(text) ?? text,
+    italic: (text) => theme.italic?.(text) ?? text,
+    strikethrough: passthrough,
+    underline: passthrough,
+  };
+  const contentWidth = Math.max(1, width - layout.assistantPrefixWidth);
+  return new Markdown(
+    "**Thinking...**",
+    1,
+    0,
+    markdownTheme,
+    {
+      color: (text) => theme.fg("thinkingText", text),
+      italic: true,
+    },
+  ).render(contentWidth);
+}
+
 function renderEmptyThinkingHeader(
   scene: StoryboardScene,
   width: number,
@@ -271,11 +297,30 @@ function renderEmptyThinkingHeader(
 ): string[] {
   return [...renderAssistantHeader(
     scene,
-    [theme.fg("thinkingText", " Thinking...")],
+    thinkingPlaceholderLines(width, layout, theme),
     width,
     true,
     layout,
     theme,
+  ).lines];
+}
+
+/** Render the explicit same-response commentary-suffix placeholder. */
+function renderSyntheticThinkingPlaceholder(
+  scene: StoryboardScene,
+  width: number,
+  layout: StoryLayout,
+  theme: ThemeLike,
+): string[] {
+  return [...renderAssistantHeader(
+    scene,
+    thinkingPlaceholderLines(width, layout, theme),
+    width,
+    true,
+    layout,
+    theme,
+    scene.state,
+    true,
   ).lines];
 }
 
@@ -364,7 +409,7 @@ function renderAssistantContinuation(
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
-  markerColor: StoryboardMarkerColor = "muted",
+  markerColor: StoryboardThinkingMarkerColor = "success",
 ): AssistantBlockLayout {
   const rail = assistantRailPrefix(layout, theme);
   const terminalPrefix = layout.assistantPrefixWidth === 0
@@ -579,7 +624,7 @@ function orderedSceneLayout(
         safeWidth,
         layout,
         theme,
-        sceneMarkerColor(scene.state),
+        thinkingMarkerColor(scene.state),
       );
       lines.push(...continuation.lines);
       for (const region of continuation.regions) {
@@ -690,17 +735,15 @@ function renderWorkChapter(
   const items = chapter.items;
   if (items.length === 0) return;
   const terminalIndex = items.length - 1;
-  const chapterActions = items.reduce(
-    (total, item) => total + (item.type === "action" ? item.run.rows.length : 0),
-    0,
-  );
   const spanHasActions = span.chapters.some((candidate) => candidate.items.some((item) => item.type === "action"));
 
   for (let index = 0; index < items.length; index++) {
     const item = items[index]!;
     if (index > 0) lines.push(fit(assistantRailPrefix(layout, theme), width));
     const terminal = index === terminalIndex;
-    if (item.type === "thinking") {
+    if (item.type === "synthetic-thinking-placeholder") {
+      lines.push(...renderSyntheticThinkingPlaceholder(item.scene, width, layout, theme));
+    } else if (item.type === "thinking") {
       const start = lines.length;
       const block = index === 0
         ? renderAssistantHeader(
@@ -712,9 +755,8 @@ function renderWorkChapter(
           theme,
           span.state,
           spanHasActions,
-          chapterActions,
         )
-        : renderAssistantContinuation(item.content, terminal, width, layout, theme, sceneMarkerColor(item.scene.state));
+        : renderAssistantContinuation(item.content, terminal, width, layout, theme, thinkingMarkerColor(item.scene.state));
       lines.push(...block.lines);
       for (const region of block.regions) {
         regions.push({ row: item.content.row, ...region, start: start + region.start });
@@ -795,15 +837,15 @@ export function renderStoryboardWorkSpanLayout(
  * Decorate only native thinking children when a response also contains a
  * final/unknown text block. The text remains Pi-native and unprefixed; this
  * gives intermediate thinking a visible start marker without classifying the
- * final answer as a storyboard action. Validated-final-answer thinking may
- * use the answer's running/completed marker color.
+ * final answer as a storyboard action. Thinking markers use the assistant's
+ * running/settled lifecycle rather than any tool outcome.
  */
 function renderThinkingMarkerBlock(
   nativeLines: readonly string[],
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
-  markerColor: StoryboardMarkerColor = "muted",
+  markerColor: StoryboardThinkingMarkerColor = "success",
 ): AssistantBlockLayout {
   const rail = assistantRailPrefix(layout, theme);
   const thinkingMarker = layout.assistantPrefixWidth === 0
@@ -858,7 +900,7 @@ export function renderNativeThinkingMarkersLayout(
   assistantContent: readonly StoryboardAssistantContent[],
   width: number,
   theme: ThemeLike,
-  markerColor: StoryboardMarkerColor = "muted",
+  markerColor: StoryboardThinkingMarkerColor = "success",
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
   const layout = layoutForWidth(safeWidth);

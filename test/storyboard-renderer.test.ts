@@ -4,6 +4,7 @@ import {
   renderNativeThinkingMarkersLayout,
   renderStoryboardScene,
   sceneMarkerColor,
+  thinkingMarkerColor,
 } from "../src/storyboard-renderer.ts";
 import { buildStoryboard, type StoryboardChild } from "../src/storyboard.ts";
 import type { ThemeLike } from "../src/renderer.ts";
@@ -56,6 +57,13 @@ describe("turn storyboard renderer", () => {
     expect(sceneMarkerColor("failed")).toBe("error");
     expect(sceneMarkerColor("complete")).toBe("success");
     expect(sceneMarkerColor("note")).toBe("muted");
+  });
+
+  it("keeps thinking markers limited to running and success", () => {
+    expect(thinkingMarkerColor("running")).toBe("syntaxKeyword");
+    expect(thinkingMarkerColor("failed")).toBe("success");
+    expect(thinkingMarkerColor("complete")).toBe("success");
+    expect(thinkingMarkerColor("note")).toBe("success");
   });
 
   it("renders ordered content under one thinking header and closes the final child", () => {
@@ -176,9 +184,29 @@ describe("turn storyboard renderer", () => {
     expect(output).toContain("[muted:╰─]");
     expect(output).not.toContain("[muted:◉]");
     expect(output).not.toContain("[success:╰─]");
+    expect(output).not.toContain("· failed");
   });
 
-  it("colors every thinking block from its owning turn state", () => {
+  it("keeps a failed tool from coloring the thinking marker as an error", () => {
+    const coloredTheme: ThemeLike = {
+      fg: (color, text) => `[${color}:${text}]`,
+      bold: (text) => text,
+    };
+    const failed = { ...scene(), state: "failed" as const };
+    const output = renderStoryboardScene(
+      failed,
+      [" thinking"],
+      80,
+      coloredTheme,
+      (group) => ["", ` ${group.kind} ${group.rows.length}`],
+    ).join("\\n");
+
+    expect(output).toContain("[success:◉]");
+    expect(output).not.toContain("[error:◉]");
+    expect(output).not.toContain("· failed");
+  });
+
+  it("colors every settled thinking block with the success color", () => {
     const coloredTheme: ThemeLike = {
       fg: (color, text) => `[${color}:${text}]`,
       bold: (text) => text,
@@ -335,6 +363,7 @@ describe("turn storyboard renderer", () => {
     };
     const lines = renderStoryboardScene(note, ["", " reviewing logic"], 80, theme, () => [""]);
     expect(lines.join("\n")).toContain("○ reviewing logic");
+    expect(lines.join("\n")).not.toContain("note");
     expect(lines.join("\n")).not.toContain("action");
   });
 

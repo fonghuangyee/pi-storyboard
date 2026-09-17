@@ -9,9 +9,9 @@ A presentation-only Pi extension that groups collapsed native tool rows and rend
 - Failed rows use the same `●` marker in the active Pi theme's error color; only one bounded sanitized error line is shown.
 - Group summaries never include successful tool-result contents, written file contents, command output, or generic tool output; failures include only the minimal error line.
 - Group blocks preserve Pi's native one-line top spacer so they remain visually separated from the preceding tool or message.
-- Native thinking starts a visual turn block (`◉` with tools, `○` for a note); the top-level action marker follows turn state, while ordinary paragraph markers remain muted. Thinking immediately before a validated final answer follows that answer's running/completed state. Source-ordered child action runs use `├─`, and `╰─` explicitly closes the final child.
+- Native thinking starts a visual turn block (`◉` with tools, `○` for a note); thinking markers use the running color while the assistant is active and the success color once settled, independent of tool outcomes. Source-ordered child action runs use `├─`, and `╰─` explicitly closes the final child.
 - Each storyboard normally corresponds to one validated Pi “assistant response + tool calls” turn. A narrow visual continuation may attach immediately adjacent validated empty/absent-thinking tool turns to the previous visible-thinking root; ownership is never merged.
-- Empty/absent thinking does not create fake thinking content; an adjacent validated turn continues under the previous visible-thinking root, while a leading tool-only turn promotes its first observable action to `◉`.
+- Empty/absent thinking does not create fake thinking content; an adjacent validated turn continues under the previous visible-thinking root, while a leading tool-only turn promotes its first observable action to `◉`. A commentary-suffix placeholder exception is documented below.
 - Validated `commentary` text breaks out at full native width in exact source order; `final_answer` and unknown text remain native, while any thinking paragraphs in a mixed no-tool response still receive their `○` start markers.
 - Arguments are sanitized and width-truncated using Pi's TUI utilities; long rows use a middle ellipsis so path beginnings and filenames remain visible.
 - Grouped paths are rendered as plain text to avoid terminal-specific OSC 8 hyperlink decoration.
@@ -73,14 +73,14 @@ Run 1 command
 A source-ordered storyboard preserves turn ownership without inventing a persisted master record:
 
 ```text
- ◉ Inspecting the existing row shape                         1 action
+ ◉ Inspecting the existing row shape
  │
  ╰─ Read 1 file
      ● src/renderer.ts
 
  The file confirms **native commentary** can remain in order.
 
- ◉ Applying the settled replacement                         3 actions
+ ◉ Applying the settled replacement
  ├─ Edit 1 time
      ● src/renderer.ts (1 replacement)
  ├─ Read 1 file
@@ -89,11 +89,29 @@ A source-ordered storyboard preserves turn ownership without inventing a persist
      ● npm test
 ```
 
-`◉` marks the root of one thinking-led turn, `○` marks an additional thinking block within that turn, `├─` a child with more source-ordered content following, `╰─` the final child, and `●` the existing per-tool status. Thinking dots use their owning turn's state color: running blue, failed red, complete green, and note muted. Rails and branch glyphs remain muted structure. An immediately adjacent validated empty/absent-thinking turn may continue beneath the previous visible-thinking root, but the hierarchy remains presentation-only and never claims that one thought caused a later tool call.
+`◉` marks the root of one thinking-led turn, `○` marks an additional thinking block within that turn, `├─` a child with more source-ordered content following, `╰─` the final child, and `●` the existing per-tool status. Thinking dots use the thinking lifecycle color: running blue while the assistant is active and success green once settled; they do not reflect tool failures. Tool-row dots retain their individual running/success/error colors. Rails and branch glyphs remain muted structure. An immediately adjacent validated empty/absent-thinking turn may continue beneath the previous visible-thinking root, but the hierarchy remains presentation-only and never claims that one thought caused a later tool call.
+
+### Commentary-suffix placeholder
+
+For one validated response whose source order is `thinking → commentary → eligible tool calls`, commentary can be long, so it remains a full-width native block rather than being carried inside the earlier rail. The renderer inserts the existing fixed `Thinking...` presentation placeholder immediately before the orphan tool run:
+
+```text
+ ◉ Planning handler with effect for default config
+ │
+ The default `shipping_location` value is now populated on enable.
+
+ ◉ Thinking...
+ ╰─ Run 3 commands
+     ● npm test
+     ● npm run typecheck
+     ● npx eslint ...
+```
+
+This placeholder is presentation-only: it is not added to Pi's message, session, model context, or native component tree, and it does not claim to reproduce hidden reasoning. It is used only when validated commentary is followed by eligible tool calls in the same response; final/unknown text, incompatible ownership, expanded tools, and separate turns remain native or follow the existing fallback rules.
 
 When one continuous thinking block contains more than four paragraphs, the storyboard keeps the first two and last two and inserts `↳ 2 thinking steps behind the scenes` (with the exact hidden count). Commentary is never collapsed. Pi's native thinking row remains behind the normal thinking toggle, so this only trims the visible projection.
 
-Pi's configured tool expansion action controls expanded mode. When expanded, the wrapper delegates every row to Pi's original renderer, including live command output, complete errors, edit diffs, and custom/MCP/subagent details. The assistant-message boundary supplies ordering and validated call IDs only. Final/unknown text itself and incomplete ownership remain native. A collapsed running edit stays compact; Pi's native preview remains available after explicit expansion. Mixed no-tool responses may decorate only their thinking starts.
+Pi's configured tool expansion action controls expanded mode. When expanded, the wrapper delegates every row to Pi's original renderer, including live command output, complete errors, edit diffs, and custom/MCP/subagent details. The assistant-message boundary supplies ordering and validated call IDs only. Final/unknown text itself and incomplete ownership remain native. A collapsed running edit stays compact; Pi's native preview remains available after explicit expansion. Mixed no-tool responses may decorate only their thinking starts. The commentary-suffix placeholder does not change expanded behavior or native fallback.
 
 ## Compatibility and fallback
 

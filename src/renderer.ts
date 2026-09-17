@@ -43,6 +43,7 @@ export type GroupSnapshot = {
 export interface ThemeLike {
   fg(color: "accent" | "text" | "toolTitle" | "success" | "muted" | "toolOutput" | "warning" | "error" | "syntaxKeyword" | "thinkingText", text: string): string;
   bold?(text: string): string;
+  italic?(text: string): string;
 }
 
 const ANSI_CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;

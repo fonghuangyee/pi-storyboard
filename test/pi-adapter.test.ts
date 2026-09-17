@@ -161,7 +161,7 @@ describe("Container adapter", () => {
     expect(lines.join("\\n")).toContain("◉assistant work");
     expect(lines.join("\\n")).toContain("├─ read heading");
     expect(lines.join("\\n")).toContain("╰─ command heading");
-    expect(lines.join("\\n")).toContain("2 actions");
+    expect(lines.join("\\n")).not.toMatch(/\b\d+ actions?\b/u);
     expect(renderGroup.mock.calls.map(([group]) => group.kind)).toEqual(["read", "command"]);
     expect(owner.render).toHaveBeenCalledOnce();
     expect(read.render).not.toHaveBeenCalled();
@@ -377,6 +377,68 @@ describe("Container adapter", () => {
     expect(output).not.toContain("│commentary 80");
     expect(commentary.render).toHaveBeenCalledWith(80);
     expect(output).toContain("◉");
+    handle?.uninstall();
+  });
+
+  it("inserts a thinking placeholder after same-response commentary before tools", () => {
+    const owner = storyboardAssistant(["", " planning", "", "commentary 78"], ["read-commentary-suffix"], {
+      text: true,
+      textPhase: "commentary",
+    });
+    const ownerFields = owner as unknown as Record<string, unknown>;
+    const leadingSpacer = { render: vi.fn(() => [""]) };
+    const betweenSpacer = { render: vi.fn(() => [""]) };
+    const thinking = {
+      render: vi.fn(() => [" planning"]),
+      handleMouse: vi.fn(() => ({ handled: true })),
+    };
+    const commentary = {
+      render: vi.fn((width: number) => [`commentary ${width}`]),
+      handleMouse: vi.fn(() => ({ handled: true })),
+    };
+    ownerFields.contentContainer = {
+      children: [leadingSpacer, thinking, betweenSpacer, commentary],
+      mouseLayout: {
+        width: 78,
+        children: [
+          { component: leadingSpacer, height: 1 },
+          { component: thinking, height: 1 },
+          { component: betweenSpacer, height: 1 },
+          { component: commentary, height: 1 },
+        ],
+      },
+    };
+    const read = tool("read", { path: "commentary-suffix.ts" }, result());
+    assignToolCallId(read, "read-commentary-suffix");
+    const session: SessionProjection = {
+      leafId: "result",
+      turns: [{
+        entryId: "assistant",
+        toolCallIds: ["read-commentary-suffix"],
+        resultEntryIds: ["result"],
+        hasVisibleThinking: true,
+        hasCommentary: true,
+        hasFinalAnswer: false,
+        hasUnknownText: false,
+        valid: true,
+        boundaryBefore: false,
+        boundaryAfter: false,
+      }],
+    };
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: () => ["", " Read 1 file"],
+    });
+
+    const output = container(owner, read).render(80).join("\\n");
+    expect(output).toContain("commentary 80");
+    expect(output).not.toContain("│commentary 80");
+    expect(output).toContain("◉ Thinking...");
+    expect(output).toContain("╰─ Read 1 file");
+    expect(output).not.toContain("◉ Read 1 file");
+    expect(commentary.render).toHaveBeenCalledWith(80);
+    expect(read.render).not.toHaveBeenCalled();
     handle?.uninstall();
   });
 

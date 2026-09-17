@@ -312,7 +312,8 @@ A safer and cleaner display is:
 1. keep commentary at its exact source-order position;
 2. render it full-width with Pi's ordinary native assistant Markdown presentation;
 3. close the storyboard chapter before it;
-4. resume a new storyboard chapter after it when later actions/thinking exist.
+4. when the same validated response has eligible tools immediately after the commentary, insert the fixed presentation-only `Thinking...` placeholder after the commentary and place those tools beneath it;
+5. do not carry a rail through long commentary or use this exception across assistant responses.
 
 “Display like final text” must mean **final-answer-like visual treatment only**. The extension must not:
 
@@ -458,15 +459,16 @@ thinking → commentary → read → edit
 render:
 
 ```text
- ○ native thinking
+ ◉ native thinking
 
 native commentary Markdown at full width
 
- ◉ Read 1 file
+ ◉ Thinking...
+ ├─ Read 1 file
  ╰─ Edit 1 file
 ```
 
-The commentary remains exactly where the model emitted it. The post-commentary action root does not claim the earlier thought semantically owns those tools.
+The commentary remains exactly where the model emitted it. The fixed placeholder is a local presentation container for the orphan action run; it is not recovered reasoning, is not persisted, and does not claim the earlier thought semantically owns those tools. If the exact same-response condition is not met, existing action-root or native-fallback behavior remains unchanged.
 
 ## 10. Long-span compaction in the UI
 
@@ -537,7 +539,7 @@ These may be supporting diagnostics, never ownership proof.
 
 The assistant-response storyboard remains semantically exact while the implemented work-span layer reduces repetitive cards for validated active-path chains. Local history shows that long chains of assistant/tool turns are normal and that almost every empty-thinking turn follows visible thinking inside the same transcript work sequence.
 
-The safe optimization is not to merge assistant messages or thinking signatures. It is to retain each Pi turn as an ownership unit while allowing a validated empty-thinking turn to continue beneath the previous visible-thinking root.
+The safe optimization is not to merge assistant messages or thinking signatures. It is to retain each Pi turn as an ownership unit while allowing a validated empty-thinking turn to continue beneath the previous visible-thinking root. A separate implemented exception addresses the visual orphan created by long commentary before tools: insert a fixed `Thinking...` placeholder after the commentary, but only inside the same validated assistant response.
 
 Implemented presentation rules:
 
@@ -547,6 +549,7 @@ Implemented presentation rules:
 4. preserve per-turn action-group boundaries and exact source order;
 5. use an action root when no eligible preceding visible-thinking turn exists;
 6. render validated commentary full-width like ordinary final text, at its original position;
-7. fail open at every session, ownership, phase, component, expansion, or renderer ambiguity.
+7. keep the commentary-suffix placeholder presentation-only and same-response scoped;
+8. fail open at every session, ownership, phase, component, expansion, or renderer ambiguity.
 
 The implementation sequence and acceptance criteria are defined in [`STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md`](./STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md).

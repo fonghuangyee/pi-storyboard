@@ -40,7 +40,7 @@ import {
   renderStoryboardWorkSpanLayout,
   storyboardAssistantWidth,
   type StoryboardAssistantRenderRegion,
-  type StoryboardMarkerColor,
+  type StoryboardThinkingMarkerColor,
 } from "./storyboard-renderer.ts";
 import {
   matchesProjectedTurn,
@@ -813,11 +813,7 @@ function validRenderedLines(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((line) => typeof line === "string");
 }
 
-function nativeThinkingMarkerColor(snapshot: AssistantSceneSnapshot): StoryboardMarkerColor {
-  if (!snapshot.hasFinalAnswer || snapshot.hasUnknownText) return "muted";
-  if (snapshot.stopReason === "error" || snapshot.stopReason === "aborted" || snapshot.stopReason === "length") {
-    return "error";
-  }
+function nativeThinkingMarkerColor(snapshot: AssistantSceneSnapshot): StoryboardThinkingMarkerColor {
   return snapshot.isStreaming || snapshot.stopReason === "pending"
     ? "syntaxKeyword"
     : "success";
@@ -1007,6 +1003,8 @@ function planSessionWorkSpans(
  * grouping path. Tool-bearing assistant responses with no visible thinking
  * use an action root in the active-path projection, or the legacy
  * presentation-only placeholder when no session projection is available.
+ * A validated same-response commentary suffix receives the fixed
+ * presentation-only `Thinking...` node before its eligible tool run.
  * Adjacent settled empty-thinking turns may continue under a validated
  * visible-thinking root; older/incomplete shapes still fall back unchanged.
  */

@@ -1,6 +1,6 @@
 # Plan: transcript-aware storyboard grouping
 
-> Status: **implemented conservatively.** The read-only active-session projection validates each restored turn. Production does not aggregate arbitrary historical turns, but it now allows a narrow visual continuation: directly adjacent settled tool turns with empty/absent thinking may render under the previous validated visible-thinking root. Pi-turn ownership, call IDs, and session entries remain separate.
+> Status: **implemented conservatively.** The read-only active-session projection validates each restored turn. Production does not aggregate arbitrary historical turns, but it now allows a narrow visual continuation: directly adjacent settled tool turns with empty/absent thinking may render under the previous validated visible-thinking root. Pi-turn ownership, call IDs, and session entries remain separate. The commentary-suffix placeholder is implemented below.
 
 ## 1. Objective
 
@@ -105,7 +105,10 @@ Split a work span into chapters around narrative text:
 - validated commentary closes the preceding chapter;
 - commentary renders full-width in exact source order;
 - later work starts a new chapter;
+- when the later chapter begins with eligible tools and the same response already has a visible thinking root, the implemented exception inserts a fixed presentation-only `Thinking...` placeholder before that tool run;
 - final/unknown text closes the work span completely.
+
+The placeholder is not a recovered thinking block. It is a local visual container for an orphan action run created only because carrying a rail through long commentary is undesirable.
 
 ### 3.4 Action-run projection
 
@@ -143,6 +146,30 @@ When a validated turn has empty or absent visible thinking:
 - otherwise use the first observable action as the storyboard root when the turn is rendered through the active-path projection;
 - retain its original thinking block/signature untouched.
 
+### Commentary-suffix placeholder
+
+The no-fake-thinking rule has one explicitly presentation-only exception. If one validated assistant response contains:
+
+```text
+visible thinking → validated commentary → eligible collapsed tool calls
+```
+
+then render:
+
+```text
+ ◉ visible thinking
+ │
+ Full native commentary, at its original width and source position.
+
+ ◉ Thinking...
+ ╰─ Run 3 commands
+     ● npm test
+     ● npm run typecheck
+     ● npx eslint ...
+```
+
+The fixed `Thinking...` text is not copied from the model and does not claim to expose hidden reasoning. It is inserted only after the complete commentary breakout and only before the immediately following eligible tool run. No session entry, assistant content item, tool call, signature, or native component is created or mutated. This exception does not apply across assistant responses or across final/unknown/native boundaries.
+
 ### Leading tool-only work
 
 When a chapter begins without visible thinking, do not invent prose. Promote the first action group to the root:
@@ -166,9 +193,9 @@ During an unsettled stream:
 
 ## 5. Commentary breakout
 
-Validated commentary should no longer be rendered inside the story rail.
+Validated commentary should no longer be rendered inside the story rail. It may be long, multiline, or rich Markdown, so the earlier rail must not be stretched through it.
 
-For:
+For the orphan-tool condition:
 
 ```text
 thinking A → commentary C → read → edit
@@ -177,13 +204,16 @@ thinking A → commentary C → read → edit
 render:
 
 ```text
-○ thinking A
+◉ thinking A
 
 C rendered by Pi's native assistant Markdown at full width
 
-◉ Read 1 file
+◉ Thinking...
+├─ Read 1 file
 ╰─ Edit 1 file
 ```
+
+The placeholder is a fixed presentation node, not a semantic thinking item. Commentary remains exactly where the model emitted it. If the condition is not met, existing action-root or native-fallback rules remain in force.
 
 Requirements:
 
@@ -202,7 +232,7 @@ Requirements:
 
 Cross-turn grouping cannot be proven from private TUI children alone. Add a small public-API session index.
 
-### Proposed module
+### Implemented module
 
 ```text
 src/session-projection.ts
@@ -298,6 +328,7 @@ type StoryboardWorkSpan = {
 
 type StoryboardChapterItem =
   | { readonly type: "thinking"; ... }
+  | { readonly type: "synthetic-thinking-placeholder"; ... }
   | { readonly type: "action"; ... };
 
 type StoryboardBreakout =
@@ -319,15 +350,16 @@ For each validated work span:
 2. split at commentary/native breakouts;
 3. render the first visible thinking as `◉`;
 4. render later visible thinking as `○` continuation steps;
-5. omit empty/absent thinking presentation;
-6. if no thinking exists before actions, promote the first action group to `◉` root;
-7. for an allowed empty-thinking continuation, keep the first visible thinking as the only root and append later action groups without merging their turn boundaries;
-8. merge adjacent compatible action runs only within the original validated turn;
-9. calculate the final meaningful item and apply `╰─` there;
-10. derive aggregate state with `running > failed > complete > note`;
-11. retain each `●` row's individual state;
-12. width-check every final line;
-13. preserve native mouse regions for every visible native assistant child.
+5. omit empty/absent thinking presentation, except for the specific commentary-suffix placeholder;
+6. when the same response has visible thinking followed by validated commentary and an immediately following eligible tool run, insert one fixed `Thinking...` presentation node after the commentary and before that run;
+7. if no thinking exists before actions and the exception does not apply, promote the first action group to `◉` root;
+8. for an allowed empty-thinking continuation, keep the first visible thinking as the only root and append later action groups without merging their turn boundaries;
+9. merge adjacent compatible action runs only within the original validated turn;
+10. calculate the final meaningful item and apply `╰─` there;
+11. derive aggregate state with `running > failed > complete > note`;
+12. retain each `●` row's individual state;
+13. width-check every final line;
+14. preserve native mouse regions for every visible native assistant child and use a mouse sink for the synthetic placeholder.
 
 Commentary is rendered outside this width budget at normal native assistant width.
 
@@ -398,7 +430,8 @@ Allowed new behavior:
 - read the active session through public read-only APIs;
 - listen to public lifecycle notifications for cache invalidation;
 - retain minimal ephemeral IDs/boundaries in extension-owned objects for presentation;
-- arrange validated native children and compact summaries differently.
+- arrange validated native children and compact summaries differently;
+- insert the fixed `Thinking...` placeholder for the narrowly defined same-response commentary suffix, without creating a Pi message, session entry, or native assistant child.
 
 Explicitly prohibited:
 
@@ -459,6 +492,15 @@ Verify identical settled output after:
 
 Implement only after A–E pass and interactive output is approved.
 
+### Phase G — commentary-suffix placeholder (implemented)
+
+The approved placeholder policy is implemented:
+
+1. add the presentation-only placeholder to the pure work-span model;
+2. render it after a complete full-width commentary breakout and before the immediately following eligible tool run;
+3. keep the placeholder out of session projection, native component children, model context, and mouse targets;
+4. verify long commentary, multiline Markdown, source order, expansion, streaming, and native fallback.
+
 ## 14. Test matrix
 
 ### Session structure
@@ -498,6 +540,10 @@ Implement only after A–E pass and interactive output is approved.
 - multiple commentary blocks;
 - headings, lists, code fences, tables, links, OSC sequences;
 - commentary remains full-width and source ordered;
+- same-response `thinking → commentary → tools` inserts exactly one fixed `Thinking...` placeholder before the eligible tool run;
+- long commentary does not receive a rail or become truncated to make room for tools;
+- commentary-only responses do not receive the placeholder;
+- separate assistant turns do not receive the placeholder through adjacency alone;
 - unknown/malformed signatures stay native;
 - streaming unknown phase reflows only after validation.
 
@@ -526,8 +572,9 @@ After implementation:
 
 1. keep `README.md` and `STORYBOARD_PLAN.md` aligned with one-storyboard-per-turn ownership plus the narrow empty-thinking continuation;
 2. retain the active-path projection as a read-only validation layer;
-3. keep preview coverage for suppressed thinking, action roots, empty-thinking continuation, commentary breakout, and hard-boundary fallback;
-4. document that arbitrary cross-turn aggregation is not enabled without a durable public run boundary.
+3. keep preview coverage for suppressed thinking, action roots, empty-thinking continuation, commentary breakout, the commentary-suffix placeholder, and hard-boundary fallback;
+4. document that arbitrary cross-turn aggregation is not enabled without a durable public run boundary;
+5. document the commentary-suffix placeholder's fixed wording and exact trigger.
 
 ## 16. Acceptance criteria
 
@@ -535,7 +582,8 @@ The implementation is ready only when:
 
 - every validated assistant response retains its own scene and tool ownership;
 - adjacent settled empty/absent-thinking tool turns may continue beneath the previous visible-thinking root only when all continuation checks pass;
-- empty/absent thinking does not create fake thinking content;
+- empty/absent thinking does not create fake thinking content, except for the explicitly presentation-only commentary-suffix placeholder;
+- a validated same-response `thinking → commentary → eligible tools` suffix renders full commentary first, then `◉ Thinking...`, then the tool groups under `├─`/`╰─`;
 - visible thinking remains complete, source ordered, and state-colored;
 - commentary renders full-width at its exact source position;
 - each tool remains owned by its original assistant response;

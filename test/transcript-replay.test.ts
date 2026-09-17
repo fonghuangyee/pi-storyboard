@@ -57,7 +57,7 @@ describe("transcript replay", () => {
     expect(all).toContain("native commentary");
     expect(all).toContain("Applying the settled replacement");
     expect(all).not.toContain("Tool step");
-    expect(all).toContain("actions");
+    expect(all).not.toMatch(/\b\d+ actions?\b/u);
     expect(all).toContain("├─");
     expect(all).toContain("╰─");
     // The mixed thinking + final-text message is deliberately native, so its

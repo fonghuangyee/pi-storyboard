@@ -43,7 +43,7 @@ describe("TuiPreview", () => {
     expect(storyboard).toContain("○");
     expect(storyboard).not.toContain("07 ");
     expect(storyboard).not.toContain("08 ");
-    expect(storyboard).toContain("├─ Read 2 files");
+    expect(storyboard).toContain("╰─ Read 2 files");
     expect(storyboard).toContain("native results confirm commentary can contain Markdown");
     expect(storyboard).toContain("Confirming the separator after the first read");
     expect(storyboard).toContain("╰─ Run 2 commands");
@@ -65,6 +65,8 @@ describe("TuiPreview", () => {
     }
     expect(scrolledStoryboard).toContain("Write 1 file");
     expect(scrolledStoryboard).toContain("Collapsed running edit");
+    expect(scrolledStoryboard).toContain("Planning handler with effect for default config");
+    expect(scrolledStoryboard).toContain("◉ Thinking...");
     expect(scrolledStoryboard).toContain("README.md");
     expect(scrolledStoryboard).toContain("thinking steps behind the scenes");
     expect(scrolledStoryboard).toContain("Final answer");

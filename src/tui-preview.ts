@@ -8,6 +8,7 @@ import {
 } from "./storyboard-renderer.ts";
 import {
   buildEmptyThinkingContinuation,
+  buildWorkSpan,
   type StoryboardActionRun,
   type StoryboardOrderedChild,
   type StoryboardScene,
@@ -181,6 +182,7 @@ function toolGroupTheme(theme: Theme): ThemeLike {
   return {
     fg: (color, text) => theme.fg(color, text),
     bold: (text) => theme.bold(text),
+    italic: (text) => theme.italic(text),
   };
 }
 
@@ -445,6 +447,47 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
     ],
   },
   {
+    title: "Planning handler with effect for default config",
+    state: "complete",
+    detail: "validated commentary followed by an orphan tool run",
+    groups: [],
+    items: [
+      {
+        type: "commentary",
+        text: "The default `shipping_location` value is now populated on enable.",
+      },
+      {
+        type: "group",
+        group: {
+          kind: "command",
+          rows: [
+            {
+              toolName: "bash",
+              args: { command: "npm test" },
+              result: { content: [], isError: false },
+              isPartial: false,
+              expanded: false,
+            },
+            {
+              toolName: "bash",
+              args: { command: "npm run typecheck" },
+              result: { content: [], isError: false },
+              isPartial: false,
+              expanded: false,
+            },
+            {
+              toolName: "bash",
+              args: { command: "npx eslint ..." },
+              result: { content: [], isError: false },
+              isPartial: false,
+              expanded: false,
+            },
+          ],
+        },
+      },
+    ],
+  },
+  {
     title: "Reviewing atomic handling logic",
     state: "note",
     detail: "thinking-only assistant response · no tool calls",
@@ -683,6 +726,18 @@ class TurnStoryboardSample implements Component {
           ).lines);
           continue;
         }
+      }
+      const commentarySpan = firstScene.assistant.hasText
+        ? buildWorkSpan([firstScene])
+        : undefined;
+      if (commentarySpan !== undefined) {
+        rendered.push(...renderStoryboardWorkSpanLayout(
+          commentarySpan,
+          safeWidth,
+          toolGroupTheme(this.theme),
+          (group, groupWidth, theme) => renderToolGroup(group, groupWidth, theme),
+        ).lines);
+        continue;
       }
       rendered.push(...renderStoryboardScene(
         firstScene,

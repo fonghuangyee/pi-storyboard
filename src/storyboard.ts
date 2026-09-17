@@ -89,6 +89,11 @@ export type StoryboardChapterItem =
       readonly content: StoryboardAssistantContent;
     }
   | {
+      /** A fixed presentation-only node for an orphan tool suffix after commentary. */
+      readonly type: "synthetic-thinking-placeholder";
+      readonly scene: StoryboardScene;
+    }
+  | {
       readonly type: "action";
       readonly scene: StoryboardScene;
       readonly run: StoryboardActionRun;
@@ -604,6 +609,8 @@ function buildWorkSpanInternal(
   let chapterItems: StoryboardChapterItem[] = [];
   let hasMeaningfulItem = false;
   let firstSceneHasThinking = false;
+  let hasVisibleThinkingBefore = false;
+  let previousPartWasCommentary = false;
 
   const flushChapter = (): void => {
     const chapter = makeChapter(chapterItems);
@@ -624,14 +631,34 @@ function buildWorkSpanInternal(
         if (continuation && sceneIndex === 0) firstSceneHasThinking = true;
         chapterItems.push(Object.freeze({ type: "thinking", scene, content: node.content }));
         hasMeaningfulItem = true;
+        hasVisibleThinkingBefore = true;
+        previousPartWasCommentary = false;
         continue;
       }
       if (node.type === "commentary") {
         flushChapter();
         const breakout = Object.freeze({ type: "commentary", scene, content: node.content });
         parts.push(breakout);
+        previousPartWasCommentary = true;
         continue;
       }
+
+      // Long commentary should remain full-width. When eligible tools follow a
+      // validated commentary breakout in the same response, create a fixed
+      // presentation node rather than stretching the earlier rail through the
+      // commentary. This is not a message/content item and never crosses turns.
+      if (
+        !continuation &&
+        previousPartWasCommentary &&
+        hasVisibleThinkingBefore &&
+        chapterItems.length === 0
+      ) {
+        chapterItems.push(Object.freeze({
+          type: "synthetic-thinking-placeholder",
+          scene,
+        }));
+      }
+      previousPartWasCommentary = false;
 
       const previous = chapterItems[chapterItems.length - 1];
       // Preserve action-group boundaries when a continuation crosses from one

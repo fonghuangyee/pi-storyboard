@@ -1,6 +1,6 @@
 # Plan: thinking-led turn storyboard
 
-> Status: **implemented.** This restores the clearer branch hierarchy without reintroducing a persisted or synthetic “master” object. The extension remains a presentation-only TUI projection and does not modify Pi's agent, messages, tools, context, or session pipeline. A narrow empty-thinking continuation is enabled only by the separate read-only active-path projection described in [`STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md`](./STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md).
+> Status: **implemented.** This restores the clearer branch hierarchy without reintroducing a persisted or synthetic “master” object. The extension remains a presentation-only TUI projection and does not modify Pi's agent, messages, tools, context, or session pipeline. A narrow empty-thinking continuation is enabled only by the separate read-only active-path projection described in [`STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md`](./STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md). The implemented commentary-to-tool suffix rule adds a presentation-only `Thinking...` placeholder so long commentary is not forced under an earlier rail.
 
 ## 1. Documented Pi boundary
 
@@ -43,7 +43,7 @@ The current render-only seam does not receive lifecycle run IDs. It therefore ne
 A normal thinking-led turn is:
 
 ```text
- ◉ Inspecting the existing row shape                         2 actions
+ ◉ Inspecting the existing row shape
  │
  ├─ Read 1 file
  │   ● src/renderer.ts
@@ -65,7 +65,7 @@ Grammar:
 - `●` — one tool row with its existing running/success/error state;
 - `│` — the current turn continues.
 
-The header is native assistant content. It is not generated from tool metadata and does not represent a stored master object. Ordinary paragraph-level thinking markers use the muted theme color; the top-level action marker follows the turn state color. Thinking immediately before a validated final answer follows that answer's running/completed state. The optional action count is a render-time aggregate over the validated scene or restricted empty-thinking continuation.
+A real thinking header is native assistant content. It is not generated from tool metadata and does not represent a stored master object. The `Thinking...` node described below is the only fixed presentation placeholder exception. Thinking markers use the assistant lifecycle color: the running color while the assistant is active and the success color once settled, independent of tool outcomes. Tool-root action markers follow the turn state color. Action counts are shown by the individual compact tool groups, not appended to thinking headers.
 
 The hierarchy means only **“these items belong to the same Pi turn”** within a scene. The limited continuation additionally means **“this later settled turn has no visible thinking and is directly adjacent in the validated active path”**; it does not create shared semantic ownership. The renderer never claims that a thinking or commentary block caused, planned, or semantically owns a tool call.
 
@@ -81,6 +81,24 @@ A tool-only response has no visible native thinking to use as a header. In the l
      ● npm run check
 ```
 
+### Commentary followed by an orphan tool run
+
+Commentary remains a complete native Markdown breakout. When the same validated response then emits eligible collapsed tool calls, do not extend the earlier rail through potentially long commentary. Insert a fixed presentation-only placeholder before the tool run:
+
+```text
+ ◉ Planning handler with effect for default config
+ │
+ The default `shipping_location` value is now populated on enable.
+
+ ◉ Thinking...
+ ╰─ Run 3 commands
+     ● npm test
+     ● npm run typecheck
+     ● npx eslint ...
+```
+
+The placeholder does not represent recovered thinking and is not added to Pi's message, session, or model context. This rule is limited to the same validated assistant response and does not relax cross-turn ownership rules.
+
 ### Thinking-only turn
 
 ```text
@@ -92,13 +110,13 @@ A tool-only response has no visible native thinking to use as a header. In the l
 Each separately validated work turn normally gets its own presentation chapter. A later turn with empty/absent thinking may be rendered as a continuation of the preceding visible-thinking chapter when active-path validation proves there is no hard boundary; source-order thinking blocks within each turn may continue under the same rail:
 
 ```text
- ◉ Inspecting documentation                                  1 action
+ ◉ Inspecting documentation
  │
  ╰─ Read 2 files
      ● docs/extensions.md
      ● agent-loop.js
 
- ○ Applying the validated fix                              1 action
+ ○ Applying the validated fix
  ╰─ Edit 1 file
      ● src/index.ts
 ```
@@ -117,7 +135,7 @@ The adapter parses only valid JSON with `v === 1`, a non-empty string `id`, and 
 
 | Text block | Meaning | Presentation |
 |---|---|---|
-| validated `commentary` | user-visible intermediate output | complete native Markdown within the turn rail |
+| validated `commentary` | user-visible intermediate output | complete native Markdown at full width, outside the story rail; the fixed placeholder may follow it before eligible tools |
 | validated `final_answer` | final user-facing response | complete native Pi assistant rendering; thinking in a mixed no-tool response may receive `○` markers |
 | missing/invalid/unknown phase | cannot classify safely | text remains native; thinking-only decoration is allowed only when no tools are involved |
 
@@ -125,7 +143,7 @@ Commentary is not a label. It may contain long paragraphs, headings, lists, link
 
 A single continuous thinking block is visually capped at four paragraphs: the first two and last two remain visible, with a presentation-only count of the hidden middle paragraphs. This cap applies only to thinking; the native thinking component and its full content remain available through Pi's normal toggle.
 
-When a response begins with commentary and has no thinking child, the placeholder appears first in the legacy fallback so the tool remains under a thinking block, followed by the complete native commentary. In active-path mode, an empty-thinking response continues under an eligible preceding visible root; without such an anchor, its first action is the root. While streaming, unknown text remains native until Pi supplies a validated phase.
+When a response begins with commentary and has no thinking child, the existing legacy fallback rules remain unchanged. For the commentary-suffix exception, the placeholder appears after the complete native commentary and immediately before the eligible tool run. In active-path mode, an empty-thinking response continues under an eligible preceding visible root; without such an anchor, its first action is the root. While streaming, unknown text remains native until Pi supplies a validated phase.
 
 A message containing final-answer or unknown text plus tool calls is rendered completely natively. For a no-tool mixed response, the extension may mark only the thinking child starts and leaves the final/unknown text unprefixed and native. It does not infer phase from position, wording, provider, or `stopReason`.
 
@@ -149,9 +167,12 @@ thinking → read → read → commentary → read → edit
 ◉ thinking
 ├─ Read(2)
 │ commentary
+◉ Thinking...
 ├─ Read(1)
 ╰─ Edit(1)
 ```
+
+For a commentary-to-tool suffix, the fixed `Thinking...` node is presentation-only and is inserted only after the full native commentary has been emitted.
 
 For `thinking → tool → thinking → tool`, the second thinking stays in source order inside the same turn. The final tool receives `╰─`.
 
@@ -192,7 +213,7 @@ running > failed > complete > note
 - `complete`: the turn has settled tools;
 - `note`: thinking content without tools.
 
-Ordinary paragraph-level thinking markers (`○`) and rails use `muted`; the top-level thinking-led `◉` follows the turn state color, and thinking immediately before a validated final answer follows that answer's state. Tool-root action markers and individual `●` rows retain their success/running/error colors, so mixed successful and failed actions remain distinguishable.
+Thinking markers (`◉`/`○`) use the assistant lifecycle color: `syntaxKeyword` while active and `success` once settled; they never inherit a tool failure. Rails remain `muted`. Tool-root action markers and individual `●` rows retain their success/running/error colors, so mixed successful and failed actions remain distinguishable.
 
 `├─` and `╰─` are structural rather than status markers. The renderer finds the final meaningful source child; the last action run uses `╰─`. If native commentary/thinking is the final child, its terminal content marker closes the turn instead.
 
@@ -210,7 +231,7 @@ Render the complete affected response through Pi's original path when:
 
 Pure final answers remain ordinary full-width Pi output without storyboard decoration.
 
-A collapsed running `edit` is a compact pending action containing at most its validated path. The native component continues to own execution and preview state, but its full-width preview is not rendered inside the storyboard. Explicit expansion restores Pi's complete native edit UI. If the row shape or ownership cannot be validated, the complete affected response still falls back to Pi unchanged.
+A collapsed running `edit` is a compact pending action containing at most its validated path. The native component continues to own execution and preview state, but its full-width preview is not rendered inside the storyboard. Explicit expansion restores Pi's complete native edit UI. If the row shape or ownership cannot be validated, the complete affected response still falls back to Pi unchanged. The commentary-suffix placeholder is also presentation-only and disappears with the rest of the storyboard when expansion or native fallback applies.
 
 ## 8. Interaction contract
 
@@ -291,7 +312,7 @@ Implemented:
 - native commentary inside thinking-led turn blocks;
 - native fallback for final and unknown text phases;
 - exact source-order reconstruction by `toolCallId`;
-- aggregate turn marker/action count without a persisted master record;
+- aggregate turn marker without a persisted master record;
 - `├─` continuation branches and `╰─` final-child closure;
 - presentation-only `Thinking...` headers for tool-only responses;
 - compact pending edit rows with native previews reserved for explicit expansion;
@@ -299,5 +320,10 @@ Implemented:
 - native mouse-coordinate translation;
 - updated fixed preview and transcript replay fixtures;
 - regression tests for ordering, commentary, closure, width, phase fallback, and mouse offsets.
+
+Implemented commentary-suffix follow-up:
+
+- for a validated same-response `thinking → commentary → eligible tools` suffix, emit a fixed presentation-only `Thinking...` placeholder after the full-width commentary and place the orphan tool groups beneath it;
+- regression coverage covers source order, widths, expansion, and native fallback.
 
 Remaining release work is interactive verification against live streaming, expansion, theme changes, and session lifecycle flows.

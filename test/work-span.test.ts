@@ -17,7 +17,13 @@ const ok = { content: [], isError: false } as const;
 function scene(id: string, callId: string, kind: GroupKind, thinking?: string, commentary?: string) {
   const content = [
     ...(thinking === undefined ? [] : [{ type: "thinking" as const, row: `${id}:thinking`, renderedLines: [` ${thinking}`] }]),
-    ...(commentary === undefined ? [] : [{ type: "commentary" as const, row: `${id}:commentary`, renderedLines: [` ${commentary}`] }]),
+    ...(commentary === undefined
+      ? []
+      : [{
+          type: "commentary" as const,
+          row: `${id}:commentary`,
+          renderedLines: commentary.split("\n").map((line) => ` ${line}`),
+        }]),
   ];
   const assistant: AssistantSceneSnapshot = {
     assistantRow: `${id}:assistant`,
@@ -93,10 +99,14 @@ describe("work-span projection", () => {
     expect(buildEmptyThinkingContinuation([empty, visible])).toBeUndefined();
   });
 
-  it("uses an observable action as the root and breaks out commentary", () => {
+  it("uses a presentation-only thinking placeholder after commentary", () => {
     const second = scene("b", "b", "edit", "fix", "Applying the fix");
     const span = buildWorkSpan([second]);
     expect(span?.parts.map((part) => part.type)).toEqual(["chapter", "commentary", "chapter"]);
+    expect(span?.chapters[1]?.items.map((item) => item.type)).toEqual([
+      "synthetic-thinking-placeholder",
+      "action",
+    ]);
     const layout = renderStoryboardWorkSpanLayout(
       span!,
       80,
@@ -104,10 +114,62 @@ describe("work-span projection", () => {
       (group) => ["", ` ${group.kind} ${group.rows.length}`],
     );
     const output = layout.lines.join("\n");
-    expect(output).toContain("◉");
+    expect(output).toContain("◉ fix");
     expect(output).toContain("Applying the fix");
+    expect(output).toContain("◉ Thinking...");
+    expect(output).toContain("╰─ edit 1");
+    expect(output).not.toContain("◉ edit 1");
+    expect(layout.lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
+  });
+
+  it("uses native thinking emphasis for the synthetic placeholder", () => {
+    const second = scene("b", "b", "edit", "fix", "Applying the fix");
+    const styledTheme: ThemeLike = {
+      fg: (_color, text) => text,
+      bold: (text) => `<bold>${text}</bold>`,
+      italic: (text) => `<italic>${text}</italic>`,
+    };
+    const span = buildWorkSpan([second]);
+    const layout = renderStoryboardWorkSpanLayout(
+      span!,
+      80,
+      styledTheme,
+      (group) => ["", ` ${group.kind} ${group.rows.length}`],
+    );
+    expect(layout.lines.join("\n")).toContain("<bold><italic>Thinking...</italic></bold>");
+  });
+
+  it("keeps multiline commentary full-width and source ordered before the suffix", () => {
+    const second = scene("b", "b", "command", "fix", "first commentary line\nsecond commentary line");
+    const span = buildWorkSpan([second]);
+    const layout = renderStoryboardWorkSpanLayout(
+      span!,
+      40,
+      theme,
+      (group) => ["", ` ${group.kind} ${group.rows.length}`],
+    );
+    const output = layout.lines.join("\n");
+    expect(output.indexOf("first commentary line")).toBeGreaterThan(output.indexOf("fix"));
+    expect(output.indexOf("second commentary line")).toBeGreaterThan(output.indexOf("first commentary line"));
+    expect(output.indexOf("Thinking...")).toBeGreaterThan(output.indexOf("second commentary line"));
+    expect(output.indexOf("╰─ command 1")).toBeGreaterThan(output.indexOf("Thinking..."));
+    expect(output).not.toContain("│ first commentary line");
+    expect(output).not.toContain("│ second commentary line");
+    expect(layout.lines.every((line) => visibleWidth(line) <= 40)).toBe(true);
+  });
+
+  it("does not synthesize a placeholder when commentary has no preceding thinking", () => {
+    const second = scene("b", "b", "edit", undefined, "Applying the fix");
+    const span = buildWorkSpan([second]);
+    expect(span?.chapters[0]?.items.map((item) => item.type)).toEqual(["action"]);
+    const layout = renderStoryboardWorkSpanLayout(
+      span!,
+      80,
+      theme,
+      (group) => ["", ` ${group.kind} ${group.rows.length}`],
+    );
+    const output = layout.lines.join("\n");
     expect(output).toContain("◉ edit 1");
     expect(output).not.toContain("Thinking...");
-    expect(layout.lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
   });
 });

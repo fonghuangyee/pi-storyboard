@@ -661,10 +661,10 @@ function buildWorkSpanInternal(
       previousPartWasCommentary = false;
 
       const previous = chapterItems[chapterItems.length - 1];
-      // Preserve action-group boundaries when a continuation crosses from one
-      // Pi turn to the next. Same-kind tools still merge within their own
-      // validated scene, but a hidden thinking turn must not erase ownership
-      // boundaries merely because its compact label happens to match.
+      // Keep action items scene-owned when a continuation crosses from one Pi
+      // turn to the next. The renderer may coalesce adjacent same-kind items
+      // visually, but a hidden thinking turn must not erase ownership merely
+      // because its compact label happens to match.
       if (
         previous?.type === "action" &&
         previous.scene === scene &&

@@ -815,19 +815,54 @@ function renderWorkChapter(
   if (items.length === 0) return;
   const terminalIndex = items.length - 1;
   const spanHasActions = span.chapters.some((candidate) => candidate.items.some((item) => item.type === "action"));
+  // A multi-scene work span is only produced by the validated empty-thinking
+  // continuation. Its scenes remain separate ownership units, but adjacent
+  // same-kind actions may share one visual compact group.
+  const canMergeContinuationActions = span.scenes.length > 1;
 
-  for (let index = 0; index < items.length; index++) {
+  for (let index = 0; index < items.length;) {
     const item = items[index]!;
+    let endIndex = index;
+    let renderItem = item;
+
+    if (canMergeContinuationActions && item.type === "action") {
+      const rows = [...item.run.rows];
+      let lastScene = item.scene;
+      while (endIndex + 1 < items.length) {
+        const next = items[endIndex + 1];
+        if (
+          next?.type !== "action" ||
+          next.run.kind !== item.run.kind ||
+          next.scene === lastScene
+        ) {
+          break;
+        }
+        rows.push(...next.run.rows);
+        lastScene = next.scene;
+        endIndex++;
+      }
+      if (endIndex !== index) {
+        renderItem = Object.freeze({
+          type: "action",
+          scene: item.scene,
+          run: Object.freeze({
+            kind: item.run.kind,
+            rows: Object.freeze(rows),
+          }),
+        });
+      }
+    }
+
     if (index > 0) lines.push(fit(assistantRailPrefix(layout, theme), width));
-    const terminal = index === terminalIndex;
-    if (item.type === "synthetic-thinking-placeholder") {
-      lines.push(...renderSyntheticThinkingPlaceholder(item.scene, width, layout, theme));
-    } else if (item.type === "thinking") {
+    const terminal = endIndex === terminalIndex;
+    if (renderItem.type === "synthetic-thinking-placeholder") {
+      lines.push(...renderSyntheticThinkingPlaceholder(renderItem.scene, width, layout, theme));
+    } else if (renderItem.type === "thinking") {
       const start = lines.length;
       const block = index === 0
         ? renderAssistantHeader(
-          item.scene,
-          item.content.renderedLines,
+          renderItem.scene,
+          renderItem.content.renderedLines,
           width,
           true,
           layout,
@@ -835,14 +870,14 @@ function renderWorkChapter(
           span.state,
           spanHasActions,
         )
-        : renderAssistantContinuation(item.content, terminal, width, layout, theme, thinkingMarkerColor(item.scene.state, layout.settings));
+        : renderAssistantContinuation(renderItem.content, terminal, width, layout, theme, thinkingMarkerColor(renderItem.scene.state, layout.settings));
       lines.push(...block.lines);
       for (const region of block.regions) {
-        regions.push({ row: item.content.row, ...region, start: start + region.start });
+        regions.push({ row: renderItem.content.row, ...region, start: start + region.start });
       }
     } else if (index === 0) {
       lines.push(...renderDirectActionRun(
-        item.run,
+        renderItem.run,
         span.state,
         width,
         layout,
@@ -851,7 +886,7 @@ function renderWorkChapter(
       ));
     } else {
       lines.push(...renderActionRun(
-        item.run,
+        renderItem.run,
         terminal,
         width,
         layout,
@@ -859,6 +894,8 @@ function renderWorkChapter(
         renderGroup,
       ));
     }
+
+    index = endIndex + 1;
   }
 }
 

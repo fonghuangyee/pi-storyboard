@@ -196,7 +196,7 @@ Run 2 tools
   ● mcp.lookup {"id":42}
 ```
 
-`read + edit + read` produces three action runs. `grep + find + grep` produces one Search group. Same-kind tools separated by thinking, commentary, native content, or a turn boundary do not merge.
+`read + edit + read` produces three action runs. `grep + find + grep` produces one Search group. Within a scene, same-kind tools separated by thinking, commentary, or native content do not merge. A validated empty/absent-thinking continuation may visually coalesce adjacent same-kind action runs across its scene boundaries, while retaining separate scene ownership.
 
 ### 3.3 Tool summary data
 
@@ -397,7 +397,7 @@ The adapter additionally requires:
 - the previous projected turn has no `boundaryAfter` and the next has no `boundaryBefore`;
 - direct component order is adjacent;
 - no expanded, incompatible, native, visible custom, summary, compaction, branch, or unresolved streaming boundary occurs;
-- consecutive empty-thinking scenes may continue, but same-kind action groups remain separated across original scene boundaries.
+- consecutive empty-thinking scenes may continue, and adjacent same-kind action runs may be visually coalesced across those scene boundaries; each original scene and its exact tool ownership remain separate.
 
 This removes an empty visual root, not an ownership boundary:
 
@@ -448,7 +448,7 @@ Within a validated scene/work span:
 - validated commentary flushes the chapter and renders as a full-width native breakout;
 - eligible action after a same-response commentary breakout receives the fixed placeholder only when a visible thinking root already exists;
 - final/unknown/native diagnostic content cannot safely be placed in a cross-turn rail and causes the affected scene to remain native;
-- action runs merge only within their original validated scene.
+- action runs merge within their original validated scene; a validated empty/absent-thinking continuation may additionally coalesce adjacent same-kind runs for presentation without merging scene ownership.
 
 The renderer never turns commentary into a synthetic title and never moves it after tools.
 
@@ -686,7 +686,7 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, and native fallback.
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, and placeholder styling.
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, compaction, boundaries, and text phases.
-- `work-span.test.ts`: empty-thinking continuation, action roots, commentary suffix, source order, and no-placeholder cases.
+- `work-span.test.ts`: empty-thinking continuation, adjacent same-kind cross-scene visual grouping, action roots, commentary suffix, source order, and no-placeholder cases.
 - `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, settings threading, expansion/status restoration, native thinking-marker restoration, mouse translation, fallback, owner counting, and wrapper composition.
 - `transcript-replay.test.ts`: native Pi components in the fixed diagnostic replay.
 - `tui-preview.test.ts`: current preview gallery, settings defaults/custom fixture, and public `pi-tui` component coverage.

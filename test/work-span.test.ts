@@ -67,12 +67,14 @@ describe("work-span projection", () => {
   it("continues adjacent empty-thinking actions under the previous visible root", () => {
     const first = scene("a", "a", "read", "inspect");
     const second = scene("b", "b", "read");
-    const third = scene("c", "c", "command");
-    const span = buildEmptyThinkingContinuation([first, second, third]);
+    const third = scene("c", "c", "read");
+    const fourth = scene("d", "d", "command");
+    const span = buildEmptyThinkingContinuation([first, second, third, fourth]);
 
-    expect(span?.scenes).toHaveLength(3);
+    expect(span?.scenes).toHaveLength(4);
     expect(span?.chapters[0]?.items.map((item) => item.type)).toEqual([
       "thinking",
+      "action",
       "action",
       "action",
       "action",
@@ -85,16 +87,19 @@ describe("work-span projection", () => {
     );
     const output = layout.lines.join("\\n");
     expect(output.match(/◉/gu)).toHaveLength(1);
-    expect(output).toContain("├─ read 1");
+    expect(output).toContain("├─ read 3");
+    expect(output).not.toContain("read 1");
     expect(output).toContain("╰─ command 1");
     expect(output).not.toContain("Thinking...");
   });
 
   it("rejects a continuation across visible text or a missing anchor", () => {
     const visible = scene("a", "a", "read", "inspect");
-    const text = scene("b", "b", "read", undefined, "commentary");
-    const empty = scene("c", "c", "read");
+    const visibleThinking = scene("b", "b", "read", "next");
+    const text = scene("c", "c", "read", undefined, "commentary");
+    const empty = scene("d", "d", "read");
 
+    expect(buildEmptyThinkingContinuation([visible, visibleThinking])).toBeUndefined();
     expect(buildEmptyThinkingContinuation([visible, text])).toBeUndefined();
     expect(buildEmptyThinkingContinuation([empty, visible])).toBeUndefined();
   });

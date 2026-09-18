@@ -310,9 +310,61 @@ describe("Container adapter", () => {
     });
     const output = container(firstOwner, firstTool, secondOwner, secondTool).render(80).join("\\n");
     expect(output.match(/◉/gu)).toHaveLength(1);
-    expect(output).toContain("├─ read 1");
-    expect(output).toContain("╰─ read 1");
+    expect(output).toContain("╰─ read 2");
+    expect(output).not.toContain("read 1");
     expect(output).not.toContain("Thinking...");
+    handle?.uninstall();
+  });
+
+  it("keeps same-kind actions separate across visible-thinking turns", () => {
+    const firstOwner = storyboardAssistant(["first thinking"], ["read-1"]);
+    const firstTool = tool("read", { path: "first.ts" }, result());
+    assignToolCallId(firstTool, "read-1");
+    const secondOwner = storyboardAssistant(["second thinking"], ["read-2"]);
+    const secondTool = tool("read", { path: "second.ts" }, result());
+    assignToolCallId(secondTool, "read-2");
+    const session: SessionProjection = {
+      leafId: "a2",
+      turns: [
+        {
+          entryId: "a1",
+          toolCallIds: ["read-1"],
+          resultEntryIds: ["r1"],
+          hasVisibleThinking: true,
+          hasCommentary: false,
+          hasFinalAnswer: false,
+          hasUnknownText: false,
+          valid: true,
+          boundaryBefore: false,
+          boundaryAfter: false,
+        },
+        {
+          entryId: "a2",
+          toolCallIds: ["read-2"],
+          resultEntryIds: ["r2"],
+          hasVisibleThinking: true,
+          hasCommentary: false,
+          hasFinalAnswer: false,
+          hasUnknownText: false,
+          valid: true,
+          boundaryBefore: false,
+          boundaryAfter: false,
+        },
+      ],
+    };
+    const renderGroup = vi.fn((group: { kind: string; rows: readonly ToolRowSnapshot[] }) => [
+      "",
+      ` ${group.kind} ${group.rows.length}`,
+    ]);
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup,
+    });
+
+    const output = container(firstOwner, firstTool, secondOwner, secondTool).render(80).join("\\n");
+    expect(output.match(/◉/gu)).toHaveLength(2);
+    expect(renderGroup.mock.calls.map(([group]) => group.rows.length)).toEqual([1, 1]);
     handle?.uninstall();
   });
 

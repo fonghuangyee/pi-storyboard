@@ -128,6 +128,18 @@ function expansionStatusRows(status = "collapsed"): [Record<string, unknown>, Re
   ];
 }
 
+function sessionInfoStatusRows(): [Record<string, unknown>, Record<string, unknown>] {
+  return [
+    { lines: 1, render: vi.fn(() => [""]) },
+    {
+      text: "Session Info\n\nFile: /tmp/session.jsonl\nID: test\n\nMessages\nTools: 1 calls, 1 results\n\nTokens",
+      paddingX: 1,
+      paddingY: 0,
+      render: vi.fn(() => [" session info"]),
+    },
+  ];
+}
+
 function container(...children: unknown[]): Container {
   const value = new Container();
   value.children = children as never[];
@@ -1141,6 +1153,39 @@ describe("Container adapter", () => {
     expect(restored).not.toContain("native read");
     expect(restored).toContain("status collapsed");
     expect(statusText.render).toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("bridges Pi's session-info status pair without losing storyboard ownership", () => {
+    const owner = storyboardAssistant(["thinking"], ["session-info-read"]);
+    const row = tool("read", { path: "session-info.ts" }, result());
+    assignToolCallId(row, "session-info-read");
+    const [statusSpacer, statusText] = sessionInfoStatusRows();
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({
+        leafId: "result",
+        turns: [{
+          entryId: "assistant",
+          toolCallIds: ["session-info-read"],
+          resultEntryIds: ["result"],
+          hasVisibleThinking: true,
+          hasCommentary: false,
+          hasFinalAnswer: false,
+          hasUnknownText: false,
+          valid: true,
+          boundaryBefore: false,
+          boundaryAfter: false,
+        }],
+      }),
+      renderGroup: () => ["", " Read 1 file"],
+    });
+
+    const output = container(owner, statusSpacer, statusText, row).render(80).join("\\n");
+    expect(output).toContain("◉");
+    expect(output).toContain("Read 1 file");
+    expect(output).toContain("session info");
+    expect(row.render).not.toHaveBeenCalled();
     handle?.uninstall();
   });
 

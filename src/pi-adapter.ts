@@ -174,12 +174,13 @@ type ExpansionStatusProjection = {
 };
 
 /**
- * Pi's global expansion shortcut appends a Spacer/Text status pair. If that
- * happens while an assistant is still streaming its tool call, the later
- * ToolExecutionComponent is appended after the status pair and no longer sits
- * contiguously beside its owner. This exact, Pi-shaped status row is
- * transcript-neutral; every other native child remains a hard ownership
- * boundary.
+ * Pi can insert transient Spacer/Text status pairs into the transcript while
+ * the next tool row is still being assembled. The expansion pair and the
+ * interactive `/session` info pair are both transcript-neutral: if either
+ * lands between an assistant and its tool, the tool would otherwise be
+ * stranded outside its owner window. These exact, Pi-shaped rows are retained
+ * for output after the atomic storyboard; every other native child remains a
+ * hard ownership boundary.
  */
 function piToolExpansionState(value: unknown): boolean | undefined {
   if (!isRecord(value)) return undefined;
@@ -203,6 +204,29 @@ function isPiStatusSpacer(value: unknown): boolean {
   return hasOwn(fields, "lines") && fields.lines === 1 && typeof fields.render === "function";
 }
 
+function isPiSessionInfoStatus(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const fields = value as Record<string, unknown>;
+  if (
+    typeof fields.text !== "string" ||
+    fields.paddingX !== 1 ||
+    fields.paddingY !== 0 ||
+    typeof fields.render !== "function"
+  ) {
+    return false;
+  }
+
+  // `handleSessionCommand()` creates this public pi-tui Text shape. Validate
+  // stable headings rather than retaining or interpreting its dynamic values.
+  const text = stripTerminalSequences(fields.text).trim();
+  return (
+    text.startsWith("Session Info") &&
+    text.includes("Messages") &&
+    text.includes("Tools:") &&
+    text.includes("Tokens")
+  );
+}
+
 function projectExpansionStatusGaps(
   children: readonly Component[],
 ): ExpansionStatusProjection {
@@ -214,8 +238,13 @@ function projectExpansionStatusGaps(
     const spacer = children[index];
     const status = children[index + 1];
     const statusState = piToolExpansionState(status);
-    if (status !== undefined && isPiStatusSpacer(spacer) && statusState !== undefined) {
-      toolOutputExpanded = statusState;
+    const isSessionInfo = isPiSessionInfoStatus(status);
+    if (
+      status !== undefined &&
+      isPiStatusSpacer(spacer) &&
+      (statusState !== undefined || isSessionInfo)
+    ) {
+      if (statusState !== undefined) toolOutputExpanded = statusState;
       gaps.push(Object.freeze({
         boundary: projected.length,
         rows: Object.freeze([spacer, status]),
@@ -1115,9 +1144,10 @@ function renderStoryboardIfRequested(
   if (directChildren.length === 0) return { requested: false };
   const settings = options.getSettings?.() ?? DEFAULT_PRESENTATION_SETTINGS;
 
-  // Only session-aware mode can safely bridge a Pi expansion status pair: the
-  // session projection still proves the assistant/tool ownership by call ID.
-  // The legacy adjacency grouper remains unchanged and therefore fails open.
+  // Only session-aware mode can safely bridge the exact Pi expansion or
+  // `/session` status pair: the session projection still proves assistant/tool
+  // ownership by call ID. The legacy adjacency grouper remains unchanged and
+  // therefore fails open.
   const expansionStatus = options.getSessionProjection === undefined
     ? undefined
     : projectExpansionStatusGaps(directChildren);
@@ -1270,7 +1300,7 @@ function renderStoryboardIfRequested(
     for (const gap of expansionGaps) {
       const rows = gap.rows.map((component) => {
         const lines = component.render(safeWidth);
-        if (!validRenderedLines(lines)) throw new Error("expansion status returned invalid lines");
+        if (!validRenderedLines(lines)) throw new Error("transient status returned invalid lines");
         return Object.freeze({ component, lines: Object.freeze([...lines]) });
       });
       gapLayouts.set(gap, Object.freeze(rows));
@@ -1291,7 +1321,7 @@ function renderStoryboardIfRequested(
 
     const appendExpansionGap = (gap: ExpansionStatusGap): void => {
       const rows = gapLayouts.get(gap);
-      if (rows === undefined) throw new Error("expansion status layout missing");
+      if (rows === undefined) throw new Error("transient status layout missing");
       for (const row of rows) {
         rendered.push(...row.lines);
         visualMouseChildren?.push({ component: row.component, height: row.lines.length });
@@ -1449,7 +1479,7 @@ function renderStoryboardIfRequested(
     }
     while (nextExpansionGap < expansionGaps.length) {
       const gap = expansionGaps[nextExpansionGap];
-      if (gap === undefined) throw new Error("expansion status gap missing");
+      if (gap === undefined) throw new Error("transient status gap missing");
       appendExpansionGap(gap);
       nextExpansionGap++;
     }

@@ -122,7 +122,7 @@ The extension therefore reuses native assistant children and reconstructs only t
 
 Pi's native thinking renderer skips empty thinking runs. An empty `thinking: ""` block may still carry an opaque provider signature required for replay, so visual omission is permitted but message/content/signature mutation is not.
 
-Pi's global `app.tools.expand` action also appends a native spacer/status-text pair such as `Tool output: expanded` while the toggle is being reported. If that pair lands between a still-streaming assistant component and the tool component created by a later message update, it is not transcript content and can otherwise strand the tool outside its owner window. In session-aware mode the adapter recognizes only this exact Pi-shaped pair, proves the owner with the active-path tool-call IDs, and keeps the pair visible after the atomic scene. All other native children remain ownership boundaries; legacy adjacency mode does not bridge the pair.
+Pi's global `app.tools.expand` action also appends a native spacer/status-text pair such as `Tool output: expanded` while the toggle is being reported. The interactive `/session` command can similarly append a `Text` status pair headed `Session Info` while a response is still streaming. If either pair lands between a still-streaming assistant component and the tool component created by a later message update, it is not transcript content and can otherwise strand the tool outside its owner window. In session-aware mode the adapter recognizes only these exact Pi-shaped pairs, proves the owner with the active-path tool-call IDs, and keeps each pair visible after the atomic scene. All other native children remain ownership boundaries; legacy adjacency mode does not bridge either pair.
 
 ## 3. Marketplace-facing behavior
 
@@ -565,7 +565,7 @@ Symbol.for("pi-storyboard.container.v1")
 
 A patched container render follows this flow:
 
-1. Copy the direct child array for this pass; in session-aware mode, project only the exact Pi expansion status pair out of ownership matching while retaining its native rows for output.
+1. Copy the direct child array for this pass; in session-aware mode, project only the exact Pi expansion or `/session` status pair out of ownership matching while retaining its native rows for output.
 2. Inspect assistant metadata and tool-row snapshots without retaining unsafe payloads.
 3. Build a preliminary storyboard to identify owners.
 4. Render each native non-tool child once at the correct width.
@@ -628,7 +628,7 @@ The complete affected region remains native when any of the following occurs:
 - final-answer, unknown, malformed, or in-progress text that cannot be safely classified;
 - unsupported assistant content or entry type;
 - session mapping ambiguity, active-path uncertainty, compaction/branch uncertainty, or a hard boundary;
-- a visible custom/native child between candidate scenes (except the exact session-proven Pi expansion status pair described in [Section 2.4](#24-native-tui-behavior));
+- a visible custom/native child between candidate scenes (except the exact session-proven Pi expansion or `/session` status pair described in [Section 2.4](#24-native-tui-behavior));
 - incompatible private component fields or mouse layout;
 - invalid native child/group output;
 - an exception in classification, projection, layout, or rendering;

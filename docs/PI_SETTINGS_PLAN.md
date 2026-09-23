@@ -8,7 +8,7 @@ This feature must not change scene ownership, tool eligibility, source order, na
 
 The first settings version should support:
 
-1. independent middle-trimming switches for file/path values and shell commands;
+1. independent `none`/`middle`/`end` trimming modes for file/path values and shell commands;
 2. configurable storyboard symbols, including per-tool-kind dots and thinking/rail/branch symbols;
 3. configurable lifecycle/status colors and one structural color for the vertical rail and `L`-shaped branch markers;
 4. an interactive `/storyboard-settings [global|project]` TUI page that saves the dedicated settings file and reloads Pi.
@@ -18,8 +18,8 @@ The defaults must produce the current output:
 ```json
 {
   "trimming": {
-    "fileNames": true,
-    "commands": true
+    "fileNames": "middle",
+    "commands": "middle"
   },
   "symbols": {
     "toolDot": "●",
@@ -80,9 +80,9 @@ On explicit Save, the store validates the complete settings object and atomicall
 
 ## Trimming semantics
 
-`src/renderer.ts` classifies the main display value before fitting it. `trimming.fileNames` controls path-like values used by Read, List, Write, Edit, Search, and command `cwd` summaries. `trimming.commands` controls only the Bash/PowerShell command value. Timing, error diagnostics, tool names, and result-safety rules remain unchanged.
+`src/renderer.ts` classifies the main display value before fitting it. `trimming.fileNames` controls path-like values used by Read, List, Write, Edit, Search, and command `cwd` summaries. `trimming.commands` controls only the Bash/PowerShell command value. Each field accepts `none`, `middle`, or `end`; timing, error diagnostics, tool names, and result-safety rules remain unchanged.
 
-When enabled, the affected value keeps the current middle-truncation behavior so both a useful prefix and filename/command tail can survive. When disabled, the value still has to satisfy Pi's one-line width contract; it uses ordinary width-bounded end truncation rather than allowing overflow or wrapping. Successful result output, write content, edit text/diffs, image data, and full command output remain excluded regardless of either switch.
+`middle` keeps both a useful prefix and filename/command tail, `end` keeps the beginning and adds an end ellipsis, and `none` preserves the complete relevant collapsed-row text, including bounded error diagnostics, by wrapping it across lines. Every returned line remains within the terminal width. The previous boolean schema remains readable for migration (`true` maps to `middle`, `false` maps to `none`), while saved settings use the string modes. Successful result output, write content, edit text/diffs, image data, and full command output remain excluded regardless of either setting.
 
 ## Symbol and color rendering
 
@@ -103,7 +103,7 @@ The settings snapshot should be passed into the renderers as data; it must not e
 - `src/presentation-settings-store.ts`: owns public `SettingsManager` trust detection, dedicated-file reads, trusted scope handling, and atomic settings-file replacement.
 - `src/presentation-settings-ui.ts`: owns the interactive TUI page and draft editing; it does not decide semantic ownership.
 - `src/pi-adapter.ts`: threads the snapshot through the existing guarded render path without using settings for ownership decisions; all private Pi/TUI inspection and mouse-layout patching remains here.
-- `src/renderer.ts`: applies field-aware file/command trimming and configurable per-kind dots while preserving all safety and width checks.
+- `src/renderer.ts`: applies field-aware `none`/`middle`/`end` file and command trimming modes, wrapping complete `none` row text (including bounded diagnostics) and preserving configurable per-kind dots and width checks.
 - `src/storyboard-renderer.ts`: applies resolved markers/colors and recalculates prefix widths, rails, closure, placeholders, and mouse translations.
 - `src/tui-preview.ts`: includes a fixed defaults/custom-settings gallery without reading or writing user settings.
 - `src/storyboard.ts`, `src/grouping.ts`, and `src/session-projection.ts`: do not use presentation settings for semantic grouping, ownership, or active-path validation.
@@ -113,10 +113,10 @@ The settings snapshot should be passed into the renderers as data; it must not e
 Implemented and covered by focused tests:
 
 - a new settings test suite for defaults, global/project precedence, untrusted project settings, per-field invalid fallback, control-character rejection, color-token validation, and immutable snapshots;
-- renderer cases proving file-name and command trimming are independent, disabled trimming remains width-safe at widths 1–200, and generic/error/detail safety is unchanged;
+- renderer cases proving file-name and command modes are independent, `none` rows—including errors—wrap without shortening, `middle` preserves both ends, `end` truncates at the tail, all modes remain width-safe at widths 1–200, and generic/error/detail safety is unchanged;
 - storyboard-renderer cases for every configurable marker, per-kind dots, custom marker widths, custom status/thinking/structure colors, long thinking summaries, commentary suffixes, closure, and narrow terminals;
 - adapter cases proving settings are threaded without mutating Pi objects, are refreshed across session reload/replacement, keep native expansion/fallback behavior unchanged, and preserve mouse translation;
 - preview coverage includes the configured/default fixture gallery;
 - manual verification remains required for global versus project settings, project trust, `/storyboard-settings [global|project]`, `/reload`, live theme changes, expanded rows, streaming rows, Unicode symbols, and coexistence with another transcript patcher.
 
-Acceptance is met when absent or malformed settings produce the current presentation, valid settings affect only collapsed storyboard output, every line remains within the terminal width, Save changes only the selected dedicated settings file, and all ownership/privacy/native-fallback tests continue to pass. Any future behavior change must update `docs/ARCHITECTURE.md`, this contract, the marketplace-facing README, preview fixtures, and compatibility/test matrices together, then run `npm run check` and `npm run package:check`.
+Acceptance is met when absent or malformed settings produce the current presentation, valid settings affect only collapsed storyboard output, `none` rows—including bounded error diagnostics—wrap without shortening, every line remains within the terminal width, Save changes only the selected dedicated settings file, and all ownership/privacy/native-fallback tests continue to pass. Any future behavior change must update `docs/ARCHITECTURE.md`, this contract, the marketplace-facing README, preview fixtures, and compatibility/test matrices together, then run `npm run check` and `npm run package:check`.

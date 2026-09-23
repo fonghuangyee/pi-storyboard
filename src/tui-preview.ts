@@ -392,7 +392,7 @@ const SETTINGS_PREVIEW_GROUP: GroupSnapshot = {
 
 const SETTINGS_PREVIEW_SETTINGS = normalizePresentationSettings({
   "pi-storyboard": {
-    trimming: { fileNames: false, commands: true },
+    trimming: { fileNames: "end", commands: "none" },
     symbols: {
       toolDot: "•",
       toolDots: { read: "R" },
@@ -459,7 +459,7 @@ class PresentationSettingsSample implements Component {
       ...renderToolGroup(SETTINGS_PREVIEW_GROUP, safeWidth, groupTheme, defaults),
       "",
       this.theme.fg("accent", "Configured example"),
-      this.theme.fg("dim", "End-trimmed paths, per-kind dots, custom symbols, and theme tokens."),
+      this.theme.fg("dim", "End-trimmed paths, untrimmed commands, custom symbols, and theme tokens."),
       ...renderStoryboardScene(
         scene,
         scene.assistant.renderedAssistantLines,

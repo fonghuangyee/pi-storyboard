@@ -66,10 +66,13 @@ const GROUP_KINDS: readonly GroupKind[] = [
   "tool",
 ];
 
+export const TRIM_MODES = ["none", "middle", "end"] as const;
+export type TrimMode = (typeof TRIM_MODES)[number];
+
 export type PresentationSettings = Readonly<{
   trimming: Readonly<{
-    fileNames: boolean;
-    commands: boolean;
+    fileNames: TrimMode;
+    commands: TrimMode;
   }>;
   symbols: Readonly<{
     toolDot: string;
@@ -99,8 +102,8 @@ export type PresentationSettings = Readonly<{
 
 export type PresentationSettingsDraft = {
   trimming: {
-    fileNames: boolean;
-    commands: boolean;
+    fileNames: TrimMode;
+    commands: TrimMode;
   };
   symbols: {
     toolDot: string;
@@ -140,8 +143,8 @@ const DEFAULT_TOOL_DOTS: Record<GroupKind, string> = {
 
 const DEFAULT_MUTABLE_SETTINGS: PresentationSettingsDraft = {
   trimming: {
-    fileNames: true,
-    commands: true,
+    fileNames: "middle",
+    commands: "middle",
   },
   symbols: {
     toolDot: "●",
@@ -244,8 +247,16 @@ function validPlaceholder(value: unknown): value is string {
   return validDisplayString(value, 64);
 }
 
-function readBoolean(source: Record<string, unknown>, key: string, fallback: boolean): boolean {
-  return typeof source[key] === "boolean" ? source[key] : fallback;
+function readTrimMode(source: Record<string, unknown>, key: string, fallback: TrimMode): TrimMode {
+  const value = source[key];
+  if (typeof value === "string" && (TRIM_MODES as readonly string[]).includes(value)) {
+    return value as TrimMode;
+  }
+  // Accept the previous boolean schema while users migrate their dedicated
+  // settings file. The old enabled state was middle trimming; disabled now
+  // means the explicit no-trimming mode.
+  if (typeof value === "boolean") return value ? "middle" : "none";
+  return fallback;
 }
 
 function readSymbol(
@@ -290,8 +301,8 @@ export function normalizePresentationSettings(
   const toolDot = readSymbol(symbols, "toolDot", fallback.symbols.toolDot, 4);
   const normalized: PresentationSettingsDraft = {
     trimming: {
-      fileNames: readBoolean(trimming, "fileNames", fallback.trimming.fileNames),
-      commands: readBoolean(trimming, "commands", fallback.trimming.commands),
+      fileNames: readTrimMode(trimming, "fileNames", fallback.trimming.fileNames),
+      commands: readTrimMode(trimming, "commands", fallback.trimming.commands),
     },
     symbols: {
       toolDot,

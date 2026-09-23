@@ -66,6 +66,35 @@ describe("renderToolGroup", () => {
     expect(formatToolRow({ ...failed, errorSummary: undefined })).toBe("npm run check - Failed");
   });
 
+  it("wraps the complete command and error diagnostic in none mode", () => {
+    const settings = normalizePresentationSettings({
+      "pi-storyboard": { trimming: { fileNames: "none", commands: "none" } },
+    });
+    const lines = renderToolGroup(
+      {
+        kind: "command",
+        rows: [
+          {
+            ...row("bash", {
+              command: "npm run check -- --reporter verbose --coverage",
+            }, { content: [], isError: true }),
+            errorSummary: "Command failed: ERROR_DIAGNOSTIC_KEEP_THE_WHOLE_LINE --exit-code=1 --detail=preserved",
+          },
+        ],
+      },
+      48,
+      plainTheme,
+      settings,
+    ).slice(2);
+    const output = lines.join("\n");
+
+    expect(output).toContain("npm run check");
+    expect(output).toContain("ERROR_DIAGNOSTIC_KEEP_THE_WHOLE_LINE");
+    expect(output).toContain("--detail=preserved");
+    expect(output).not.toContain("...");
+    expect(lines.every((line) => visibleWidth(line) <= 48)).toBe(true);
+  });
+
   it("keeps a recognizable path when a failed edit has a long diagnostic", () => {
     const line = renderToolGroup(
       {
@@ -304,25 +333,52 @@ describe("renderToolGroup", () => {
     }
   });
 
-  it("trims file names and commands independently", () => {
+  it("supports independent none, middle, and end modes for files and commands", () => {
     const path = "/Users/fong/Documents/FHY/pi-storyboard/src/components/very-long-file-name.ts";
     const command = "npm run test -- --reporter verbose --coverage --project storyboard";
     const defaults = normalizePresentationSettings(undefined);
+    const endModes = normalizePresentationSettings({
+      "pi-storyboard": { trimming: { fileNames: "end", commands: "end" } },
+    });
     const noFileTrim = normalizePresentationSettings({
-      "pi-storyboard": { trimming: { fileNames: false, commands: true } },
+      "pi-storyboard": { trimming: { fileNames: "none", commands: "middle" } },
     });
     const noCommandTrim = normalizePresentationSettings({
-      "pi-storyboard": { trimming: { fileNames: true, commands: false } },
+      "pi-storyboard": { trimming: { fileNames: "middle", commands: "none" } },
     });
 
-    const defaultPath = renderToolGroup({ kind: "read", rows: [row("read", { path })] }, 48, plainTheme, defaults)[2]!;
-    const untrimmedPath = renderToolGroup({ kind: "read", rows: [row("read", { path })] }, 48, plainTheme, noFileTrim)[2]!;
-    const defaultCommand = renderToolGroup({ kind: "command", rows: [row("bash", { command })] }, 48, plainTheme, defaults)[2]!;
-    const untrimmedCommand = renderToolGroup({ kind: "command", rows: [row("bash", { command })] }, 48, plainTheme, noCommandTrim)[2]!;
+    const defaultPath = renderToolGroup({ kind: "read", rows: [row("read", { path })] }, 48, plainTheme, defaults).slice(2);
+    const endPath = renderToolGroup({ kind: "read", rows: [row("read", { path })] }, 48, plainTheme, endModes).slice(2);
+    const untrimmedPath = renderToolGroup({ kind: "read", rows: [row("read", { path })] }, 48, plainTheme, noFileTrim).slice(2);
+    const defaultCommand = renderToolGroup({ kind: "command", rows: [row("bash", { command })] }, 48, plainTheme, defaults).slice(2);
+    const endCommand = renderToolGroup({ kind: "command", rows: [row("bash", { command })] }, 48, plainTheme, endModes).slice(2);
+    const untrimmedCommand = renderToolGroup({ kind: "command", rows: [row("bash", { command })] }, 48, plainTheme, noCommandTrim).slice(2);
 
-    expect(defaultPath).toContain("file-name.ts");
-    expect(untrimmedPath).not.toContain("very-long-file-name.ts");
-    expect(defaultCommand).toContain("storyboard");
-    expect(untrimmedCommand).not.toContain("storyboard");
+    expect(defaultPath.join("\n")).toContain("file-name.ts");
+    expect(endPath.join("\n")).not.toContain("very-long-file-name.ts");
+    expect(untrimmedPath.join("").replace(/\s/gu, "")).toContain(path.replace(/\s/gu, ""));
+    expect(untrimmedPath.length).toBeGreaterThan(1);
+    expect(defaultCommand.join("\n")).toContain("storyboard");
+    expect(endCommand.join("\n")).not.toContain("storyboard");
+    const untrimmedCommandText = untrimmedCommand.join("\n");
+    for (const token of ["npm", "run", "test", "--reporter", "verbose", "--coverage", "--project", "storyboard"]) {
+      expect(untrimmedCommandText).toContain(token);
+    }
+    expect(untrimmedCommandText).not.toContain("...");
+    expect(untrimmedCommand.length).toBeGreaterThan(1);
+
+    for (const line of [...untrimmedPath, ...untrimmedCommand]) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(48);
+    }
+    for (let width = 1; width <= 200; width++) {
+      for (const [group, settings] of [
+        [{ kind: "read" as const, rows: [row("read", { path })] }, noFileTrim],
+        [{ kind: "command" as const, rows: [row("bash", { command })] }, noCommandTrim],
+      ] as const) {
+        for (const line of renderToolGroup(group, width, plainTheme, settings)) {
+          expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+        }
+      }
+    }
   });
 });

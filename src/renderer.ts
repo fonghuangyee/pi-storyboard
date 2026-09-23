@@ -3,12 +3,14 @@ import {
   Spacer,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { GroupKind } from "./grouping.ts";
 import {
   DEFAULT_PRESENTATION_SETTINGS,
   type PresentationSettings,
   type StoryboardColorName,
+  type TrimMode,
 } from "./presentation-settings.ts";
 
 /** Pi tool names are open-ended because extensions can add custom tools. */
@@ -512,15 +514,35 @@ function styled(
   return theme.fg(color, text);
 }
 
+function configuredMainMode(
+  trimMode: "fileNames" | "commands" | undefined,
+  settings: PresentationSettings,
+): TrimMode {
+  if (trimMode === undefined) return "middle";
+  return trimMode === "fileNames" ? settings.trimming.fileNames : settings.trimming.commands;
+}
+
+function configuredDetailMode(
+  trimMode: "fileNames" | undefined,
+  settings: PresentationSettings,
+): TrimMode | undefined {
+  return trimMode === "fileNames" ? settings.trimming.fileNames : undefined;
+}
+
 function configuredMainFit(
   value: string,
   width: number,
   trimMode: "fileNames" | "commands" | undefined,
   settings: PresentationSettings,
 ): string {
-  const middle = trimMode === undefined ||
-    (trimMode === "fileNames" ? settings.trimming.fileNames : settings.trimming.commands);
-  return middle ? fitMiddle(value, width) : fit(value, width);
+  switch (configuredMainMode(trimMode, settings)) {
+    case "none":
+      return value;
+    case "end":
+      return fit(value, width);
+    case "middle":
+      return fitMiddle(value, width);
+  }
 }
 
 function configuredDetailFit(
@@ -529,9 +551,85 @@ function configuredDetailFit(
   trimMode: "fileNames" | undefined,
   settings: PresentationSettings,
 ): string {
-  return trimMode === "fileNames" && settings.trimming.fileNames
-    ? fitMiddle(value, width)
-    : fit(value, width);
+  switch (configuredDetailMode(trimMode, settings)) {
+    case "none":
+      return value;
+    case "middle":
+      return fitMiddle(value, width);
+    case "end":
+    case undefined:
+      return fit(value, width);
+  }
+}
+
+function continuationPrefix(prefix: string, width: number): string {
+  const prefixWidth = visibleWidth(prefix);
+  return width > prefixWidth ? " ".repeat(prefixWidth) : "";
+}
+
+function appendWrappedSegment(
+  lines: string[],
+  segment: string,
+  width: number,
+  continuation: string,
+): void {
+  if (segment.length === 0) return;
+  const last = lines.length - 1;
+  const remaining = Math.max(0, width - visibleWidth(lines[last] ?? ""));
+  if (visibleWidth(segment) <= remaining) {
+    lines[last] = `${lines[last] ?? ""}${segment}`;
+    return;
+  }
+
+  const segmentWidth = Math.max(1, width - visibleWidth(continuation));
+  for (const line of wrapTextWithAnsi(segment, segmentWidth)) {
+    const next = `${continuation}${line}`;
+    lines.push(visibleWidth(next) <= width ? next : fit(next, width));
+  }
+}
+
+/** Render a row whose configured value is preserved and wrapped instead of shortened. */
+function renderUntrimmedRow(
+  main: string,
+  parts: ToolRowParts,
+  normalDetail: string,
+  failure: string | undefined,
+  prefix: string,
+  width: number,
+  theme: ThemeLike,
+  settings: PresentationSettings,
+): string[] {
+  const prefixWidth = visibleWidth(prefix);
+  const hasPrefix = width > prefixWidth;
+  const contentWidth = Math.max(1, width - (hasPrefix ? prefixWidth : 0));
+  const continuation = continuationPrefix(prefix, width);
+  const mainMode = configuredMainMode(parts.mainTrim, settings);
+  const mainLines = mainMode === "none"
+    ? wrapTextWithAnsi(main, contentWidth)
+    : [configuredMainFit(main, contentWidth, parts.mainTrim, settings)];
+  const lines = mainLines.map((line, index) => {
+    const rendered = `${index === 0 && hasPrefix ? prefix : continuation}${line}`;
+    return visibleWidth(rendered) <= width ? rendered : fit(rendered, width);
+  });
+
+  if (normalDetail !== "") {
+    // A no-trim mode applies to the whole collapsed row, so timing and other
+    // safe display details wrap too instead of being fitted into leftover room.
+    appendWrappedSegment(lines, normalDetail, width, continuation);
+  }
+
+  if (failure !== undefined) {
+    // `none` means the complete collapsed row remains visible. Error summaries
+    // are already bounded when captured, so wrap them rather than shortening
+    // the diagnostic after a long command/path value.
+    appendWrappedSegment(
+      lines,
+      styled(theme, settings.colors.status.failed, ` - ${failure}`),
+      width,
+      continuation,
+    );
+  }
+  return lines;
 }
 
 /** Render one compact group with only minimal failure text, never full result contents. */
@@ -564,6 +662,22 @@ export function renderToolGroup(
     const failure = errorText(row);
     const marker = settings.symbols.toolDots[group.kind] ?? settings.symbols.toolDot;
     const prefix = styled(theme, color, `  ${marker} `);
+    if (
+      configuredMainMode(parts.mainTrim, settings) === "none" ||
+      configuredDetailMode(parts.detailTrim, settings) === "none"
+    ) {
+      lines.push(...renderUntrimmedRow(
+        main,
+        parts,
+        normalDetail,
+        failure,
+        prefix,
+        safeWidth,
+        theme,
+        settings,
+      ));
+      continue;
+    }
     const layout = failure === undefined
       ? (() => {
           const available = Math.max(0, safeWidth - visibleWidth(prefix));

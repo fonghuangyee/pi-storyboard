@@ -277,11 +277,13 @@ A continuous thinking block longer than four paragraphs shows the first two and 
 
 ### 3.7 Presentation settings
 
-`/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path and command trimming toggles, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
+`/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path and command trimming modes, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
 
 The command buffers edits until Save. Saving atomically replaces the selected dedicated settings file, `~/.pi/agent/pi-storyboard.json` for global scope or `.pi/pi-storyboard.json` for project scope. Pi's unrelated `settings.json` files are never changed. The project scope is unavailable when `ctx.isProjectTrusted()` is false. A successful save runs Pi's reload flow so the new immutable snapshot is active immediately; cancelling writes nothing. Non-TUI modes show a warning and perform no I/O.
 
 Settings are read from `~/.pi/agent/pi-storyboard.json` and, for trusted projects, `.pi/pi-storyboard.json`. Project values override global values; an invalid project field falls back to the corresponding validated global field so one bad project value cannot erase unrelated global customization. Invalid global values fall back independently to built-in defaults. Symbols cannot contain terminal controls or line breaks, and colors are allowlisted Pi theme tokens. The editor accepts short text input for symbols and cycles through the allowlisted color names. Theme ANSI strings are still generated at render time.
+
+Each trimming field accepts one of three values: `none` preserves the complete relevant collapsed-row text, including bounded error diagnostics, by wrapping it across lines; `middle` keeps both the beginning and end with a middle ellipsis; and `end` keeps the beginning with an end ellipsis. The default is `middle`. The previous boolean schema remains readable for migration (`true` maps to `middle`, `false` maps to `none`); settings saved by the editor use the string modes.
 
 The settings page is presentation-only: it does not change ownership, grouping, source order, native expansion, messages, session entries, tools, prompts, or model behavior.
 
@@ -479,7 +481,8 @@ The legacy grouping path allows an empty assistant component between visually ad
 - uses `visibleWidth()`, `sliceByColumn()`, and `truncateToWidth()` from `pi-tui`;
 - strips ANSI CSI/OSC and C0/C1 control sequences from model/tool-controlled display values;
 - flattens newlines, tabs, and other line-breaking controls;
-- uses configured middle truncation for long path/file-name and command values by default, with independent ordinary end-truncation fallbacks when either setting is disabled;
+- uses independent `none`, `middle`, or `end` modes for long path/file-name and command values, defaulting to `middle`;
+- wraps complete affected row text, including bounded error diagnostics, when a mode is `none`, while keeping every returned line within the requested width;
 - reserves width for the literal failure separator before truncating the diagnostic;
 - never returns a line wider than the requested width, including widths from 1 through 200;
 - falls back to compact JSON for malformed recognized arguments without guessing;
@@ -682,7 +685,7 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 ### 9.2 Test responsibilities
 
 - `grouping.test.ts`: semantic adjacency, singleton groups, invisible assistant boundaries, and native segments.
-- `renderer.test.ts`: labels, argument summaries, sanitization, errors, timing, safe edit/write behavior, independent settings-controlled trimming, truncation, and widths 1–200.
+- `renderer.test.ts`: labels, argument summaries, sanitization, errors, timing, safe edit/write behavior, independent `none`/`middle`/`end` modes, wrapping, truncation, and widths 1–200;
 - `presentation-settings.test.ts`: defaults, validation, trust-aware precedence, immutability, dedicated-file paths, and atomic settings writes without Pi settings mutation.
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, and native fallback.
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, and placeholder styling.
@@ -864,7 +867,7 @@ The implementation remains acceptable only when:
 - empty/absent thinking does not create fake model content;
 - expanded, ambiguous, incompatible, or unsafe cases render through Pi natively;
 - compact rows never expose successful output, write content, edit text/diffs, image data, or full errors;
-- all output respects terminal width and strips unsafe display controls;
+- all output respects terminal width and strips unsafe display controls; `none` trimming preserves complete relevant row text, including bounded error diagnostics, by wrapping it across lines;
 - no tools, messages, context, session entries, prompts, model settings, or agent behavior are changed;
 - `/storyboard-settings` writes only the validated dedicated `pi-storyboard.json` file after explicit user Save, never changing Pi settings or session data;
 - no network, subprocess, timer, or background work is introduced;

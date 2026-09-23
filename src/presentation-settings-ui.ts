@@ -183,17 +183,17 @@ export async function openPresentationSettings(
     const items: SettingItem[] = [
       {
         id: "trim-file-names",
-        label: "Trim file/path values",
-        description: "Middle-trim paths and file-name summaries when they exceed the row width.",
-        currentValue: draft.trimming.fileNames ? "on" : "off",
-        values: ["on", "off"],
+        label: "File/path trim mode",
+        description: "Choose none, middle, or end trimming for path-like values.",
+        currentValue: draft.trimming.fileNames,
+        values: ["none", "middle", "end"],
       },
       {
         id: "trim-commands",
-        label: "Trim command values",
-        description: "Middle-trim Bash/PowerShell command summaries independently from paths.",
-        currentValue: draft.trimming.commands ? "on" : "off",
-        values: ["on", "off"],
+        label: "Command trim mode",
+        description: "Choose none, middle, or end trimming for Bash/PowerShell commands.",
+        currentValue: draft.trimming.commands,
+        values: ["none", "middle", "end"],
       },
       ...SYMBOL_FIELDS.map(([field, label, description]) => symbolItem(`symbol-${field}`, label, description, field)),
       ...presentationGroupKinds.map(toolDotItem),
@@ -223,10 +223,10 @@ export async function openPresentationSettings(
     const updateDraftValue = (id: string, value: string): void => {
       switch (id) {
         case "trim-file-names":
-          setAndNormalize((next) => { next.trimming.fileNames = value === "on"; });
+          setAndNormalize((next) => { next.trimming.fileNames = value as PresentationSettingsDraft["trimming"]["fileNames"]; });
           return;
         case "trim-commands":
-          setAndNormalize((next) => { next.trimming.commands = value === "on"; });
+          setAndNormalize((next) => { next.trimming.commands = value as PresentationSettingsDraft["trimming"]["commands"]; });
           return;
         case "reset-defaults":
           draft = clonePresentationSettings(normalizePresentationSettings(undefined));
@@ -264,8 +264,8 @@ export async function openPresentationSettings(
     );
 
     function currentValueFor(id: string): string {
-      if (id === "trim-file-names") return draft.trimming.fileNames ? "on" : "off";
-      if (id === "trim-commands") return draft.trimming.commands ? "on" : "off";
+      if (id === "trim-file-names") return draft.trimming.fileNames;
+      if (id === "trim-commands") return draft.trimming.commands;
       if (id === "reset-defaults") return "reset";
       if (id === "save-reload") return "save";
       if (id.startsWith("symbol-")) return valueForSymbol(draft, id.slice("symbol-".length) as SymbolField);

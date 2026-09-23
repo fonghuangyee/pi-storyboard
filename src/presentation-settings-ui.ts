@@ -120,7 +120,7 @@ class TextSetting implements Component {
   }
 }
 
-/** Interactive settings page for the presentation namespace. */
+/** Interactive settings page for the dedicated presentation settings file. */
 export async function openPresentationSettings(
   ctx: { ui: { custom<T>(factory: (tui: TUI, theme: Theme, keybindings: unknown, done: (result: T) => void) => Component): Promise<T> } },
   initial: PresentationSettings,
@@ -214,7 +214,7 @@ export async function openPresentationSettings(
       {
         id: "save-reload",
         label: "Save and reload",
-        description: `Write the validated namespace to ${displayScope(scope)} and reload the extension.`,
+        description: `Write the dedicated settings file for ${displayScope(scope)} and reload the extension.`,
         currentValue: "save",
         values: ["save"],
       },

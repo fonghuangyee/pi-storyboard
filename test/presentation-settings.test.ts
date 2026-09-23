@@ -106,25 +106,35 @@ describe("presentation settings", () => {
     expect(settings.colors.structure).toBe("accent");
   });
 
-  it("preserves unrelated global/project JSON while writing the namespace", () => {
+  it("reads and writes dedicated files without changing Pi settings", () => {
     const { cwd, agentDir } = tempPaths();
-    const globalPath = join(agentDir, "settings.json");
+    const globalPath = join(agentDir, "pi-storyboard.json");
     const projectDir = join(cwd, ".pi");
-    const projectPath = join(projectDir, "settings.json");
+    const projectPath = join(projectDir, "pi-storyboard.json");
+    const piGlobalPath = join(agentDir, "settings.json");
+    const piProjectPath = join(projectDir, "settings.json");
     mkdirSync(projectDir, { recursive: true });
-    writeFileSync(globalPath, JSON.stringify({ theme: "dark", keep: { value: 1 } }));
-    writeFileSync(projectPath, JSON.stringify({ compaction: { enabled: false } }));
+    writeFileSync(globalPath, JSON.stringify({
+      trimming: { fileNames: false },
+      symbols: { toolDot: "G" },
+    }));
+    writeFileSync(projectPath, JSON.stringify({
+      trimming: { commands: false },
+      symbols: { thinkingRoot: "P" },
+    }));
+    writeFileSync(piGlobalPath, JSON.stringify({ theme: "dark" }));
+    writeFileSync(piProjectPath, JSON.stringify({ compaction: { enabled: false } }));
 
     const manager = SettingsManager.create(cwd, agentDir, { projectTrusted: true });
-    const source = readPresentationSettings(manager);
+    const source = readPresentationSettings(cwd, manager, agentDir);
+    expect(source.global.trimming.fileNames).toBe(false);
+    expect(source.effective.trimming).toEqual({ fileNames: false, commands: false });
+    expect(source.effective.symbols).toMatchObject({ toolDot: "G", thinkingRoot: "P" });
+
     writePresentationSettings(cwd, "project", source.effective, agentDir);
 
-    const saved = JSON.parse(readFileSync(projectPath, "utf8")) as Record<string, unknown>;
-    expect(saved.compaction).toEqual({ enabled: false });
-    expect(saved["pi-storyboard"]).toEqual(source.effective);
-    expect(JSON.parse(readFileSync(globalPath, "utf8"))).toEqual({
-      theme: "dark",
-      keep: { value: 1 },
-    });
+    expect(JSON.parse(readFileSync(projectPath, "utf8"))).toEqual(source.effective);
+    expect(JSON.parse(readFileSync(piGlobalPath, "utf8"))).toEqual({ theme: "dark" });
+    expect(JSON.parse(readFileSync(piProjectPath, "utf8"))).toEqual({ compaction: { enabled: false } });
   });
 });

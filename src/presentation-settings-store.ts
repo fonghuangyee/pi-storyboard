@@ -69,6 +69,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+const PRESENTATION_SETTINGS_FILE = "pi-storyboard.json";
+
 function settingsRecord(value: unknown): Record<string, unknown> {
   return isRecord(value) ? value : {};
 }
@@ -84,16 +86,24 @@ export function createPresentationSettingsManager(ctx: Pick<ExtensionContext, "c
   });
 }
 
-/** Read and validate the namespaced settings exposed by Pi's public manager. */
+/** Read and validate the dedicated global/project storyboard settings files. */
 export function readPresentationSettings(
-  manager: Pick<SettingsManager, "getGlobalSettings" | "getProjectSettings" | "isProjectTrusted">,
+  cwd: string,
+  manager: Pick<SettingsManager, "isProjectTrusted">,
+  agentDir?: string,
 ): PresentationSettingsSource {
-  const globalRaw = settingsRecord(manager.getGlobalSettings());
-  const projectRaw = settingsRecord(manager.getProjectSettings());
+  const globalRaw = settingsRecord(readSettingsFile(settingsFilePath(cwd, "global", agentDir)));
   const trusted = manager.isProjectTrusted();
-  const global = normalizePresentationNamespace(globalRaw[PRESENTATION_SETTINGS_KEY]);
-  const project = normalizePresentationNamespace(projectRaw[PRESENTATION_SETTINGS_KEY]);
-  const effective = resolvePresentationSettings(globalRaw, projectRaw, trusted);
+  const projectRaw = trusted
+    ? settingsRecord(readSettingsFile(settingsFilePath(cwd, "project", agentDir)))
+    : {};
+  const global = normalizePresentationNamespace(globalRaw);
+  const project = normalizePresentationNamespace(projectRaw);
+  const effective = resolvePresentationSettings(
+    { [PRESENTATION_SETTINGS_KEY]: globalRaw },
+    { [PRESENTATION_SETTINGS_KEY]: projectRaw },
+    trusted,
+  );
   return Object.freeze({ global, project, effective });
 }
 
@@ -103,8 +113,8 @@ export function settingsFilePath(
   agentDir?: string,
 ): string {
   return scope === "global"
-    ? join(agentDir ?? defaultAgentDir(), "settings.json")
-    : join(cwd, configDirName(), "settings.json");
+    ? join(agentDir ?? defaultAgentDir(), PRESENTATION_SETTINGS_FILE)
+    : join(cwd, configDirName(), PRESENTATION_SETTINGS_FILE);
 }
 
 function readSettingsFile(path: string): Record<string, unknown> {
@@ -114,10 +124,10 @@ function readSettingsFile(path: string): Record<string, unknown> {
     const content = readFileSync(path, "utf8").replace(/^\uFEFF/u, "");
     parsed = JSON.parse(content) as unknown;
   } catch (error) {
-    throw new Error(`Cannot save Pi settings: ${path} is not valid JSON (${String(error)})`);
+    throw new Error(`Cannot save storyboard settings: ${path} is not valid JSON (${String(error)})`);
   }
   if (!isRecord(parsed)) {
-    throw new Error(`Cannot save Pi settings: ${path} must contain a JSON object`);
+    throw new Error(`Cannot save storyboard settings: ${path} must contain a JSON object`);
   }
   return parsed;
 }
@@ -141,11 +151,7 @@ function writeSettingsFileAtomically(path: string, settings: Record<string, unkn
   }
 }
 
-/**
- * Persist only the pi-storyboard namespace after an explicit user save. The
- * existing Pi settings object is preserved byte-for-byte semantically, while
- * the namespace is replaced with the validated complete snapshot.
- */
+/** Persist the complete dedicated storyboard settings file after an explicit user save. */
 export function writePresentationSettings(
   cwd: string,
   scope: PresentationSettingsScope,
@@ -153,12 +159,9 @@ export function writePresentationSettings(
   agentDir?: string,
 ): void {
   const path = settingsFilePath(cwd, scope, agentDir);
-  const current = readSettingsFile(path);
-  const validated = normalizePresentationSettings({
-    [PRESENTATION_SETTINGS_KEY]: settings,
-  });
-  current[PRESENTATION_SETTINGS_KEY] = serializePresentationSettings(validated);
-  writeSettingsFileAtomically(path, current);
+  readSettingsFile(path);
+  const validated = normalizePresentationSettings(settings);
+  writeSettingsFileAtomically(path, serializePresentationSettings(validated));
 }
 
 /** Build a target-specific editable snapshot with global fallback for projects. */

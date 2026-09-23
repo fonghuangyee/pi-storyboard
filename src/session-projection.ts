@@ -62,6 +62,19 @@ const KNOWN_ENTRY_TYPES = new Set([
   "custom_message",
   "label",
   "session_info",
+  // Context-edit checkpoints are not part of Pi's public SessionEntry union
+  // in every supported release, but newer/extension-authored snapshots may
+  // expose this exact non-visual deletion marker at runtime.
+  "context_edit",
+]);
+
+const CONTEXT_EDIT_KEYS = new Set([
+  "type",
+  "id",
+  "parentId",
+  "timestamp",
+  "targetId",
+  "replacement",
 ]);
 
 function textPhase(value: unknown): "commentary" | "final_answer" | undefined {
@@ -119,6 +132,22 @@ function inspectAssistant(message: RecordLike): Omit<MutableTurn, "entryId" | "r
   };
 }
 
+function isContextEditEntry(entry: RecordLike): boolean {
+  if (entry.type !== "context_edit") return false;
+  // This is the observed non-visual form: a context edit removes the targeted
+  // entry from model context. Do not accept replacement payloads or extra
+  // fields, since they could carry an unclassified visible/message shape.
+  const keys = Object.keys(entry);
+  return (
+    keys.length === CONTEXT_EDIT_KEYS.size &&
+    keys.every((key) => CONTEXT_EDIT_KEYS.has(key)) &&
+    typeof entry.timestamp === "string" &&
+    (entry.parentId === null || isNonEmptyString(entry.parentId)) &&
+    isNonEmptyString(entry.targetId) &&
+    entry.replacement === null
+  );
+}
+
 function isTransparentEntry(entry: RecordLike): boolean {
   if (entry.type === "thinking_level_change" || entry.type === "model_change" || entry.type === "label" || entry.type === "session_info") {
     return true;
@@ -130,6 +159,7 @@ function isTransparentEntry(entry: RecordLike): boolean {
 
 function isHardEntry(entry: RecordLike): boolean {
   if (entry.type === "compaction" || entry.type === "branch_summary") return true;
+  if (entry.type === "context_edit") return true;
   if (entry.type === "message") {
     const message = entry.message as unknown;
     if (!isRecord(message)) return true;
@@ -261,6 +291,16 @@ export function buildSessionProjection(input: SessionProjectionInput): SessionPr
       turns.push(turn);
       active = turn;
       boundaryPending = false;
+      continue;
+    }
+
+    if (entry.type === "context_edit") {
+      // A valid context edit is invisible, but it changes the model-context
+      // boundary. Keep exact scene ownership valid while preventing a visual
+      // continuation from crossing it. Any newer/incompatible shape fails
+      // open instead of being treated as transparent.
+      if (!isContextEditEntry(entry)) return undefined;
+      breakBoundary();
       continue;
     }
 

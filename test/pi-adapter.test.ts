@@ -7,7 +7,7 @@ import {
   PATCH_MARKER,
 } from "../src/pi-adapter.ts";
 import { renderToolGroup, type ThemeLike, type ToolRowSnapshot } from "../src/renderer.ts";
-import type { SessionProjection } from "../src/session-projection.ts";
+import { buildSessionProjection, type SessionProjection } from "../src/session-projection.ts";
 import { normalizePresentationSettings } from "../src/presentation-settings.ts";
 
 const theme: ThemeLike = {
@@ -114,6 +114,20 @@ function assignToolCallId(row: ToolExecutionComponent, toolCallId: string): void
 
 function result(isError = false, content: unknown[] = [{ type: "text", text: "output" }]): unknown {
   return { content, details: { source: "test" }, isError };
+}
+
+function sessionMessage(id: string, message: Record<string, unknown>, parentId: string | null = null): never {
+  return { type: "message", id, parentId, timestamp: "now", message } as never;
+}
+
+function sessionResult(id: string, callId: string, parentId: string): never {
+  return sessionMessage(id, {
+    role: "toolResult",
+    toolCallId: callId,
+    toolName: "read",
+    content: [],
+    isError: false,
+  }, parentId);
 }
 
 function expansionStatusRows(status = "collapsed"): [Record<string, unknown>, Record<string, unknown>] {
@@ -255,6 +269,61 @@ describe("Container adapter", () => {
     const output = container(owner, webSearch).render(80).join("\\n");
     expect(output).toContain("╰─ tool web_search");
     expect(webSearch.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("keeps skill reads storyboarded after an invisible context edit", () => {
+    const owner = storyboardAssistant(["planning the migration"], ["skill-entity", "skill-dto"]);
+    const firstSkill = tool("read", { path: "/project/.agents/skills/as-spring/create-entity/SKILL.md", offset: 1, limit: 500 }, result());
+    const secondSkill = tool("read", { path: "/project/.agents/skills/as-spring/create-dto/SKILL.md", offset: 1, limit: 500 }, result());
+    assignToolCallId(firstSkill, "skill-entity");
+    assignToolCallId(secondSkill, "skill-dto");
+
+    const session = buildSessionProjection({
+      leafId: "skill-result-2",
+      entries: [
+        sessionMessage("root", { role: "user", content: "start" }),
+        sessionMessage("prior-assistant", {
+          role: "assistant",
+          content: [{ type: "toolCall", id: "prior-call", name: "read", arguments: {} }],
+        }, "root"),
+        sessionResult("prior-result", "prior-call", "prior-assistant"),
+        {
+          type: "context_edit",
+          id: "context-edit",
+          parentId: "prior-result",
+          timestamp: "now",
+          targetId: "prior-assistant",
+          replacement: null,
+        } as never,
+        sessionMessage("skill-assistant", {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "planning the migration" },
+            { type: "toolCall", id: "skill-entity", name: "read", arguments: {} },
+            { type: "toolCall", id: "skill-dto", name: "read", arguments: {} },
+          ],
+        }, "context-edit"),
+        sessionResult("skill-result-1", "skill-entity", "skill-assistant"),
+        sessionResult("skill-result-2", "skill-dto", "skill-result-1"),
+      ],
+    });
+    expect(session).toBeDefined();
+
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: (group: { kind: string; rows: readonly ToolRowSnapshot[] }) => [
+        "",
+        ` ${group.kind} ${group.rows.length}`,
+      ],
+    });
+
+    const output = container(owner, firstSkill, secondSkill).render(80).join("\\n");
+    expect(output).toContain("◉planning the migration");
+    expect(output).toContain("╰─ read 2");
+    expect(firstSkill.render).not.toHaveBeenCalled();
+    expect(secondSkill.render).not.toHaveBeenCalled();
     handle?.uninstall();
   });
 

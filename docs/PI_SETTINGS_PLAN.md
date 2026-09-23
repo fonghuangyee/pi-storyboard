@@ -11,68 +11,66 @@ The first settings version should support:
 1. independent middle-trimming switches for file/path values and shell commands;
 2. configurable storyboard symbols, including per-tool-kind dots and thinking/rail/branch symbols;
 3. configurable lifecycle/status colors and one structural color for the vertical rail and `L`-shaped branch markers;
-4. an interactive `/storyboard-settings [global|project]` TUI page that saves the namespace and reloads Pi.
+4. an interactive `/storyboard-settings [global|project]` TUI page that saves the dedicated settings file and reloads Pi.
 
 The defaults must produce the current output:
 
 ```json
 {
-  "pi-storyboard": {
-    "trimming": {
-      "fileNames": true,
-      "commands": true
+  "trimming": {
+    "fileNames": true,
+    "commands": true
+  },
+  "symbols": {
+    "toolDot": "●",
+    "toolDots": {
+      "read": "●",
+      "search": "●",
+      "list": "●",
+      "write": "●",
+      "edit": "●",
+      "command": "●",
+      "tool": "●"
     },
-    "symbols": {
-      "toolDot": "●",
-      "toolDots": {
-        "read": "●",
-        "search": "●",
-        "list": "●",
-        "write": "●",
-        "edit": "●",
-        "command": "●",
-        "tool": "●"
-      },
-      "thinkingRoot": "◉",
-      "thinkingStep": "○",
-      "thinkingPlaceholder": "Thinking...",
-      "hiddenThinking": "↳",
-      "rail": "│",
-      "branch": "├─",
-      "lastBranch": "╰─"
+    "thinkingRoot": "◉",
+    "thinkingStep": "○",
+    "thinkingPlaceholder": "Thinking...",
+    "hiddenThinking": "↳",
+    "rail": "│",
+    "branch": "├─",
+    "lastBranch": "╰─"
+  },
+  "colors": {
+    "status": {
+      "running": "syntaxKeyword",
+      "complete": "success",
+      "failed": "error",
+      "note": "muted"
     },
-    "colors": {
-      "status": {
-        "running": "syntaxKeyword",
-        "complete": "success",
-        "failed": "error",
-        "note": "muted"
-      },
-      "thinking": {
-        "active": "syntaxKeyword",
-        "settled": "success"
-      },
-      "structure": "muted"
-    }
+    "thinking": {
+      "active": "syntaxKeyword",
+      "settled": "success"
+    },
+    "structure": "muted"
   }
 }
 ```
 
-`toolDots` is optional; an absent kind-specific value falls back to `toolDot`. The exact public key may change if Pi adds a first-class extension-settings namespace, but the extension must use one namespaced object rather than adding unrelated top-level keys.
+`toolDots` is optional; an absent kind-specific value falls back to `toolDot`. This object is stored as the complete contents of the dedicated `pi-storyboard.json` file, not inside Pi's general `settings.json`.
 
 ## Pi settings integration and interactive page
 
-Pi settings are global at `~/.pi/agent/settings.json` and project-local at `.pi/settings.json`, with project values overriding global values. The project-local object is ignored when `ctx.isProjectTrusted()` is false.
+Storyboard settings are dedicated files: global at `~/.pi/agent/pi-storyboard.json` and project-local at `.pi/pi-storyboard.json`, with project values overriding global values. The project-local file is ignored when `ctx.isProjectTrusted()` is false. Pi's general `settings.json` files are not modified.
 
-The current Pi API exposes `SettingsManager.create()` publicly but not a settings manager on `ExtensionContext`. `src/presentation-settings-store.ts` creates the public manager at `session_start` and reads only the `pi-storyboard` namespace into an immutable `PresentationSettings` snapshot. It never uses private context/session fields for reads.
+The current Pi API exposes `SettingsManager.create()` publicly but not a settings manager on `ExtensionContext`. `src/presentation-settings-store.ts` creates the public manager at `session_start` for trust detection, then reads the dedicated files into an immutable `PresentationSettings` snapshot. It never uses private context/session fields for reads.
 
 `/storyboard-settings` is available only in interactive TUI mode. With no argument it asks for `global` or trusted `project` scope; either argument selects that scope directly. The page uses `SettingsList` plus text-input submenus for symbols. It exposes both trimming switches, the default and per-kind dots, thinking/placeholder/rail/branch symbols, all status/thinking/structure color tokens, reset-to-defaults, and Save and reload. Escape cancels without writing.
 
-Pi 0.85.1 has no public generic setter for extension namespaces. On explicit Save, the store reads the selected JSON file, replaces only the validated `pi-storyboard` object, writes it atomically, and preserves unrelated keys. This is the sole filesystem write in the extension and never runs in the renderer, lifecycle listeners, or background work. A successful save calls `ctx.reload()`; the new session lifecycle creates the active snapshot. An unavailable, malformed, or incompatible settings API uses the current defaults and does not disable storyboard rendering.
+On explicit Save, the store validates the complete settings object and atomically replaces only the selected dedicated `pi-storyboard.json` file. This is the sole filesystem write in the extension and never runs in the renderer, lifecycle listeners, or background work. A successful save calls `ctx.reload()`; the new session lifecycle creates the active snapshot. An unavailable, malformed, or incompatible settings API uses the current defaults and does not disable storyboard rendering.
 
 ## Configuration validation and fallback
 
-`src/presentation-settings.ts` contains the Pi-independent defaults, types, namespace merge, and validation. It accepts unknown JSON and returns a complete immutable snapshot. Invalid fields fall back independently instead of invalidating the whole configuration.
+`src/presentation-settings.ts` contains the Pi-independent defaults, types, layered merge, and validation. It accepts unknown JSON and returns a complete immutable snapshot. Invalid fields fall back independently instead of invalidating the whole configuration.
 
 - Trimming values must be booleans.
 - Symbols must be single-line, terminal-control-free, bounded display strings. Reject or default values containing ANSI/control sequences, line breaks, or excessive visible width. Do not allow settings to inject raw ANSI styling.
@@ -101,8 +99,8 @@ The settings snapshot should be passed into the renderers as data; it must not e
 ## Implementation map
 
 - `src/index.ts`: registers `/storyboard-settings`, loads the snapshot at the session lifecycle boundary, and provides it to the guarded patch while continuing to invalidate only session projection state on transcript events.
-- `src/presentation-settings.ts`: owns defaults, namespace merging, allowlists, symbol sanitization, and immutable fallback behavior.
-- `src/presentation-settings-store.ts`: owns public `SettingsManager` reads, trusted scope handling, atomic namespace-only writes, and settings-file preservation.
+- `src/presentation-settings.ts`: owns defaults, layered settings merging, allowlists, symbol sanitization, and immutable fallback behavior.
+- `src/presentation-settings-store.ts`: owns public `SettingsManager` trust detection, dedicated-file reads, trusted scope handling, and atomic settings-file replacement.
 - `src/presentation-settings-ui.ts`: owns the interactive TUI page and draft editing; it does not decide semantic ownership.
 - `src/pi-adapter.ts`: threads the snapshot through the existing guarded render path without using settings for ownership decisions; all private Pi/TUI inspection and mouse-layout patching remains here.
 - `src/renderer.ts`: applies field-aware file/command trimming and configurable per-kind dots while preserving all safety and width checks.
@@ -121,4 +119,4 @@ Implemented and covered by focused tests:
 - preview coverage includes the configured/default fixture gallery;
 - manual verification remains required for global versus project settings, project trust, `/storyboard-settings [global|project]`, `/reload`, live theme changes, expanded rows, streaming rows, Unicode symbols, and coexistence with another transcript patcher.
 
-Acceptance is met when absent or malformed settings produce the current presentation, valid settings affect only collapsed storyboard output, every line remains within the terminal width, Save preserves unrelated Pi settings, and all ownership/privacy/native-fallback tests continue to pass. Any future behavior change must update `docs/ARCHITECTURE.md`, this contract, the marketplace-facing README, preview fixtures, and compatibility/test matrices together, then run `npm run check` and `npm run package:check`.
+Acceptance is met when absent or malformed settings produce the current presentation, valid settings affect only collapsed storyboard output, every line remains within the terminal width, Save changes only the selected dedicated settings file, and all ownership/privacy/native-fallback tests continue to pass. Any future behavior change must update `docs/ARCHITECTURE.md`, this contract, the marketplace-facing README, preview fixtures, and compatibility/test matrices together, then run `npm run check` and `npm run package:check`.

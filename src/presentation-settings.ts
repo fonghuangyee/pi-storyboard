@@ -201,9 +201,9 @@ function namespaceFromSettings(value: unknown): Record<string, unknown> {
       ? value[PRESENTATION_SETTINGS_KEY] as Record<string, unknown>
       : {};
   }
-  // Accept a bare namespace as well as the complete Pi settings object. The
-  // store still reads the namespaced object explicitly, but this keeps the
-  // pure normalizer useful for editor drafts and focused callers.
+  // Accept a bare settings object as well as a namespaced wrapper. The
+  // dedicated file store passes the bare object; the wrapper remains useful
+  // for layered resolution and focused callers.
   return value;
 }
 
@@ -342,7 +342,7 @@ export function normalizePresentationSettings(
   return deepFreeze(normalized);
 }
 
-/** Normalize a namespace object without applying a project override. */
+/** Normalize a standalone settings object without applying a project override. */
 export function normalizePresentationNamespace(
   value: unknown,
   fallback: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
@@ -374,7 +374,7 @@ export function clonePresentationSettings(settings: PresentationSettings): Prese
   return structuredClone(settings);
 }
 
-/** Return the complete namespace payload written to Pi settings JSON. */
+/** Return the complete settings object written to a dedicated storyboard file. */
 export function serializePresentationSettings(settings: PresentationSettings): Record<string, unknown> {
   return structuredClone(settings) as unknown as Record<string, unknown>;
 }

@@ -37,7 +37,7 @@ Use `Turn storyboard` for the fixed storyboard reference or `Transcript replay` 
 
 ## Settings
 
-In interactive TUI mode, run `/storyboard-settings` to choose global or trusted project settings, or pass `global` or `project` directly. The page configures independent file/path and command trimming, per-kind dots, thinking/branch symbols, and theme color tokens. Saving reloads the extension automatically.
+In interactive TUI mode, run `/storyboard-settings` to choose global or trusted project settings, or pass `global` or `project` directly. The page configures independent file/path and command trimming, per-kind dots, thinking/branch symbols, and theme color tokens. Saving reloads the extension automatically. Settings are stored in `~/.pi/agent/pi-storyboard.json` or the trusted project’s `.pi/pi-storyboard.json`.
 
 ## Compatibility
 

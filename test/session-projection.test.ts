@@ -102,6 +102,60 @@ describe("buildSessionProjection", () => {
     expect(projection?.turns[0]?.valid).toBe(true);
   });
 
+  it("treats a validated context edit as an invisible hard boundary", () => {
+    const projection = buildSessionProjection({
+      leafId: "r2",
+      entries: [
+        entry("root", { role: "user", content: "start" }),
+        Object.assign(assistant("a1", ["c1"]), { parentId: "root" }),
+        Object.assign(result("r1", "c1"), { parentId: "a1" }),
+        {
+          type: "context_edit",
+          id: "edit",
+          parentId: "r1",
+          timestamp: "now",
+          targetId: "a1",
+          replacement: null,
+        } as never,
+        Object.assign(assistant("a2", ["c2"]), { parentId: "edit" }),
+        Object.assign(result("r2", "c2"), { parentId: "a2" }),
+      ],
+    });
+
+    expect(projection?.turns.map((turn) => ({
+      id: turn.entryId,
+      valid: turn.valid,
+      before: turn.boundaryBefore,
+      after: turn.boundaryAfter,
+    }))).toEqual([
+      { id: "a1", valid: true, before: true, after: true },
+      { id: "a2", valid: true, before: true, after: false },
+    ]);
+  });
+
+  it("rejects an incompatible context edit shape", () => {
+    const projection = buildSessionProjection({
+      leafId: "r1",
+      entries: [
+        entry("root", { role: "user", content: "start" }),
+        Object.assign(assistant("a1", ["c1"]), { parentId: "root" }),
+        Object.assign(result("r0", "c1"), { parentId: "a1" }),
+        {
+          type: "context_edit",
+          id: "edit",
+          parentId: "r0",
+          timestamp: "now",
+          targetId: "a1",
+          replacement: { role: "assistant" },
+        } as never,
+        Object.assign(assistant("a2", ["c2"]), { parentId: "edit" }),
+        Object.assign(result("r1", "c2"), { parentId: "a2" }),
+      ],
+    });
+
+    expect(projection).toBeUndefined();
+  });
+
   it("accepts validated commentary but not unknown text phase", () => {
     const projection = buildSessionProjection({
       leafId: "r2",

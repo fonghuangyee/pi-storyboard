@@ -52,7 +52,7 @@ export default function (pi: ExtensionAPI): void {
 
       try {
         const manager = createPresentationSettingsManager(ctx);
-        const source = readPresentationSettings(manager);
+        const source = readPresentationSettings(ctx.cwd, manager);
         const initial = editablePresentationSettings(source, scope);
         // Load the optional settings UI only for the user-initiated command so
         // an older Pi without SettingsList cannot disable storyboard rendering.
@@ -106,7 +106,7 @@ export default function (pi: ExtensionAPI): void {
     presentationSettings = DEFAULT_PRESENTATION_SETTINGS;
     try {
       const manager = createPresentationSettingsManager(ctx);
-      presentationSettings = readPresentationSettings(manager).effective;
+      presentationSettings = readPresentationSettings(ctx.cwd, manager).effective;
     } catch {
       // Malformed or unavailable settings must never disable native/storyboard rendering.
     }

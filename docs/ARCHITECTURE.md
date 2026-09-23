@@ -16,7 +16,7 @@ The implementation is complete for the current design:
 - a narrow active-path continuation can hide directly adjacent empty/absent-thinking roots without merging ownership;
 - a same-response commentary-to-tool suffix can receive a fixed presentation-only `Thinking...` placeholder;
 - expanded or ambiguous content falls back to Pi's original renderer;
-- `/storyboard-settings [global|project]` opens the interactive presentation-settings page and saves only the validated `pi-storyboard` namespace;
+- `/storyboard-settings [global|project]` opens the interactive presentation-settings page and saves only the validated dedicated `pi-storyboard.json` file;
 - the guarded private adapter, settings validation/storage, and pure projection layers are covered by unit tests.
 
 Remaining release work is interactive verification against live streaming, expansion, theme changes, session replacement, and coexistence with other transcript-patching extensions. Optional long-span UI windowing is deliberately not shipped.
@@ -69,7 +69,7 @@ Relevant entry categories include:
 - `model_change`, `thinking_level_change`, `label`, and `session_info` entries;
 - additional schema entries introduced by later Pi versions.
 
-Known transparent state entries are safe for ownership continuity only when they are not visible transcript rows. User messages, system messages, visible custom messages, summaries, compaction, branch changes, unknown entries, and malformed parent chains are hard boundaries. If the projection cannot classify an entry safely, storyboard continuation fails open.
+Known transparent state entries are safe for ownership continuity only when they are not visible transcript rows. User messages, system messages, visible custom messages, summaries, compaction, branch changes, unknown entries, and malformed parent chains are hard boundaries. A validated runtime `context_edit` deletion marker (`targetId` plus `replacement: null`) is also non-visual, but is treated as a hard boundary so exact scene ownership can continue without visually composing across a model-context edit. Replacement payloads or extra fields remain incompatible and fail open. If the projection cannot classify an entry safely, storyboard continuation fails open.
 
 ### 2.2 Assistant content is ordered; tool results are separate
 
@@ -279,9 +279,9 @@ A continuous thinking block longer than four paragraphs shows the first two and 
 
 `/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path and command trimming toggles, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
 
-The command buffers edits until Save. Saving atomically replaces only the `pi-storyboard` namespace in the selected Pi settings file and preserves unrelated JSON. The project scope is unavailable when `ctx.isProjectTrusted()` is false. A successful save runs Pi's reload flow so the new immutable snapshot is active immediately; cancelling writes nothing. Non-TUI modes show a warning and perform no I/O.
+The command buffers edits until Save. Saving atomically replaces the selected dedicated settings file, `~/.pi/agent/pi-storyboard.json` for global scope or `.pi/pi-storyboard.json` for project scope. Pi's unrelated `settings.json` files are never changed. The project scope is unavailable when `ctx.isProjectTrusted()` is false. A successful save runs Pi's reload flow so the new immutable snapshot is active immediately; cancelling writes nothing. Non-TUI modes show a warning and perform no I/O.
 
-Settings are read from `~/.pi/agent/settings.json` and, for trusted projects, `.pi/settings.json`. Project values override global values; an invalid project field falls back to the corresponding validated global field so one bad project value cannot erase unrelated global customization. Invalid global values fall back independently to built-in defaults. Symbols cannot contain terminal controls or line breaks, and colors are allowlisted Pi theme tokens. The editor accepts short text input for symbols and cycles through the allowlisted color names. Theme ANSI strings are still generated at render time.
+Settings are read from `~/.pi/agent/pi-storyboard.json` and, for trusted projects, `.pi/pi-storyboard.json`. Project values override global values; an invalid project field falls back to the corresponding validated global field so one bad project value cannot erase unrelated global customization. Invalid global values fall back independently to built-in defaults. Symbols cannot contain terminal controls or line breaks, and colors are allowlisted Pi theme tokens. The editor accepts short text input for symbols and cycles through the allowlisted color names. Theme ANSI strings are still generated at render time.
 
 The settings page is presentation-only: it does not change ownership, grouping, source order, native expansion, messages, session entries, tools, prompts, or model behavior.
 
@@ -431,6 +431,7 @@ type ProjectedAssistantTurn = {
 The module:
 
 - validates active-path entry IDs, parent links, known entry shapes, and duplicate IDs;
+- accepts only the exact non-visual `context_edit` deletion shape at runtime and marks it as a hard boundary;
 - inspects assistant content only for block kinds, visible-thinking presence, text phase, and tool-call IDs;
 - joins tool results by exact call ID;
 - marks incomplete or duplicate ownership invalid;
@@ -538,7 +539,7 @@ pi-storyboard/
 - reads a fresh validated presentation-settings snapshot at the same lifecycle boundary;
 - uninstalls it on `session_shutdown` and clears projection callbacks;
 - reads `ctx.sessionManager.buildContextEntries()` only inside a lazy, invalidated cache;
-- performs no session writes, tool registration, context mutation, or model-facing work; the settings command is the only user-initiated filesystem write and is limited to its validated namespace.
+- performs no session writes, tool registration, context mutation, or model-facing work; the settings command is the only user-initiated filesystem write and is limited to its validated dedicated settings file.
 
 Projection invalidation currently responds to message/turn/agent/tool completion, compaction, tree, switch, and fork lifecycle notifications. Invalidating is the only purpose of those listeners.
 
@@ -595,7 +596,7 @@ Branches and summaries are presentation-only mouse sinks. Native expansion and t
 
 ### 6.5 Presentation-settings boundary
 
-`src/presentation-settings.ts` has no Pi imports. It owns the namespaced schema, defaults, layered field validation, immutable snapshots, theme-token allowlist, and symbol safety checks. `src/presentation-settings-store.ts` is the only filesystem boundary: it uses Pi's public `SettingsManager` for reads and trust-aware global/project precedence, then performs an atomic user-requested namespace-only replacement when the settings page saves. It never writes session data or unrelated settings. The public settings factory is feature-detected through a namespace import; if it is unavailable, lifecycle loading keeps built-in defaults and the renderer remains installed. The interactive settings UI is dynamically imported only when its command is invoked.
+`src/presentation-settings.ts` has no Pi imports. It owns the settings schema, defaults, layered field validation, immutable snapshots, theme-token allowlist, and symbol safety checks. `src/presentation-settings-store.ts` is the only filesystem boundary: it uses Pi's public `SettingsManager` for trust detection and reads the dedicated global/project files with the validated precedence rules, then performs an atomic user-requested replacement of only the selected `pi-storyboard.json` file. It never writes Pi's `settings.json`, session data, or unrelated files. The public settings factory is feature-detected through a namespace import; if it is unavailable, lifecycle loading keeps built-in defaults and the renderer remains installed. The interactive settings UI is dynamically imported only when its command is invoked.
 
 `src/presentation-settings-ui.ts` owns only the TUI editor. It edits a mutable draft, exposes text submenus for symbols and cycling lists for color tokens, and returns a validated snapshot to the command. It does not change the active renderer directly; `/reload` creates the new lifecycle snapshot. Renderer and storyboard code receive settings as data and never use them for ownership or fallback decisions.
 
@@ -682,10 +683,10 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 
 - `grouping.test.ts`: semantic adjacency, singleton groups, invisible assistant boundaries, and native segments.
 - `renderer.test.ts`: labels, argument summaries, sanitization, errors, timing, safe edit/write behavior, independent settings-controlled trimming, truncation, and widths 1–200.
-- `presentation-settings.test.ts`: defaults, validation, trust-aware precedence, immutability, namespace preservation, and atomic settings writes.
+- `presentation-settings.test.ts`: defaults, validation, trust-aware precedence, immutability, dedicated-file paths, and atomic settings writes without Pi settings mutation.
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, and native fallback.
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, and placeholder styling.
-- `session-projection.test.ts`: active path, exact result ownership, transparent metadata, compaction, boundaries, and text phases.
+- `session-projection.test.ts`: active path, exact result ownership, transparent metadata, validated context-edit boundaries, compaction, boundaries, and text phases.
 - `work-span.test.ts`: empty-thinking continuation, adjacent same-kind cross-scene visual grouping, action roots, commentary suffix, source order, and no-placeholder cases.
 - `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, settings threading, expansion/status restoration, native thinking-marker restoration, mouse translation, fallback, owner counting, and wrapper composition.
 - `transcript-replay.test.ts`: native Pi components in the fixed diagnostic replay.
@@ -711,7 +712,7 @@ At minimum, preserve tests for:
 - same-response commentary-suffix placeholder;
 - adjacent settled empty/absent-thinking continuation;
 - visible thinking on every turn staying separate;
-- hard boundaries from user/custom/native/compaction/branch content;
+- hard boundaries from user/custom/native/compaction/branch/context-edit content;
 - streaming before and after settlement;
 - thinking toggles, expanded tools, theme changes, narrow widths, and mouse coordinates;
 - session reload, resume, fork, tree navigation, new session, and compaction;
@@ -794,7 +795,7 @@ Observed historical patterns included:
 - active sessions contain many assistant/tool cycles and can contain compaction/custom state;
 - raw session append order is not sufficient for branch-aware rendering.
 
-A historical local scan, frozen at the time of the original analysis, measured 15 session files, 4,952 active-path entries, 1,952 assistant messages, 2,568 tool-result messages, 1,824 tool-bearing assistant responses, 1,822 validated completed tool turns, 126 maximal work spans, 106 multi-turn spans, 175 custom entries, 12 compaction entries, 32 model-change entries, and 75 thinking-level-change entries. It also found 278 tool-bearing turns with empty or absent visible thinking, 274 of which followed visible thinking earlier in their validated span. These counts are diagnostic evidence only; they are not assumptions the renderer may use for ownership.
+A historical local scan, frozen at the time of the original analysis, measured 15 session files, 4,952 active-path entries, 1,952 assistant messages, 2,568 tool-result messages, 1,824 tool-bearing assistant responses, 1,822 validated completed tool turns, 126 maximal work spans, 106 multi-turn spans, 175 custom entries, 12 compaction entries, 32 model-change entries, and 75 thinking-level-change entries. The later diagnostic session also exposed two runtime `context_edit` deletion markers; these are now recognized only in their exact non-visual form and remain hard boundaries. It also found 278 tool-bearing turns with empty or absent visible thinking, 274 of which followed visible thinking earlier in their validated span. These counts are diagnostic evidence only; they are not assumptions the renderer may use for ownership.
 
 Reference material reviewed includes:
 
@@ -865,7 +866,7 @@ The implementation remains acceptable only when:
 - compact rows never expose successful output, write content, edit text/diffs, image data, or full errors;
 - all output respects terminal width and strips unsafe display controls;
 - no tools, messages, context, session entries, prompts, model settings, or agent behavior are changed;
-- `/storyboard-settings` writes only the validated `pi-storyboard` namespace after explicit user Save, preserving unrelated settings and never writing session data;
+- `/storyboard-settings` writes only the validated dedicated `pi-storyboard.json` file after explicit user Save, never changing Pi settings or session data;
 - no network, subprocess, timer, or background work is introduced;
 - patch installation/uninstallation is idempotent and does not overwrite later wrappers;
 - tests and package validation pass;

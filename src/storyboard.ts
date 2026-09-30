@@ -6,11 +6,12 @@ export type StoryboardAssistantContentType =
   | "commentary"
   | "final_answer"
   | "text"
+  | "diagnostic"
   | "native";
 
 /**
- * One native assistant child. Text phases are retained only as a small
- * validated enum: raw provider signatures never leave the Pi adapter.
+ * One assistant child retained for presentation. Text phases are retained only
+ * as a small validated enum; raw provider signatures never leave the adapter.
  */
 export type StoryboardAssistantContent = {
   readonly type: StoryboardAssistantContentType;
@@ -57,9 +58,25 @@ export type StoryboardToolSnapshot = {
   readonly snapshot: ToolRowSnapshot;
 };
 
+export type StoryboardBoundarySnapshot =
+  | {
+      /** The original collapsed boundary component used for interaction mapping. */
+      readonly row: unknown;
+      readonly kind: "compaction";
+      readonly tokensBefore: number;
+    }
+  | {
+      /** A recognized visible status component rendered as a compact row. */
+      readonly row: unknown;
+      readonly kind: "custom-status";
+      readonly customType: "web-search-content-ready";
+      readonly content: string;
+    };
+
 export type StoryboardChild =
   | { readonly type: "assistant"; readonly assistant: AssistantSceneSnapshot }
   | { readonly type: "tool"; readonly tool: StoryboardToolSnapshot }
+  | { readonly type: "boundary"; readonly boundary: StoryboardBoundarySnapshot }
   | { readonly type: "native"; readonly row: unknown };
 
 export type StoryboardActionRun = {
@@ -104,9 +121,9 @@ export type StoryboardChapter = {
   readonly items: readonly StoryboardChapterItem[];
 };
 
-/** Validated commentary is deliberately a full-width native breakout. */
+/** Validated commentary and known Pi diagnostics are full-width breakouts. */
 export type StoryboardBreakout = {
-  readonly type: "commentary";
+  readonly type: "commentary" | "diagnostic";
   readonly scene: StoryboardScene;
   readonly content: StoryboardAssistantContent;
 };
@@ -132,7 +149,12 @@ export type StoryboardNativeSegment = {
   readonly children: readonly StoryboardChild[];
 };
 
-export type StoryboardSegment = StoryboardScene | StoryboardNativeSegment;
+export type StoryboardBoundarySegment = {
+  readonly type: "boundary";
+  readonly boundary: StoryboardBoundarySnapshot;
+};
+
+export type StoryboardSegment = StoryboardScene | StoryboardNativeSegment | StoryboardBoundarySegment;
 
 export type StoryboardProjection = {
   readonly segments: readonly StoryboardSegment[];
@@ -171,6 +193,7 @@ function isAssistantContent(value: unknown): value is StoryboardAssistantContent
       value.type !== "commentary" &&
       value.type !== "final_answer" &&
       value.type !== "text" &&
+      value.type !== "diagnostic" &&
       value.type !== "native")
   ) {
     return false;
@@ -237,6 +260,21 @@ function isToolSnapshot(value: unknown): value is StoryboardToolSnapshot {
 
 function isToolChild(value: StoryboardChild | undefined): value is Extract<StoryboardChild, { type: "tool" }> {
   return value?.type === "tool" && isToolSnapshot(value.tool);
+}
+
+function isBoundarySnapshot(value: unknown): value is StoryboardBoundarySnapshot {
+  if (!isRecord(value)) return false;
+  if (
+    value.kind === "compaction"
+  ) {
+    return typeof value.tokensBefore === "number" &&
+      Number.isSafeInteger(value.tokensBefore) &&
+      value.tokensBefore >= 0;
+  }
+  return value.kind === "custom-status" &&
+    value.customType === "web-search-content-ready" &&
+    typeof value.content === "string" &&
+    value.content.length > 0;
 }
 
 function pushNative(segments: StoryboardSegment[], children: readonly StoryboardChild[]): void {
@@ -406,6 +444,11 @@ export function buildStoryboard(
 
   for (let index = 0; index < children.length;) {
     const child = children[index];
+    if (child?.type === "boundary" && isBoundarySnapshot(child.boundary)) {
+      segments.push(Object.freeze({ type: "boundary", boundary: child.boundary }));
+      index++;
+      continue;
+    }
     if (child?.type !== "assistant" || !isAssistantSnapshot(child.assistant)) {
       pushNative(segments, child === undefined ? [] : [child]);
       index++;
@@ -456,7 +499,19 @@ export function buildStoryboard(
       if (tools === undefined) {
         pushNative(segments, children.slice(index, end));
       } else {
-        segments.push(makeScene(assistant, tools));
+        const scene = makeScene(assistant, tools);
+        if (
+          FAILURE_STOP_REASONS.has(assistant.stopReason) &&
+          scene.orderedChildren === undefined &&
+          (assistant.assistantContent !== undefined || assistant.renderedAssistantLines.length > 0)
+        ) {
+          // A terminal assistant response without an explicitly extracted
+          // source-order presentation may contain an unclassified Pi
+          // diagnostic. Keep the complete affected region native.
+          pushNative(segments, children.slice(index, end));
+        } else {
+          segments.push(scene);
+        }
       }
       index = end;
       continue;
@@ -487,11 +542,15 @@ function withoutLeadingEmptyLines(lines: readonly string[]): readonly string[] {
 type WorkNode =
   | { readonly type: "thinking"; readonly scene: StoryboardScene; readonly content: StoryboardAssistantContent }
   | { readonly type: "commentary"; readonly scene: StoryboardScene; readonly content: StoryboardAssistantContent }
+  | { readonly type: "diagnostic"; readonly scene: StoryboardScene; readonly content: StoryboardAssistantContent }
   | { readonly type: "action"; readonly scene: StoryboardScene; readonly run: StoryboardActionRun };
 
 function sceneWorkNodes(scene: StoryboardScene): readonly WorkNode[] | undefined {
   const nodes: WorkNode[] = [];
   if (scene.orderedChildren === undefined) {
+    // A terminal assistant diagnostic is only storyboard-compatible when the
+    // adapter has explicitly classified and ordered that diagnostic child.
+    if (["length", "aborted", "error"].includes(scene.assistant.stopReason)) return undefined;
     // Without native child composition there is no safe way to place a
     // validated commentary block relative to the tools. Session-aware mode
     // fails open instead of dropping that text from the work span.
@@ -538,12 +597,14 @@ function sceneWorkNodes(scene: StoryboardScene): readonly WorkNode[] | undefined
       }
     } else if (child.content.type === "commentary") {
       nodes.push({ type: "commentary", scene, content: child.content });
+    } else if (child.content.type === "diagnostic") {
+      nodes.push({ type: "diagnostic", scene, content: child.content });
     } else if (
       child.content.type !== "native" ||
       hasVisibleRenderedContent(child.content.renderedLines)
     ) {
-      // Diagnostics and unclassified native content cannot safely be placed in
-      // a cross-turn rail. The adapter will keep this scene native.
+      // Unknown visible native content cannot safely be placed in a
+      // storyboard rail. The adapter keeps that scene native.
       return undefined;
     }
   }
@@ -635,11 +696,11 @@ function buildWorkSpanInternal(
         previousPartWasCommentary = false;
         continue;
       }
-      if (node.type === "commentary") {
+      if (node.type === "commentary" || node.type === "diagnostic") {
         flushChapter();
-        const breakout = Object.freeze({ type: "commentary", scene, content: node.content });
+        const breakout = Object.freeze({ type: node.type, scene, content: node.content });
         parts.push(breakout);
-        previousPartWasCommentary = true;
+        previousPartWasCommentary = node.type === "commentary";
         continue;
       }
 

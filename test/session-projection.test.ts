@@ -5,18 +5,30 @@ function entry(id: string, message: Record<string, unknown>, parentId: string | 
   return { type: "message", id, parentId, timestamp: "2026-01-01T00:00:00.000Z", message } as never;
 }
 
-function assistant(id: string, calls: string[], content: unknown[] = []) {
+function assistant(id: string, calls: string[], content: unknown[] = [], toolName = "read") {
   return entry(id, {
     role: "assistant",
     content: [
       ...content,
-      ...calls.map((callId) => ({ type: "toolCall", id: callId, name: "read", arguments: "{}" })),
+      ...calls.map((callId) => ({ type: "toolCall", id: callId, name: toolName, arguments: "{}" })),
     ],
   });
 }
 
-function result(id: string, callId: string) {
-  return entry(id, { role: "toolResult", toolCallId: callId, toolName: "read", content: [], isError: false });
+function result(id: string, callId: string, toolName = "read") {
+  return entry(id, { role: "toolResult", toolCallId: callId, toolName, content: [], isError: false });
+}
+
+function webSearchStatus(id: string, content: string, parentId: string) {
+  return {
+    type: "custom_message",
+    id,
+    parentId,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    customType: "web-search-content-ready",
+    content,
+    display: true,
+  } as never;
 }
 
 describe("buildSessionProjection", () => {
@@ -154,6 +166,58 @@ describe("buildSessionProjection", () => {
     });
 
     expect(projection).toBeUndefined();
+  });
+
+  it("links a visible web-search status only through its exact active-path tool result", () => {
+    const statusText = "Content fetched for 8/17 URLs [search-status].";
+    const projection = buildSessionProjection({
+      leafId: "status",
+      entries: [
+        entry("root", { role: "user", content: "search" }),
+        Object.assign(assistant("search-assistant", ["search-call"], [], "web_search"), { parentId: "root" }),
+        Object.assign(result("search-result", "search-call", "web_search"), { parentId: "search-assistant" }),
+        Object.assign(webSearchStatus("status", statusText, "search-result"), { parentId: "search-result" }),
+      ],
+    });
+
+    expect(projection?.webSearchStatuses).toEqual([{
+      entryId: "status",
+      assistantEntryId: "search-assistant",
+      resultEntryId: "search-result",
+      toolCallId: "search-call",
+      content: statusText,
+    }]);
+    expect(projection?.turns[0]?.valid).toBe(true);
+    expect(projection?.turns[0]?.boundaryAfter).toBe(true);
+  });
+
+  it("sanitizes and bounds retained web-search status text", () => {
+    const unsafeStatus = `\u001b[31m${"x".repeat(520)}\u001b[0m`;
+    const projection = buildSessionProjection({
+      leafId: "status",
+      entries: [
+        entry("root", { role: "user", content: "search" }),
+        Object.assign(assistant("search-assistant", ["search-call"], [], "web_search"), { parentId: "root" }),
+        Object.assign(result("search-result", "search-call", "web_search"), { parentId: "search-assistant" }),
+        Object.assign(webSearchStatus("status", unsafeStatus, "search-result"), { parentId: "search-result" }),
+      ],
+    });
+
+    expect(projection?.webSearchStatuses?.[0]?.content).toBe("x".repeat(512));
+  });
+
+  it("does not infer a web-search link from a status adjacent to another tool", () => {
+    const projection = buildSessionProjection({
+      leafId: "status",
+      entries: [
+        entry("root", { role: "user", content: "read" }),
+        Object.assign(assistant("assistant", ["call"]), { parentId: "root" }),
+        Object.assign(result("result", "call"), { parentId: "assistant" }),
+        Object.assign(webSearchStatus("status", "Fetched", "result"), { parentId: "result" }),
+      ],
+    });
+
+    expect(projection?.webSearchStatuses).toEqual([]);
   });
 
   it("accepts validated commentary but not unknown text phase", () => {

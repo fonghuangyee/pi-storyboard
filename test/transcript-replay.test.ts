@@ -51,7 +51,7 @@ describe("transcript replay", () => {
     expect(all).toContain("Checking ripgrep em dash handling");
     expect(all).toContain("Locating exact types source files");
     expect(all).toContain("I’ll separate what Pi’s documented schema proves");
-    expect(all).toContain("Clarifying separator usage and error formatting");
+    expect(all).toContain("Clarifying diagnostic layout and error formatting");
     expect(all).toContain("Validation:");
     expect(all).toContain("Inspecting the existing row shape");
     expect(all).toContain("native commentary");

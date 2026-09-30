@@ -73,7 +73,10 @@ export type PresentationSettings = Readonly<{
   trimming: Readonly<{
     fileNames: TrimMode;
     commands: TrimMode;
+    tools: TrimMode;
   }>;
+  /** Show optional timing and tool-argument metadata suffixes. */
+  showToolMetadata: boolean;
   symbols: Readonly<{
     toolDot: string;
     toolDots: Readonly<Record<GroupKind, string>>;
@@ -104,7 +107,9 @@ export type PresentationSettingsDraft = {
   trimming: {
     fileNames: TrimMode;
     commands: TrimMode;
+    tools: TrimMode;
   };
+  showToolMetadata: boolean;
   symbols: {
     toolDot: string;
     toolDots: Record<GroupKind, string>;
@@ -145,7 +150,9 @@ const DEFAULT_MUTABLE_SETTINGS: PresentationSettingsDraft = {
   trimming: {
     fileNames: "middle",
     commands: "middle",
+    tools: "middle",
   },
+  showToolMetadata: true,
   symbols: {
     toolDot: "●",
     toolDots: { ...DEFAULT_TOOL_DOTS },
@@ -259,6 +266,10 @@ function readTrimMode(source: Record<string, unknown>, key: string, fallback: Tr
   return fallback;
 }
 
+function readBoolean(source: Record<string, unknown>, key: string, fallback: boolean): boolean {
+  return typeof source[key] === "boolean" ? source[key] : fallback;
+}
+
 function readSymbol(
   source: Record<string, unknown>,
   key: string,
@@ -303,7 +314,9 @@ export function normalizePresentationSettings(
     trimming: {
       fileNames: readTrimMode(trimming, "fileNames", fallback.trimming.fileNames),
       commands: readTrimMode(trimming, "commands", fallback.trimming.commands),
+      tools: readTrimMode(trimming, "tools", fallback.trimming.tools),
     },
+    showToolMetadata: readBoolean(source, "showToolMetadata", fallback.showToolMetadata),
     symbols: {
       toolDot,
       toolDots: { ...fallback.symbols.toolDots },

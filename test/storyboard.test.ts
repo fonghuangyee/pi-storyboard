@@ -82,6 +82,19 @@ function sceneFrom(result: ReturnType<typeof buildStoryboard>, index = 0) {
 }
 
 describe("buildStoryboard", () => {
+  it("keeps a collapsed compaction summary as a storyboard boundary", () => {
+    const row = { render: () => ["native compaction"] };
+    const result = buildStoryboard([{
+      type: "boundary",
+      boundary: { row, kind: "compaction", tokensBefore: 263325 },
+    }]);
+
+    expect(result.segments).toEqual([{
+      type: "boundary",
+      boundary: { row, kind: "compaction", tokensBefore: 263325 },
+    }]);
+  });
+
   it("keeps mixed action kinds under one assistant scene in source order", () => {
     const result = buildStoryboard([
       assistantChild(assistant(["r1", "r2", "b1", "e1"])),

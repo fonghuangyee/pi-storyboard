@@ -1,4 +1,5 @@
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
+import { sanitizeDisplay } from "./safe-display.ts";
 
 /**
  * The only session data retained by the presentation layer. These records are
@@ -18,9 +19,20 @@ export type ProjectedAssistantTurn = {
   readonly boundaryAfter: boolean;
 };
 
+export type ProjectedWebSearchStatus = {
+  readonly entryId: string;
+  readonly assistantEntryId: string;
+  readonly resultEntryId: string;
+  readonly toolCallId: string;
+  /** Sanitized, bounded text used only to match the visible custom-message component. */
+  readonly content: string;
+};
+
 export type SessionProjection = {
   readonly leafId: string | null;
   readonly turns: readonly ProjectedAssistantTurn[];
+  /** Exact active-path links for recognized custom statuses; never tool ownership. */
+  readonly webSearchStatuses?: readonly ProjectedWebSearchStatus[];
 };
 
 export type SessionProjectionInput = {
@@ -33,6 +45,7 @@ type RecordLike = Record<string, unknown>;
 type MutableTurn = {
   entryId: string;
   toolCallIds: string[];
+  webSearchCallIds: string[];
   resultEntryIds: string[];
   hasVisibleThinking: boolean;
   hasCommentary: boolean;
@@ -94,6 +107,7 @@ function inspectAssistant(message: RecordLike): Omit<MutableTurn, "entryId" | "r
   if (message.role !== "assistant" || !Array.isArray(message.content)) return undefined;
 
   const toolCallIds: string[] = [];
+  const webSearchCallIds: string[] = [];
   let hasVisibleThinking = false;
   let hasCommentary = false;
   let hasFinalAnswer = false;
@@ -118,6 +132,7 @@ function inspectAssistant(message: RecordLike): Omit<MutableTurn, "entryId" | "r
     if (block.type === "toolCall") {
       if (!isNonEmptyString(block.id) || toolCallIds.includes(block.id)) return undefined;
       toolCallIds.push(block.id);
+      if (block.name === "web_search") webSearchCallIds.push(block.id);
       continue;
     }
     return undefined;
@@ -125,6 +140,7 @@ function inspectAssistant(message: RecordLike): Omit<MutableTurn, "entryId" | "r
 
   return {
     toolCallIds,
+    webSearchCallIds,
     hasVisibleThinking,
     hasCommentary,
     hasFinalAnswer,
@@ -236,7 +252,9 @@ export function buildSessionProjection(input: SessionProjectionInput): SessionPr
   const pathEntries = activePathEntries(input.entries, input.leafId);
   if (pathEntries === undefined) return undefined;
 
+  const entriesById = new Map(pathEntries.map((entry) => [entry.id as string, entry]));
   const turns: MutableTurn[] = [];
+  const webSearchStatuses: ProjectedWebSearchStatus[] = [];
   let active: MutableTurn | undefined;
   let boundaryPending = false;
 
@@ -304,6 +322,45 @@ export function buildSessionProjection(input: SessionProjectionInput): SessionPr
       continue;
     }
 
+    if (
+      input.leafId !== null &&
+      entry.type === "custom_message" &&
+      entry.customType === "web-search-content-ready" &&
+      entry.display === true &&
+      typeof entry.content === "string" &&
+      active !== undefined &&
+      !active.invalid &&
+      !active.hasFinalAnswer &&
+      !active.hasUnknownText &&
+      active.resultEntryIds.length === active.expectedResults &&
+      isNonEmptyString(entry.parentId)
+    ) {
+      const parent = entriesById.get(entry.parentId);
+      const resultMessage = parent?.type === "message" && isRecord(parent.message)
+        ? parent.message
+        : undefined;
+      const toolCallId = resultMessage?.role === "toolResult" && isNonEmptyString(resultMessage.toolCallId)
+        ? resultMessage.toolCallId
+        : undefined;
+      const content = Array.from(sanitizeDisplay(entry.content)).slice(0, 512).join("");
+      if (
+        parent !== undefined &&
+        active.resultEntryIds.includes(parent.id as string) &&
+        toolCallId !== undefined &&
+        active.webSearchCallIds.includes(toolCallId) &&
+        active.toolCallIds.includes(toolCallId) &&
+        content.length > 0
+      ) {
+        webSearchStatuses.push(Object.freeze({
+          entryId: entry.id,
+          assistantEntryId: active.entryId,
+          resultEntryId: parent.id as string,
+          toolCallId,
+          content,
+        }));
+      }
+    }
+
     if (isHardEntry(entry)) breakBoundary();
   }
 
@@ -317,6 +374,7 @@ export function buildSessionProjection(input: SessionProjectionInput): SessionPr
   return Object.freeze({
     leafId: input.leafId,
     turns: Object.freeze(projected),
+    webSearchStatuses: Object.freeze(webSearchStatuses),
   });
 }
 

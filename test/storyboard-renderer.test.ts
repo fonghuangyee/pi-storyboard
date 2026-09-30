@@ -383,6 +383,8 @@ describe("turn storyboard renderer", () => {
       " thought 6",
       "",
       " thought 7",
+      "",
+      " thought 8",
     ];
     const base = scene();
     const note = {
@@ -402,11 +404,12 @@ describe("turn storyboard renderer", () => {
     const lines = renderStoryboardScene(note, ["", ...thinkingLines], 100, theme, () => [""]);
     const output = lines.join("\\n");
     expect(output).toContain("thought 1");
-    expect(output).toContain("thought 2");
-    expect(output).toContain("↳ 3 thinking steps behind the scenes");
+    expect(output).toContain("↳ 4 thinking steps behind the scenes");
     expect(lines.find((line) => line.includes("behind the scenes"))).toMatch(/^ │ ↳/u);
     expect(output).toContain("thought 6");
     expect(output).toContain("thought 7");
+    expect(output).toContain("thought 8");
+    expect(output).not.toContain("thought 2");
     expect(output).not.toContain("thought 3");
     expect(output).not.toContain("thought 4");
     expect(output).not.toContain("thought 5");

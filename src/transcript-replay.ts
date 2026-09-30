@@ -85,8 +85,8 @@ const TRANSCRIPT_TAIL: readonly ReplayAssistant[] = Object.freeze([
     // one assistant message; Pi renders their consecutive thinking content as
     // one native assistant component before the following tool row.
     thinking: Object.freeze([
-      "**Planning detailed width rendering tests**\n\n**Analyzing user rendering issue with long lines**\n\n**Confirming separator issue with ANSI widths**",
-      "**Fixing dash separator and rendering check**",
+      "**Planning detailed width rendering tests**\n\n**Analyzing user rendering issue with long lines**\n\n**Confirming separate diagnostic wrapping with ANSI widths**",
+      "**Fixing separate diagnostic rendering and width checks**",
     ]),
     calls: Object.freeze([
       {
@@ -135,7 +135,7 @@ const TRANSCRIPT_TAIL: readonly ReplayAssistant[] = Object.freeze([
         id: "replay-502-bash",
         name: "bash",
         args: Object.freeze({
-          command: "rg -n '—|errorDetail|fitFailureDetails| - ' src/renderer.ts README.md docs/ARCHITECTURE.md test/renderer.test.ts | head -80",
+          command: "rg -n 'appendWrappedLine|mainTrim|trimming' src/renderer.ts README.md docs/ARCHITECTURE.md test/renderer.test.ts | head -80",
           timeout: 10,
         }),
         result: EMPTY_RESULT,
@@ -176,9 +176,9 @@ const TRANSCRIPT_TAIL: readonly ReplayAssistant[] = Object.freeze([
     // Transcript JSONL entry 504. This is a mixed thinking + final-text
     // assistant message, not a thinking-only storyboard turn.
     thinking: Object.freeze([
-      "**Clarifying separator usage and error formatting**\n\n**Planning final package check**",
+      "**Clarifying diagnostic layout and error formatting**\n\n**Planning final package check**",
     ]),
-    text: "Fixed.\n\nFailed rows now always use an ASCII separator:\n\n```text\n● npm run check - Command exited with code 1\n```\n\nThe renderer also reserves space for ` - ` so width truncation will not remove the separator.\n\nValidation: **43 tests passed.**",
+    text: "Fixed.\n\nFailed rows now place the bounded diagnostic on a separate indented line:\n\n```text\n● npm run check\n  Command exited with code 1\n```\n\nOnly path/filename and command values use trim modes; metadata and diagnostics wrap without shortening.\n\nValidation: **126 tests passed.**",
     textPhase: "final_answer",
     calls: Object.freeze([]),
     stopReason: "stop",

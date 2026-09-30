@@ -1,4 +1,4 @@
-import { Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { GroupSnapshot, ThemeLike } from "./renderer.ts";
 import {
   DEFAULT_PRESENTATION_SETTINGS,
@@ -9,6 +9,7 @@ import type {
   SceneState,
   StoryboardActionRun,
   StoryboardAssistantContent,
+  StoryboardBoundarySnapshot,
   StoryboardOrderedChild,
   StoryboardScene,
   StoryboardToolSnapshot,
@@ -22,6 +23,39 @@ export type StoryboardGroupRenderer = (
   theme: ThemeLike,
   settings?: PresentationSettings,
 ) => string[];
+
+function wrapBoundaryText(prefix: string, text: string, width: number): string[] {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const prefixWidth = visibleWidth(prefix) < safeWidth ? visibleWidth(prefix) : 0;
+  const visiblePrefix = prefixWidth === 0 ? "" : prefix;
+  const continuation = " ".repeat(prefixWidth);
+  const contentWidth = Math.max(1, safeWidth - prefixWidth);
+  const wrapped = wrapTextWithAnsi(text, contentWidth);
+  if (wrapped.length === 0) return [visiblePrefix];
+  return wrapped.map((line, index) => fit(`${index === 0 ? visiblePrefix : continuation}${line}`, safeWidth));
+}
+
+export function renderStoryboardBoundary(
+  boundary: StoryboardBoundarySnapshot,
+  width: number,
+  theme: ThemeLike,
+  settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+  placement: "standalone" | "standalone-root" = "standalone",
+): string[] {
+  const safeWidth = Math.max(1, Math.floor(width));
+  const layout = layoutForWidth(safeWidth, settings);
+  if (boundary.kind === "custom-status") {
+    const prefix = placement === "standalone-root"
+      ? `${layout.assistantPrefixWidth === 0 ? "" : padPrefix(
+        `${layout.indent}${theme.fg(settings.colors.thinking.settled, settings.symbols.thinkingRoot)}`,
+        layout.assistantPrefixWidth,
+      )} `
+      : `${branchPrefix(false, layout, theme)} `;
+    return wrapBoundaryText(prefix, theme.fg("text", boundary.content), safeWidth);
+  }
+  const text = theme.fg("text", `Compacted from ${boundary.tokensBefore.toLocaleString()} tokens`);
+  return wrapBoundaryText(`${branchPrefix(false, layout, theme)} `, text, safeWidth);
+}
 
 export type StoryboardMarkerColor = StoryboardColorName;
 export type StoryboardThinkingMarkerColor = StoryboardColorName;
@@ -51,7 +85,8 @@ type StoryLayout = {
 };
 
 const MAX_VISIBLE_THINKING_PARAGRAPHS = 4;
-const EDGE_THINKING_PARAGRAPHS = 2;
+const FIRST_VISIBLE_THINKING_PARAGRAPHS = 1;
+const LAST_VISIBLE_THINKING_PARAGRAPHS = 3;
 
 type ThinkingPart = {
   readonly lines: readonly string[];
@@ -189,8 +224,8 @@ function thinkingParts(
     return [{ lines, sourceStart: 0, sourceHeight: lines.length }];
   }
 
-  const first = ranges.slice(0, EDGE_THINKING_PARAGRAPHS);
-  const last = ranges.slice(-EDGE_THINKING_PARAGRAPHS);
+  const first = ranges.slice(0, FIRST_VISIBLE_THINKING_PARAGRAPHS);
+  const last = ranges.slice(-LAST_VISIBLE_THINKING_PARAGRAPHS);
   const hiddenCount = ranges.length - first.length - last.length;
   const parts: ThinkingPart[] = first.map((range) => ({
     lines: lines.slice(range.start, range.end),
@@ -403,11 +438,16 @@ function renderActionRun(
   layout: StoryLayout,
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
+  detailsByToolCallId: ReadonlyMap<string, string>,
 ): string[] {
   const groupWidth = Math.max(1, width - layout.branchPrefixWidth);
   const group: GroupSnapshot = Object.freeze({
     kind: run.kind,
     rows: Object.freeze(run.rows.map((row) => row.snapshot)),
+    rowDetails: Object.freeze(run.rows.map((row) => {
+      const detail = detailsByToolCallId.get(row.toolCallId);
+      return detail === undefined ? undefined : Object.freeze([detail]);
+    })),
   });
   const groupLines = renderGroup(group, groupWidth, theme, layout.settings);
   if (!Array.isArray(groupLines) || !groupLines.every((line) => typeof line === "string")) {
@@ -437,11 +477,16 @@ function renderDirectActionRun(
   layout: StoryLayout,
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
+  detailsByToolCallId: ReadonlyMap<string, string>,
 ): string[] {
   const groupWidth = Math.max(1, width - layout.assistantPrefixWidth);
   const group: GroupSnapshot = Object.freeze({
     kind: run.kind,
     rows: Object.freeze(run.rows.map((row) => row.snapshot)),
+    rowDetails: Object.freeze(run.rows.map((row) => {
+      const detail = detailsByToolCallId.get(row.toolCallId);
+      return detail === undefined ? undefined : Object.freeze([detail]);
+    })),
   });
   const groupLines = renderGroup(group, groupWidth, theme, layout.settings);
   if (!Array.isArray(groupLines) || !groupLines.every((line) => typeof line === "string")) {
@@ -615,6 +660,7 @@ function orderedSceneLayout(
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
   settings: PresentationSettings,
+  detailsByToolCallId: ReadonlyMap<string, string>,
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
   const layout = layoutForWidth(safeWidth, settings);
@@ -655,6 +701,7 @@ function orderedSceneLayout(
         layout,
         theme,
         renderGroup,
+        detailsByToolCallId,
       ));
     }
     return { lines, assistantRegions };
@@ -663,7 +710,15 @@ function orderedSceneLayout(
     // thinking-led hierarchy. Keep source order and use it as a direct root.
     const first = nodes[0];
     if (first?.type === "group") {
-      lines.push(...renderDirectActionRun(first.run, scene.state, safeWidth, layout, theme, renderGroup));
+      lines.push(...renderDirectActionRun(
+        first.run,
+        scene.state,
+        safeWidth,
+        layout,
+        theme,
+        renderGroup,
+        detailsByToolCallId,
+      ));
       nodeStart = 1;
     }
   }
@@ -689,10 +744,27 @@ function orderedSceneLayout(
         layout,
         theme,
         renderGroup,
+        detailsByToolCallId,
       ));
     } else if (isNativeSpacer(node.content)) {
       const rail = absoluteIndex > terminalIndex ? "" : assistantRailPrefix(layout, theme);
       for (const line of node.content.renderedLines) lines.push(fit(`${rail}${line}`, safeWidth));
+    } else if (node.content.type === "diagnostic") {
+      const start = lines.length;
+      for (const line of node.content.renderedLines) {
+        if (visibleWidth(line) > safeWidth) throw new Error("diagnostic exceeds terminal width");
+        lines.push(line);
+      }
+      if (node.content.renderedLines.length > 0) {
+        assistantRegions.push({
+          row: node.content.row,
+          start,
+          height: node.content.renderedLines.length,
+          prefixWidth: 0,
+          sourceStart: 0,
+          sourceHeight: node.content.renderedLines.length,
+        });
+      }
     } else {
       const start = lines.length;
       const continuation = renderAssistantContinuation(
@@ -729,6 +801,7 @@ function legacySceneLayout(
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
   settings: PresentationSettings,
+  detailsByToolCallId: ReadonlyMap<string, string>,
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
   const layout = layoutForWidth(safeWidth, settings);
@@ -748,6 +821,7 @@ function legacySceneLayout(
         layout,
         theme,
         renderGroup,
+        detailsByToolCallId,
       ));
     }
     return { lines, assistantRegions };
@@ -778,6 +852,7 @@ function legacySceneLayout(
       layout,
       theme,
       renderGroup,
+      detailsByToolCallId,
     ));
     if (!last) lines.push(fit(assistantRailPrefix(layout, theme), safeWidth));
   }
@@ -795,10 +870,11 @@ export function renderStoryboardSceneLayout(
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
   settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+  detailsByToolCallId: ReadonlyMap<string, string> = new Map(),
 ): StoryboardSceneLayout {
   return scene.orderedChildren === undefined
-    ? legacySceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings)
-    : orderedSceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings);
+    ? legacySceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings, detailsByToolCallId)
+    : orderedSceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings, detailsByToolCallId);
 }
 
 function renderWorkChapter(
@@ -810,6 +886,7 @@ function renderWorkChapter(
   renderGroup: StoryboardGroupRenderer,
   lines: string[],
   regions: StoryboardAssistantRenderRegion[],
+  detailsByToolCallId: ReadonlyMap<string, string>,
 ): void {
   const items = chapter.items;
   if (items.length === 0) return;
@@ -883,6 +960,7 @@ function renderWorkChapter(
         layout,
         theme,
         renderGroup,
+        detailsByToolCallId,
       ));
     } else {
       lines.push(...renderActionRun(
@@ -892,6 +970,7 @@ function renderWorkChapter(
         layout,
         theme,
         renderGroup,
+        detailsByToolCallId,
       ));
     }
 
@@ -910,6 +989,7 @@ export function renderStoryboardWorkSpanLayout(
   theme: ThemeLike,
   renderGroup: StoryboardGroupRenderer,
   settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+  detailsByToolCallId: ReadonlyMap<string, string> = new Map(),
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
   const layout = layoutForWidth(safeWidth, settings);
@@ -924,14 +1004,14 @@ export function renderStoryboardWorkSpanLayout(
   for (let partIndex = 0; partIndex < span.parts.length; partIndex++) {
     const part = span.parts[partIndex]!;
     if (part.type === "chapter") {
-      renderWorkChapter(part, span, safeWidth, layout, theme, renderGroup, lines, assistantRegions);
+      renderWorkChapter(part, span, safeWidth, layout, theme, renderGroup, lines, assistantRegions, detailsByToolCallId);
       continue;
     }
 
     if (lines.length > 0) lines.push("");
     const start = lines.length;
     for (const line of part.content.renderedLines) {
-      if (visibleWidth(line) > safeWidth) throw new Error("commentary exceeds terminal width");
+      if (visibleWidth(line) > safeWidth) throw new Error("storyboard breakout exceeds terminal width");
       lines.push(line);
     }
     if (part.content.renderedLines.length > 0) {

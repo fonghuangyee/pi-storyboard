@@ -6,12 +6,14 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 import type { GroupKind } from "./grouping.ts";
+import { sanitizeDisplay } from "./safe-display.ts";
 import {
   DEFAULT_PRESENTATION_SETTINGS,
   type PresentationSettings,
   type StoryboardColorName,
   type TrimMode,
 } from "./presentation-settings.ts";
+export { sanitizeDisplay } from "./safe-display.ts";
 
 /** Pi tool names are open-ended because extensions can add custom tools. */
 export type ToolName = string;
@@ -45,41 +47,14 @@ export type ToolRowSnapshot = {
 export type GroupSnapshot = {
   readonly kind: GroupKind;
   readonly rows: readonly ToolRowSnapshot[];
+  /** Bounded presentation-only detail lines aligned with their real tool rows. */
+  readonly rowDetails?: readonly (readonly string[] | undefined)[];
 };
 
 export interface ThemeLike {
   fg(color: StoryboardColorName, text: string): string;
   bold?(text: string): string;
   italic?(text: string): string;
-}
-
-const ANSI_CSI = /\u001b\[[0-?]*[ -/]*[@-~]/g;
-const ANSI_OSC = /\u001b\][\s\S]*?(?:\u0007|\u001b\\)/g;
-const ANSI_C1_CSI = /\u009b[0-?]*[ -/]*[@-~]/g;
-const ANSI_C1_OSC = /\u009d[\s\S]*?(?:\u0007|\u001b\\|\u009c)/g;
-const ANSI_STRING = /\u001b(?:P|X|\^|_)[\s\S]*?(?:\u0007|\u001b\\)/g;
-const ANSI_C1_STRING = /[\u0090\u0098\u009e\u009f][\s\S]*?(?:\u0007|\u001b\\|\u009c)/g;
-const ANSI_OTHER = /\u001b(?:[()][0-2A-Z]|[0-9A-Z=><]|\\)/g;
-
-/**
- * Make model-controlled text safe to put in a terminal line. Newlines and
- * tabs become spaces so a single summary item remains a single display line.
- */
-export function sanitizeDisplay(value: string): string {
-  return value
-    .replace(ANSI_OSC, "")
-    .replace(ANSI_C1_OSC, "")
-    .replace(ANSI_STRING, "")
-    .replace(ANSI_C1_STRING, "")
-    .replace(ANSI_CSI, "")
-    .replace(ANSI_C1_CSI, "")
-    .replace(ANSI_OTHER, "")
-    .replace(/[\u0000-\u001f\u007f\u0080-\u009f]/gu, (character) =>
-      character === "\n" || character === "\r" || character === "\t" ? " " : "",
-    )
-    .replace(/[\u2028\u2029]/gu, " ")
-    .replace(/\s+/gu, " ")
-    .trim();
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -137,10 +112,11 @@ function numberText(value: number): string {
 }
 
 type ToolRowParts = {
+  /** Untrimmed text before the path-like main value, used by search labels. */
+  readonly mainPrefix?: string;
   readonly main: string;
   readonly detail?: string;
-  readonly mainTrim?: "fileNames" | "commands";
-  readonly detailTrim?: "fileNames";
+  readonly mainTrim?: "fileNames" | "commands" | "tools";
   /** Recognized tool arguments were malformed, so the caller must show the tool name. */
   readonly fallback?: boolean;
 };
@@ -206,13 +182,22 @@ function formatGrepParts(args: unknown): ToolRowParts {
   const safeGlob = glob as string | undefined;
   const limit = optionalValidity[5] as number | undefined;
 
-  let label = `grep ${quote(args.pattern)}`;
-  if (safePath !== undefined) label += ` in ${sanitizeDisplay(safePath)}`;
   const options: string[] = [];
   if (safeGlob !== undefined) options.push(`glob ${quote(safeGlob)}`);
   if (limit !== undefined) options.push(`limit ${numberText(limit)}`);
-  if (options.length > 0) label += ` (${options.join(", ")})`;
-  return { main: label, mainTrim: "fileNames" };
+  const detail = options.length > 0 ? ` (${options.join(", ")})` : undefined;
+  if (safePath === undefined) {
+    return {
+      main: `grep ${quote(args.pattern)}`,
+      detail,
+    };
+  }
+  return {
+    mainPrefix: `grep ${quote(args.pattern)} in `,
+    main: sanitizeDisplay(safePath),
+    mainTrim: "fileNames",
+    detail,
+  };
 }
 
 function formatFindParts(args: unknown): ToolRowParts {
@@ -229,10 +214,16 @@ function formatFindParts(args: unknown): ToolRowParts {
   const limit = validOptionalNumber(args, "limit");
   if (path === null || limit === null) return fallbackParts(args);
 
-  let label = `find ${quote(args.pattern)}`;
-  if (path !== undefined) label += ` in ${sanitizeDisplay(path === "" ? "." : path)}`;
-  if (limit !== undefined) label += ` (limit ${numberText(limit)})`;
-  return { main: label, mainTrim: "fileNames" };
+  const detail = limit === undefined ? undefined : ` (limit ${numberText(limit)})`;
+  if (path === undefined) {
+    return { main: `find ${quote(args.pattern)}`, detail };
+  }
+  return {
+    mainPrefix: `find ${quote(args.pattern)} in `,
+    main: sanitizeDisplay(path === "" ? "." : path),
+    mainTrim: "fileNames",
+    detail,
+  };
 }
 
 function formatLsParts(args: unknown): ToolRowParts {
@@ -327,13 +318,14 @@ function formatShellParts(args: unknown): ToolRowParts {
     main: sanitizeDisplay(args.command),
     mainTrim: "commands",
     detail,
-    detailTrim: cwd === undefined ? undefined : "fileNames",
   };
 }
 
 function formatGenericParts(row: ToolRowSnapshot): ToolRowParts {
   return {
-    main: `${sanitizeDisplay(row.toolName)} ${compactJson(row.args)}`,
+    mainPrefix: `${sanitizeDisplay(row.toolName)} `,
+    main: compactJson(row.args),
+    mainTrim: "tools",
   };
 }
 
@@ -359,7 +351,7 @@ function formatRowParts(row: ToolRowSnapshot): ToolRowParts {
   }
 }
 
-function mainTextForRow(row: ToolRowSnapshot, parts: ToolRowParts): string {
+function mainValueForRow(row: ToolRowSnapshot, parts: ToolRowParts): string {
   if (!parts.fallback) return parts.main;
   if (row.result?.isError === true && (row.toolName === "edit" || row.toolName === "write")) {
     // Malformed edit/write arguments must not leak their content into an error
@@ -367,6 +359,10 @@ function mainTextForRow(row: ToolRowSnapshot, parts: ToolRowParts): string {
     return sanitizeDisplay(row.toolName);
   }
   return `${sanitizeDisplay(row.toolName)} ${parts.main}`;
+}
+
+function mainTextForRow(row: ToolRowSnapshot, parts: ToolRowParts): string {
+  return `${parts.mainPrefix ?? ""}${mainValueForRow(row, parts)}`;
 }
 
 const MAX_ERROR_SUMMARY_CODE_POINTS = 512;
@@ -395,48 +391,7 @@ function formatRow(row: ToolRowSnapshot): string {
   const parts = formatRowParts(row);
   const main = mainTextForRow(row, parts);
   const error = errorText(row);
-  return `${main}${parts.detail ?? ""}${elapsedDetail(row)}${error === undefined ? "" : ` - ${error}`}`;
-}
-
-function fitFailureDetails(
-  theme: ThemeLike,
-  normalDetail: string,
-  failure: string,
-  width: number,
-  prefixWidth: number,
-  mainWidthHint: number,
-  failureColor: StoryboardColorName,
-): { detail: string; mainWidth: number } {
-  const separator = " - ";
-  const separatorWidth = visibleWidth(separator);
-  // Keep enough room for a recognizable path/command, but never reserve more
-  // than the value actually needs. Long diagnostics should be truncated before
-  // the main value collapses to an ambiguous single dot.
-  const desiredMainWidth = Math.min(40, Math.max(0, Math.floor(mainWidthHint)));
-  const availableMainWidth = Math.max(0, width - prefixWidth - separatorWidth);
-  const minimumMainWidth = Math.min(desiredMainWidth, availableMainWidth);
-
-  const fullErrorDetail = styled(theme, failureColor, `${separator}${failure}`);
-  const fullDetail = `${normalDetail}${fullErrorDetail}`;
-  const fullMainWidth = width - prefixWidth - visibleWidth(fullDetail);
-  if (fullMainWidth >= minimumMainWidth) {
-    return { detail: fullDetail, mainWidth: fullMainWidth };
-  }
-
-  // Keep the separator visible whenever the terminal is wide enough for the
-  // prefix, one main character, and the separator. Error text is the part that
-  // gets truncated, never the delimiter itself.
-  const suffixWidth = Math.max(0, width - prefixWidth - minimumMainWidth);
-  const normalBudget = Math.max(0, suffixWidth - separatorWidth - 1);
-  const fittedNormalDetail = fit(normalDetail, normalBudget);
-  const errorBudget = Math.max(0, suffixWidth - visibleWidth(fittedNormalDetail) - separatorWidth);
-  const fittedFailure = truncateToWidth(failure, errorBudget, "");
-  const errorDetail = styled(theme, failureColor, `${separator}${fittedFailure}`);
-  const detail = `${fittedNormalDetail}${errorDetail}`;
-  return {
-    detail,
-    mainWidth: Math.max(0, width - prefixWidth - visibleWidth(detail)),
-  };
+  return `${main}${parts.detail ?? ""}${elapsedDetail(row)}${error === undefined ? "" : `\n${error}`}`;
 }
 
 function heading(kind: GroupKind, count: number): string {
@@ -515,50 +470,27 @@ function styled(
 }
 
 function configuredMainMode(
-  trimMode: "fileNames" | "commands" | undefined,
-  settings: PresentationSettings,
-): TrimMode {
-  if (trimMode === undefined) return "middle";
-  return trimMode === "fileNames" ? settings.trimming.fileNames : settings.trimming.commands;
-}
-
-function configuredDetailMode(
-  trimMode: "fileNames" | undefined,
+  trimMode: "fileNames" | "commands" | "tools" | undefined,
   settings: PresentationSettings,
 ): TrimMode | undefined {
-  return trimMode === "fileNames" ? settings.trimming.fileNames : undefined;
+  if (trimMode === undefined) return undefined;
+  if (trimMode === "fileNames") return settings.trimming.fileNames;
+  if (trimMode === "commands") return settings.trimming.commands;
+  return settings.trimming.tools;
 }
 
 function configuredMainFit(
   value: string,
   width: number,
-  trimMode: "fileNames" | "commands" | undefined,
-  settings: PresentationSettings,
+  mode: TrimMode,
 ): string {
-  switch (configuredMainMode(trimMode, settings)) {
+  switch (mode) {
     case "none":
       return value;
     case "end":
       return fit(value, width);
     case "middle":
       return fitMiddle(value, width);
-  }
-}
-
-function configuredDetailFit(
-  value: string,
-  width: number,
-  trimMode: "fileNames" | undefined,
-  settings: PresentationSettings,
-): string {
-  switch (configuredDetailMode(trimMode, settings)) {
-    case "none":
-      return value;
-    case "middle":
-      return fitMiddle(value, width);
-    case "end":
-    case undefined:
-      return fit(value, width);
   }
 }
 
@@ -572,6 +504,7 @@ function appendWrappedSegment(
   segment: string,
   width: number,
   continuation: string,
+  fillCurrent = false,
 ): void {
   if (segment.length === 0) return;
   const last = lines.length - 1;
@@ -581,6 +514,19 @@ function appendWrappedSegment(
     return;
   }
 
+  if (fillCurrent && remaining > 0) {
+    const firstLines = wrapTextWithAnsi(segment, remaining);
+    const first = firstLines.shift();
+    if (first !== undefined) {
+      lines[last] = `${lines[last] ?? ""}${first}`;
+      for (const line of firstLines) {
+        const next = `${continuation}${line}`;
+        lines.push(visibleWidth(next) <= width ? next : fit(next, width));
+      }
+      return;
+    }
+  }
+
   const segmentWidth = Math.max(1, width - visibleWidth(continuation));
   for (const line of wrapTextWithAnsi(segment, segmentWidth)) {
     const next = `${continuation}${line}`;
@@ -588,11 +534,52 @@ function appendWrappedSegment(
   }
 }
 
-/** Render a row whose configured value is preserved and wrapped instead of shortened. */
-function renderUntrimmedRow(
-  main: string,
+/** Append a trim-target value while leaving all other row text untrimmed. */
+function appendTrimmedSegment(
+  lines: string[],
+  segment: string,
+  width: number,
+  continuation: string,
+  mode: TrimMode,
+): void {
+  if (segment.length === 0) return;
+  const last = lines.length - 1;
+  const remaining = Math.max(0, width - visibleWidth(lines[last] ?? ""));
+  if (remaining > 0) {
+    const fitted = configuredMainFit(segment, remaining, mode);
+    if (fitted.length > 0) {
+      lines[last] = `${lines[last] ?? ""}${fitted}`;
+      return;
+    }
+  }
+
+  const lineWidth = Math.max(1, width - visibleWidth(continuation));
+  const fitted = configuredMainFit(segment, lineWidth, mode);
+  const next = `${continuation}${fitted}`;
+  lines.push(visibleWidth(next) <= width ? next : fit(next, width));
+}
+
+/** Always start a new wrapped line, used for a failed-row diagnostic. */
+function appendWrappedLine(
+  lines: string[],
+  segment: string,
+  width: number,
+  continuation: string,
+): void {
+  if (segment.length === 0) return;
+  const segmentWidth = Math.max(1, width - visibleWidth(continuation));
+  for (const line of wrapTextWithAnsi(segment, segmentWidth)) {
+    const next = `${continuation}${line}`;
+    lines.push(visibleWidth(next) <= width ? next : fit(next, width));
+  }
+}
+
+/** Render one compact row, preserving complete non-target details by wrapping. */
+function renderToolRow(
+  row: ToolRowSnapshot,
   parts: ToolRowParts,
-  normalDetail: string,
+  normalDetailText: string,
+  rowDetails: readonly string[],
   failure: string | undefined,
   prefix: string,
   width: number,
@@ -600,31 +587,42 @@ function renderUntrimmedRow(
   settings: PresentationSettings,
 ): string[] {
   const prefixWidth = visibleWidth(prefix);
-  const hasPrefix = width > prefixWidth;
-  const contentWidth = Math.max(1, width - (hasPrefix ? prefixWidth : 0));
   const continuation = continuationPrefix(prefix, width);
-  const mainMode = configuredMainMode(parts.mainTrim, settings);
-  const mainLines = mainMode === "none"
-    ? wrapTextWithAnsi(main, contentWidth)
-    : [configuredMainFit(main, contentWidth, parts.mainTrim, settings)];
-  const lines = mainLines.map((line, index) => {
-    const rendered = `${index === 0 && hasPrefix ? prefix : continuation}${line}`;
-    return visibleWidth(rendered) <= width ? rendered : fit(rendered, width);
-  });
+  const lines: string[] = [width > prefixWidth ? prefix : ""];
 
-  if (normalDetail !== "") {
-    // A no-trim mode applies to the whole collapsed row, so timing and other
-    // safe display details wrap too instead of being fitted into leftover room.
-    appendWrappedSegment(lines, normalDetail, width, continuation);
+  const appendText = (
+    value: string,
+    color: StoryboardColorName,
+    trimTarget: "fileNames" | "commands" | "tools" | undefined,
+  ): void => {
+    if (value.length === 0) return;
+    const segment = styled(theme, color, value);
+    const mode = configuredMainMode(trimTarget, settings);
+    if (mode === undefined || mode === "none") {
+      appendWrappedSegment(lines, segment, width, continuation, true);
+    } else {
+      appendTrimmedSegment(lines, segment, width, continuation, mode);
+    }
+  };
+
+  appendText(parts.mainPrefix ?? "", "text", undefined);
+  appendText(mainValueForRow(row, parts), "text", parts.mainTrim);
+  if (normalDetailText.length > 0) {
+    appendWrappedSegment(
+      lines,
+      styled(theme, "muted", normalDetailText),
+      width,
+      continuation,
+    );
+  }
+  for (const detail of rowDetails) {
+    appendWrappedLine(lines, styled(theme, "muted", detail), width, continuation);
   }
 
   if (failure !== undefined) {
-    // `none` means the complete collapsed row remains visible. Error summaries
-    // are already bounded when captured, so wrap them rather than shortening
-    // the diagnostic after a long command/path value.
-    appendWrappedSegment(
+    appendWrappedLine(
       lines,
-      styled(theme, settings.colors.status.failed, ` - ${failure}`),
+      styled(theme, settings.colors.status.failed, failure),
       width,
       continuation,
     );
@@ -647,7 +645,8 @@ export function renderToolGroup(
   const lines = new Spacer(1).render(safeWidth);
   lines.push(fit(` ${styled(theme, "toolTitle", title)}`, safeWidth));
 
-  for (const row of group.rows) {
+  for (let rowIndex = 0; rowIndex < group.rows.length; rowIndex++) {
+    const row = group.rows[rowIndex]!;
     const failed = row.result?.isError === true;
     const complete = !failed && row.result !== undefined && !row.isPartial;
     const color = failed
@@ -656,60 +655,26 @@ export function renderToolGroup(
         ? settings.colors.status.complete
         : settings.colors.status.running;
     const parts = formatRowParts(row);
-    const main = styled(theme, "text", mainTextForRow(row, parts));
-    const normalDetailText = `${parts.detail ?? ""}${elapsedDetail(row)}`;
-    const normalDetail = normalDetailText === "" ? "" : styled(theme, "muted", normalDetailText);
+    // One setting controls all optional compact detail suffixes: timing,
+    // ranges, replacement counts, search metadata, cwd, and similar fields.
+    // The primary path/command/tool-argument value and bounded failure diagnostic remain.
+    const normalDetailText = settings.showToolMetadata
+      ? `${parts.detail ?? ""}${elapsedDetail(row)}`
+      : "";
     const failure = errorText(row);
     const marker = settings.symbols.toolDots[group.kind] ?? settings.symbols.toolDot;
     const prefix = styled(theme, color, `  ${marker} `);
-    if (
-      configuredMainMode(parts.mainTrim, settings) === "none" ||
-      configuredDetailMode(parts.detailTrim, settings) === "none"
-    ) {
-      lines.push(...renderUntrimmedRow(
-        main,
-        parts,
-        normalDetail,
-        failure,
-        prefix,
-        safeWidth,
-        theme,
-        settings,
-      ));
-      continue;
-    }
-    const layout = failure === undefined
-      ? (() => {
-          const available = Math.max(0, safeWidth - visibleWidth(prefix));
-          const minimumMainWidth = Math.min(
-            visibleWidth(main),
-            Math.max(1, Math.min(20, available)),
-          );
-          const detailBudget = Math.max(0, available - minimumMainWidth);
-          const detail = visibleWidth(normalDetail) > detailBudget
-            ? styled(
-              theme,
-              "muted",
-              configuredDetailFit(normalDetailText, detailBudget, parts.detailTrim, settings),
-            )
-            : normalDetail;
-          return {
-            detail,
-            mainWidth: Math.max(0, available - visibleWidth(detail)),
-          };
-        })()
-      : fitFailureDetails(
-        theme,
-        normalDetail,
-        failure,
-        safeWidth,
-        visibleWidth(prefix),
-        visibleWidth(main),
-        settings.colors.status.failed,
-      );
-    const detail = layout.detail;
-    const rowLine = `${prefix}${configuredMainFit(main, layout.mainWidth, parts.mainTrim, settings)}${detail}`;
-    lines.push(visibleWidth(rowLine) <= safeWidth ? rowLine : fit(rowLine, safeWidth));
+    lines.push(...renderToolRow(
+      row,
+      parts,
+      normalDetailText,
+      group.rowDetails?.[rowIndex] ?? [],
+      failure,
+      prefix,
+      safeWidth,
+      theme,
+      settings,
+    ));
   }
 
   return lines;

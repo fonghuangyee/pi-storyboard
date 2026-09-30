@@ -195,6 +195,20 @@ export async function openPresentationSettings(
         currentValue: draft.trimming.commands,
         values: ["none", "middle", "end"],
       },
+      {
+        id: "trim-tools",
+        label: "Tool argument trim mode",
+        description: "Choose none, middle, or end trimming for custom/MCP tool arguments.",
+        currentValue: draft.trimming.tools,
+        values: ["none", "middle", "end"],
+      },
+      {
+        id: "show-tool-metadata",
+        label: "Show tool metadata",
+        description: "Show timing, ranges, replacement counts, and other optional metadata.",
+        currentValue: draft.showToolMetadata ? "yes" : "no",
+        values: ["yes", "no"],
+      },
       ...SYMBOL_FIELDS.map(([field, label, description]) => symbolItem(`symbol-${field}`, label, description, field)),
       ...presentationGroupKinds.map(toolDotItem),
       colorItem("color-status-running", "Running status color", "Tool rows still executing.", "running"),
@@ -227,6 +241,12 @@ export async function openPresentationSettings(
           return;
         case "trim-commands":
           setAndNormalize((next) => { next.trimming.commands = value as PresentationSettingsDraft["trimming"]["commands"]; });
+          return;
+        case "trim-tools":
+          setAndNormalize((next) => { next.trimming.tools = value as PresentationSettingsDraft["trimming"]["tools"]; });
+          return;
+        case "show-tool-metadata":
+          setAndNormalize((next) => { next.showToolMetadata = value === "yes"; });
           return;
         case "reset-defaults":
           draft = clonePresentationSettings(normalizePresentationSettings(undefined));
@@ -266,6 +286,8 @@ export async function openPresentationSettings(
     function currentValueFor(id: string): string {
       if (id === "trim-file-names") return draft.trimming.fileNames;
       if (id === "trim-commands") return draft.trimming.commands;
+      if (id === "trim-tools") return draft.trimming.tools;
+      if (id === "show-tool-metadata") return draft.showToolMetadata ? "yes" : "no";
       if (id === "reset-defaults") return "reset";
       if (id === "save-reload") return "save";
       if (id.startsWith("symbol-")) return valueForSymbol(draft, id.slice("symbol-".length) as SymbolField);

@@ -45,8 +45,8 @@ describe("TuiPreview", () => {
     expect(storyboard).not.toContain("08 ");
     expect(storyboard).toContain("╰─ Read 2 files");
     expect(storyboard).toContain("native results confirm commentary can contain Markdown");
-    expect(storyboard).toContain("Confirming the separator after the first read");
-    expect(storyboard).toContain("╰─ Run 2 commands");
+    expect(storyboard).toContain("Confirming the diagnostic below the first read");
+    expect(storyboard).toContain("Response was truncated before completion.");
     expect(storyboard).toContain("expanded");
     expect(storyboard).toContain("native Pi rows");
     expect(storyboard).toContain("native thinking starts a visual Pi turn block");
@@ -64,6 +64,7 @@ describe("TuiPreview", () => {
       scrolledStoryboard += preview.render(100).join("\n");
     }
     expect(scrolledStoryboard).toContain("Write 1 file");
+    expect(scrolledStoryboard).toContain("◉ Run 2 commands");
     expect(scrolledStoryboard).toContain("Collapsed running edit");
     expect(scrolledStoryboard).toContain("Planning handler with effect for default config");
     expect(scrolledStoryboard).toContain("◉ Thinking...");
@@ -72,6 +73,8 @@ describe("TuiPreview", () => {
     expect(scrolledStoryboard).toContain("Final answer");
     expect(scrolledStoryboard).toContain("Unknown text phase");
     expect(scrolledStoryboard).toContain("Locating registerTool definitions");
+    expect(scrolledStoryboard).toContain("Compacted from");
+    expect(scrolledStoryboard).not.toContain("ctrl+o to expand");
     expect(scrolledStoryboard.split("\n").every((line) => visibleWidth(line) <= 100)).toBe(true);
 
     preview.handleInput("\u001b[D");
@@ -98,6 +101,7 @@ describe("TuiPreview", () => {
       preview.handleInput("\u001b[B");
     }
     expect(gallery).toContain("Configured example");
+    expect(gallery).toContain("mcp.lookup");
     expect(gallery).toContain("╘═");
 
     preview.handleInput("\u001b");

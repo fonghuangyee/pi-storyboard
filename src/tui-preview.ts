@@ -3,6 +3,7 @@ import { TranscriptReplay } from "./transcript-replay.ts";
 import { renderToolGroup, type GroupSnapshot, type ThemeLike } from "./renderer.ts";
 import { normalizePresentationSettings } from "./presentation-settings.ts";
 import {
+  renderStoryboardBoundary,
   renderStoryboardScene,
   renderStoryboardWorkSpanLayout,
   storyboardAssistantWidth,
@@ -229,7 +230,8 @@ const SAMPLE_TOOL_GROUPS: readonly GroupSnapshot[] = [
       {
         toolName: "read",
         args: { path: "src/renderer.ts", offset: 240, limit: 80 },
-        result: { content: [], isError: false },
+        result: { content: [], isError: true },
+        errorSummary: "Could not read the requested range because the file changed before the operation completed.",
         isPartial: false,
         expanded: false,
       },
@@ -303,7 +305,8 @@ const SAMPLE_TOOL_GROUPS: readonly GroupSnapshot[] = [
       {
         toolName: "edit",
         args: { path: "src/pi-adapter.ts", replacementCount: 1 },
-        result: { content: [], isError: false },
+        result: { content: [], isError: true },
+        errorSummary: "Found 3 occurrences of edits[1]. Each oldText must be unique in this file.",
         isPartial: false,
         expanded: false,
       },
@@ -333,9 +336,9 @@ const SAMPLE_TOOL_GROUPS: readonly GroupSnapshot[] = [
       },
       {
         toolName: "bash",
-        args: { command: "npm run check" },
+        args: { command: "npm run check -- --reporter verbose --coverage --project storyboard" },
         result: { content: [], isError: true },
-        errorSummary: "Command exited with code 1",
+        errorSummary: "Command exited with code 1 after TypeScript reported a long diagnostic summary.",
         isPartial: false,
         expanded: false,
       },
@@ -354,7 +357,8 @@ const SAMPLE_TOOL_GROUPS: readonly GroupSnapshot[] = [
       {
         toolName: "mcp.lookup",
         args: { id: 42 },
-        result: { content: [], isError: false },
+        result: { content: [], isError: true },
+        errorSummary: "Provider request failed while resolving the remote lookup target.",
         isPartial: false,
         expanded: false,
       },
@@ -383,7 +387,22 @@ const SETTINGS_PREVIEW_GROUP: GroupSnapshot = {
   kind: "read",
   rows: [{
     toolName: "read",
-    args: { path: "/Users/fong/Documents/FHY/pi-storyboard/src/very-long-file-name.ts" },
+    args: { path: "/Users/fong/Documents/FHY/pi-storyboard/src/very-long-file-name.ts", offset: 130, limit: 75 },
+    result: { content: [], isError: false },
+    isPartial: false,
+    expanded: false,
+  }],
+};
+
+const SETTINGS_PREVIEW_TOOL_GROUP: GroupSnapshot = {
+  kind: "tool",
+  rows: [{
+    toolName: "mcp.lookup",
+    args: {
+      conversationId: "fb839075-9d3e-42b2-81b8-e6d0358c321c",
+      apiName: "admin",
+      query: "mutation CreateE2EProduct($input: ProductInput!) { productCreate(input: $input) { product { id title handle } } }",
+    },
     result: { content: [], isError: false },
     isPartial: false,
     expanded: false,
@@ -392,7 +411,8 @@ const SETTINGS_PREVIEW_GROUP: GroupSnapshot = {
 
 const SETTINGS_PREVIEW_SETTINGS = normalizePresentationSettings({
   "pi-storyboard": {
-    trimming: { fileNames: "end", commands: "none" },
+    trimming: { fileNames: "end", commands: "none", tools: "middle" },
+    showToolMetadata: false,
     symbols: {
       toolDot: "•",
       toolDots: { read: "R" },
@@ -459,7 +479,8 @@ class PresentationSettingsSample implements Component {
       ...renderToolGroup(SETTINGS_PREVIEW_GROUP, safeWidth, groupTheme, defaults),
       "",
       this.theme.fg("accent", "Configured example"),
-      this.theme.fg("dim", "End-trimmed paths, untrimmed commands, custom symbols, and theme tokens."),
+      this.theme.fg("dim", "End-trimmed paths, untrimmed commands, middle-trimmed tool arguments, hidden metadata, custom symbols, and theme tokens."),
+      ...renderToolGroup(SETTINGS_PREVIEW_TOOL_GROUP, safeWidth, groupTheme, SETTINGS_PREVIEW_SETTINGS),
       ...renderStoryboardScene(
         scene,
         scene.assistant.renderedAssistantLines,
@@ -483,7 +504,8 @@ class PresentationSettingsSample implements Component {
 type StoryboardPreviewItem =
   | { type: "group"; group: GroupSnapshot }
   | { type: "thinking"; text: string }
-  | { type: "commentary"; text: string };
+  | { type: "commentary"; text: string }
+  | { type: "diagnostic"; text: string };
 
 type StoryboardPreviewContent = {
   /** Native thinking content used as the visual turn-block header. */
@@ -531,7 +553,7 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
         type: "commentary",
         text: "The native results confirm **commentary can contain Markdown** and remain in source order.",
       },
-      { type: "thinking", text: "Confirming the separator after the first read" },
+      { type: "thinking", text: "Confirming the diagnostic below the first read" },
       {
         type: "group",
         group: {
@@ -539,6 +561,7 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
           rows: SAMPLE_TOOL_GROUPS[4]!.rows.slice(0, 1),
         },
       },
+      { type: "diagnostic", text: "Response was truncated before completion." },
       {
         type: "group",
         group: {
@@ -613,7 +636,7 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
     }],
   },
   {
-    title: "Verifying errorDetail line changes",
+    title: "Verifying separate wrapped diagnostics",
     state: "running",
     detail: "assistant message and tools are still streaming",
     groups: [
@@ -753,6 +776,18 @@ class TurnStoryboardSample implements Component {
         });
         continue;
       }
+      if (item.type === "diagnostic") {
+        const diagnostic = new Text(this.theme.fg("error", item.text), 1, 0);
+        orderedChildren.push({
+          type: "assistant",
+          content: {
+            type: "diagnostic",
+            row: diagnostic,
+            renderedLines: diagnostic.render(width),
+          },
+        });
+        continue;
+      }
 
       const rows: StoryboardToolSnapshot[] = item.group.rows.map((snapshot) => {
         const toolCallId = `preview-${toolIndex++}`;
@@ -868,6 +903,17 @@ class TurnStoryboardSample implements Component {
         safeWidth,
       ));
     }
+
+    rendered.push("");
+    rendered.push(...renderStoryboardBoundary(
+      { row: "preview-compaction", kind: "compaction", tokensBefore: 263325 },
+      safeWidth,
+      toolGroupTheme(this.theme),
+    ));
+    rendered.push(storyFit(
+      `${indent}${this.theme.fg("dim", "expanded")} ${this.theme.fg("muted", "Native compaction summary preview restored")}`,
+      safeWidth,
+    ));
 
     return rendered;
   }

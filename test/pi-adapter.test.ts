@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { AssistantMessageComponent, ToolExecutionComponent } from "@earendil-works/pi-coding-agent";
+import {
+  AssistantMessageComponent,
+  CustomMessageComponent,
+  ToolExecutionComponent,
+} from "@earendil-works/pi-coding-agent";
 import { Container, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
   classifyToolRowForTesting,
@@ -14,6 +18,34 @@ const theme: ThemeLike = {
   fg: (_color, text) => text,
   bold: (text) => text,
 };
+
+function compaction(tokensBefore = 263325, expanded = false): Record<string, unknown> {
+  return {
+    message: {
+      role: "compactionSummary",
+      summary: "A compacted transcript summary.",
+      tokensBefore,
+    },
+    expanded,
+    children: [],
+    render: vi.fn(() => ["native compaction preview"]),
+  };
+}
+
+function webSearchStatus(
+  content = "Content fetched for 6/11 URLs [status-id]. Partial page content now available.",
+): CustomMessageComponent & Record<string, unknown> {
+  const component = Object.create(CustomMessageComponent.prototype) as CustomMessageComponent & Record<string, unknown>;
+  (component as unknown as Record<string, unknown>).message = {
+    role: "custom",
+    customType: "web-search-content-ready",
+    content,
+    display: true,
+    timestamp: 0,
+  };
+  component.render = vi.fn(() => ["native web-search preview"]);
+  return component;
+}
 
 function tool(
   name: string,
@@ -47,6 +79,7 @@ function storyboardAssistant(
     textPhase?: "commentary" | "final_answer";
     streaming?: boolean;
     stopReason?: string;
+    toolName?: string;
   } = {},
 ): AssistantMessageComponent & Record<string, unknown> {
   const component = assistant(lines);
@@ -62,7 +95,7 @@ function storyboardAssistant(
           ? {}
           : { textSignature: JSON.stringify({ v: 1, id: "msg-test", phase: options.textPhase }) }),
       }] : []),
-      ...toolCallIds.map((id) => ({ type: "toolCall", id, name: "read", arguments: {} })),
+      ...toolCallIds.map((id) => ({ type: "toolCall", id, name: options.toolName ?? "read", arguments: {} })),
     ],
     stopReason: options.stopReason ?? "stop",
   };
@@ -120,14 +153,26 @@ function sessionMessage(id: string, message: Record<string, unknown>, parentId: 
   return { type: "message", id, parentId, timestamp: "now", message } as never;
 }
 
-function sessionResult(id: string, callId: string, parentId: string): never {
+function sessionResult(id: string, callId: string, parentId: string, toolName = "read", isError = false): never {
   return sessionMessage(id, {
     role: "toolResult",
     toolCallId: callId,
-    toolName: "read",
+    toolName,
     content: [],
-    isError: false,
+    isError,
   }, parentId);
+}
+
+function sessionCustomWebSearchStatus(id: string, content: string, parentId: string): never {
+  return {
+    type: "custom_message",
+    id,
+    parentId,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    customType: "web-search-content-ready",
+    content,
+    display: true,
+  } as never;
 }
 
 function expansionStatusRows(status = "collapsed"): [Record<string, unknown>, Record<string, unknown>] {
@@ -324,6 +369,370 @@ describe("Container adapter", () => {
     expect(output).toContain("╰─ read 2");
     expect(firstSkill.render).not.toHaveBeenCalled();
     expect(secondSkill.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("keeps pre-compaction transcript native while storyboarding projected scenes", () => {
+    const oldOwner = storyboardAssistant(["old native thinking"], ["old-read"]);
+    const oldTool = tool("read", { path: "before-compaction.ts" }, result());
+    assignToolCallId(oldTool, "old-read");
+    const compactionBoundary = compaction();
+    const newOwner = storyboardAssistant(["new thinking"], ["new-read"]);
+    const newTool = tool("read", { path: "after-compaction.ts" }, result());
+    assignToolCallId(newTool, "new-read");
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({
+        leafId: "new-result",
+        turns: [{
+          entryId: "new-assistant",
+          toolCallIds: ["new-read"],
+          resultEntryIds: ["new-result"],
+          hasVisibleThinking: true,
+          hasCommentary: false,
+          hasFinalAnswer: false,
+          hasUnknownText: false,
+          valid: true,
+          boundaryBefore: true,
+          boundaryAfter: false,
+        }],
+      }),
+      renderGroup: () => ["", " storyboarded new scene"],
+    });
+
+    const output = container(
+      oldOwner,
+      oldTool,
+      compactionBoundary,
+      newOwner,
+      newTool,
+    ).render(80).join("\\n");
+    expect(output).toContain("old native thinking");
+    expect(output).toContain("native read");
+    expect(output).toContain("├─ Compacted from 263,325 tokens");
+    expect(output).not.toContain("ctrl+o to expand");
+    expect(output).not.toContain("native compaction preview");
+    expect(output).toContain("storyboarded new scene");
+    expect(compactionBoundary.render).not.toHaveBeenCalled();
+    expect(oldTool.render).toHaveBeenCalledOnce();
+    expect(newTool.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("restores the native compaction preview only when expanded", () => {
+    const expanded = compaction(263325, true);
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: () => ["", "unused"] });
+
+    const output = container(expanded).render(80).join("\\n");
+    expect(output).toContain("native compaction preview");
+    expect(expanded.render).toHaveBeenCalledOnce();
+    handle?.uninstall();
+  });
+
+  it("renders a validated web-search status as wrapped plain-text detail under its exact tool row", () => {
+    const statusText = "Content fetched for 6/11 URLs [status-id]. Partial page content is ready for the next assistant turn. EXTRA_STATUS_END";
+    const owner = storyboardAssistant(["thinking"], ["search-1"], { toolName: "web_search" });
+    const search = tool("web_search", { queries: ["mail delivery"], numResults: 6 }, result());
+    assignToolCallId(search, "search-1");
+    const status = webSearchStatus(statusText);
+    const session = buildSessionProjection({
+      leafId: "search-status",
+      entries: [
+        sessionMessage("root", { role: "user", content: "search the web" }),
+        sessionMessage("search-assistant", {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "work" },
+            { type: "toolCall", id: "search-1", name: "web_search", arguments: {} },
+          ],
+        }, "root"),
+        sessionResult("search-result", "search-1", "search-assistant", "web_search"),
+        sessionCustomWebSearchStatus("search-status", statusText, "search-result"),
+      ],
+    });
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: (group, width, groupTheme, settings) => renderToolGroup(group, width, groupTheme, settings),
+    });
+
+    const output = container(owner, search, status).render(80).join("\n");
+    expect(output).toContain("╰─ Run 1 tool");
+    expect(output).toContain("web_search");
+    expect(output.replace(/\s+/gu, " ")).toContain(statusText);
+    expect(output).not.toContain("[web-search-content-ready]");
+    expect(output).not.toContain("native web-search preview");
+    expect(output).not.toContain("...");
+    expect(status.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("keeps a web-search status standalone when its active-path association is ambiguous", () => {
+    const statusText = "Content fetched for 6/11 URLs [status-id].";
+    const owner = storyboardAssistant(["thinking"], ["search-1", "search-2"], { toolName: "web_search" });
+    const firstSearch = tool("web_search", { query: "first" }, result());
+    const secondSearch = tool("web_search", { query: "second" }, result());
+    assignToolCallId(firstSearch, "search-1");
+    assignToolCallId(secondSearch, "search-2");
+    const firstStatus = webSearchStatus(statusText);
+    const secondStatus = webSearchStatus(statusText);
+    const session: SessionProjection = {
+      leafId: "status-2",
+      turns: [{
+        entryId: "search-assistant",
+        toolCallIds: ["search-1", "search-2"],
+        resultEntryIds: ["result-1", "result-2"],
+        hasVisibleThinking: true,
+        hasCommentary: false,
+        hasFinalAnswer: false,
+        hasUnknownText: false,
+        valid: true,
+        boundaryBefore: false,
+        boundaryAfter: true,
+      }],
+      webSearchStatuses: [
+        { entryId: "status-1", assistantEntryId: "search-assistant", resultEntryId: "result-1", toolCallId: "search-1", content: statusText },
+        { entryId: "status-2", assistantEntryId: "search-assistant", resultEntryId: "result-2", toolCallId: "search-2", content: statusText },
+      ],
+    };
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: (group, width, groupTheme, settings) => renderToolGroup(group, width, groupTheme, settings),
+    });
+
+    const output = container(owner, firstSearch, secondSearch, firstStatus, secondStatus).render(80).join("\n");
+    expect(output.match(/Content fetched for 6\/11 URLs/gu)).toHaveLength(2);
+    expect(output).not.toContain("web-search-content-ready");
+    expect(output).not.toContain("native web-search preview");
+    expect(firstStatus.render).not.toHaveBeenCalled();
+    expect(secondStatus.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it.each([
+    { label: "expanded", expanded: true, isError: false },
+    { label: "failed", expanded: false, isError: true },
+  ])("keeps a web-search status standalone for an $label row", ({ expanded, isError }) => {
+    const statusText = "Content fetched for 6/11 URLs [status-id].";
+    const owner = storyboardAssistant(["thinking"], ["search-1"], { toolName: "web_search" });
+    const search = tool("web_search", { query: "delivery" }, result(isError), expanded);
+    assignToolCallId(search, "search-1");
+    const status = webSearchStatus(statusText);
+    const session = buildSessionProjection({
+      leafId: "status",
+      entries: [
+        sessionMessage("root", { role: "user", content: "search the web" }),
+        sessionMessage("assistant", {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "work" },
+            { type: "toolCall", id: "search-1", name: "web_search", arguments: {} },
+          ],
+        }, "root"),
+        sessionResult("result", "search-1", "assistant", "web_search", isError),
+        sessionCustomWebSearchStatus("status", statusText, "result"),
+      ],
+    });
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: (group, width, groupTheme, settings) => renderToolGroup(group, width, groupTheme, settings),
+    });
+
+    const output = container(owner, search, status).render(80).join("\n");
+    expect(output).toContain("◉ Content fetched for 6/11 URLs");
+    expect(output).not.toContain("web-search-content-ready");
+    expect(status.render).not.toHaveBeenCalled();
+    if (expanded) expect(search.render).toHaveBeenCalledOnce();
+    else expect(search.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("keeps a web-search status standalone when its exact tool result is not web_search", () => {
+    const statusText = "Content fetched for 6/11 URLs [status-id].";
+    const owner = storyboardAssistant(["thinking"], ["read-1"]);
+    const read = tool("read", { path: "result.ts" }, result());
+    assignToolCallId(read, "read-1");
+    const status = webSearchStatus(statusText);
+    const session = buildSessionProjection({
+      leafId: "status",
+      entries: [
+        sessionMessage("root", { role: "user", content: "read a file" }),
+        sessionMessage("assistant", {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "work" },
+            { type: "toolCall", id: "read-1", name: "read", arguments: {} },
+          ],
+        }, "root"),
+        sessionResult("result", "read-1", "assistant"),
+        sessionCustomWebSearchStatus("status", statusText, "result"),
+      ],
+    });
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => session,
+      renderGroup: (group, width, groupTheme, settings) => renderToolGroup(group, width, groupTheme, settings),
+    });
+
+    const output = container(owner, read, status).render(80).join("\\n");
+    expect(session?.webSearchStatuses).toEqual([]);
+    expect(output).toContain("◉ Content fetched for 6/11 URLs");
+    expect(output).not.toContain("web-search-content-ready");
+    expect(status.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("starts a standalone web-search status with the storyboard root marker", () => {
+    const status = webSearchStatus();
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({ leafId: null, turns: [] }),
+      renderGroup: () => ["", "unused"],
+    });
+
+    const output = container(status).render(80).join("\\n");
+    expect(output).toContain("◉ Content fetched for 6/11 URLs");
+    expect(output).not.toContain("web-search-content-ready");
+    expect(output).not.toContain("├─ Content fetched");
+    expect(status.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("keeps an incompatible assistant scene native without disabling later scenes", () => {
+    const incompatible = storyboardAssistant(["", " invalid thinking", " invalid diagnostic"], ["invalid-read"], {
+      stopReason: "length",
+    });
+    const incompatibleFields = incompatible as unknown as Record<string, unknown>;
+    const leading = { render: vi.fn(() => [""]) };
+    const thinking = { render: vi.fn(() => [" invalid thinking"]) };
+    const diagnostic = { render: vi.fn(() => [" invalid diagnostic"]) };
+    const contentContainer = {
+      children: [leading, thinking, diagnostic],
+      mouseLayout: {
+        width: 78,
+        children: [
+          { component: leading, height: 1 },
+          { component: thinking, height: 1 },
+          { component: diagnostic, height: 1 },
+        ],
+      },
+    };
+    incompatibleFields.contentContainer = contentContainer;
+    incompatible.render = vi.fn((width: number) => {
+      contentContainer.mouseLayout.width = width;
+      return ["", " invalid thinking", " invalid diagnostic"];
+    });
+    const incompatibleTool = tool("read", { path: "invalid.ts" }, result());
+    assignToolCallId(incompatibleTool, "invalid-read");
+
+    const valid = storyboardAssistant(["valid thinking"], ["valid-read"]);
+    const validTool = tool("read", { path: "valid.ts" }, result());
+    assignToolCallId(validTool, "valid-read");
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({
+        leafId: "valid-result",
+        turns: [
+          {
+            entryId: "invalid-assistant",
+            toolCallIds: ["invalid-read"],
+            resultEntryIds: ["invalid-result"],
+            hasVisibleThinking: true,
+            hasCommentary: false,
+            hasFinalAnswer: false,
+            hasUnknownText: false,
+            valid: true,
+            boundaryBefore: false,
+            boundaryAfter: false,
+          },
+          {
+            entryId: "valid-assistant",
+            toolCallIds: ["valid-read"],
+            resultEntryIds: ["valid-result"],
+            hasVisibleThinking: true,
+            hasCommentary: false,
+            hasFinalAnswer: false,
+            hasUnknownText: false,
+            valid: true,
+            boundaryBefore: false,
+            boundaryAfter: false,
+          },
+        ],
+      }),
+      renderGroup: () => ["", " storyboarded valid scene"],
+    });
+
+    const output = container(incompatible, incompatibleTool, valid, validTool).render(80).join("\\n");
+    expect(output).toContain("invalid diagnostic");
+    expect(output).toContain("native read");
+    expect(output).toContain("storyboarded valid scene");
+    expect(incompatibleTool.render).toHaveBeenCalledOnce();
+    expect(validTool.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it("storyboards a validated Pi terminal diagnostic without a native preview", () => {
+    const owner = storyboardAssistant(["", " thinking", "", " Response was truncated before completion."], ["length-read"], {
+      stopReason: "length",
+    });
+    const ownerFields = owner as unknown as Record<string, unknown>;
+    const leading = { render: vi.fn(() => [""]) };
+    const thinking = {
+      render: vi.fn(() => [" thinking"]),
+      handleMouse: vi.fn(() => ({ handled: true })),
+    };
+    const spacer = { lines: 1, render: vi.fn(() => [""]) };
+    const diagnostic = {
+      text: "Response was truncated before completion.",
+      paddingX: 1,
+      paddingY: 0,
+      render: vi.fn(() => [" Response was truncated before completion."]),
+    };
+    const contentChildren = [leading, thinking, spacer, diagnostic];
+    const contentContainer = {
+      children: contentChildren,
+      mouseLayout: {
+        width: 0,
+        children: contentChildren.map((component) => ({ component, height: 1 })),
+      },
+    };
+    ownerFields.contentContainer = contentContainer;
+    owner.render = vi.fn((width: number) => {
+      contentContainer.mouseLayout.width = width;
+      return ["", " thinking", "", " Response was truncated before completion."];
+    });
+
+    const read = tool("read", { path: "length.ts" }, result(true));
+    assignToolCallId(read, "length-read");
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({
+        leafId: "length-result",
+        turns: [{
+          entryId: "length-assistant",
+          toolCallIds: ["length-read"],
+          resultEntryIds: ["length-result"],
+          hasVisibleThinking: true,
+          hasCommentary: false,
+          hasFinalAnswer: false,
+          hasUnknownText: false,
+          valid: true,
+          boundaryBefore: false,
+          boundaryAfter: false,
+        }],
+      }),
+      renderGroup: () => ["", " storyboarded length read"],
+    });
+
+    const output = container(owner, read).render(80).join("\\n");
+    expect(output).toContain("◉ thinking");
+    expect(output).toContain("storyboarded length read");
+    expect(output).toContain("Response was truncated before completion.");
+    expect(output).not.toContain("native read");
+    expect(owner.render).toHaveBeenCalledOnce();
+    expect(read.render).not.toHaveBeenCalled();
     handle?.uninstall();
   });
 
@@ -1028,7 +1437,7 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("groups failures with only a useful bounded error line", () => {
+  it("groups failures with only a useful bounded error summary", () => {
     const failed = tool(
       "bash",
       { command: "npm run check" },

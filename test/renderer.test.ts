@@ -59,11 +59,142 @@ describe("renderToolGroup", () => {
       ...row("bash", { command: "npm run check" }, { content: [], isError: true }),
       errorSummary: "Command exited with code 1",
     };
-    expect(renderToolGroup({ kind: "command", rows: [failed] }, 200, theme).map(stripTerminalSequences)).toContain(
-      "<error>  ● </error><text>npm run check</text><error> - Command exited with code 1</error>",
+    const rendered = renderToolGroup({ kind: "command", rows: [failed] }, 200, theme);
+    expect(rendered[2]).toBe("<error>  ● </error><text>npm run check</text>");
+    expect(stripTerminalSequences(rendered[3] ?? "")).toContain("Command exited with code 1");
+    expect(stripTerminalSequences(rendered[3] ?? "")).not.toContain(" - ");
+    expect(formatToolRow(failed)).toBe("npm run check\nCommand exited with code 1");
+    expect(formatToolRow({ ...failed, errorSummary: undefined })).toBe("npm run check\nFailed");
+  });
+
+  it("puts every failed tool diagnostic on its own line", () => {
+    const cases = [
+      ["read", "read", { path: "src/a.ts", offset: 10, limit: 20 }],
+      ["grep", "search", { pattern: "x", path: "src/" }],
+      ["find", "search", { pattern: "*.ts", path: "src/" }],
+      ["ls", "list", { path: "src/", limit: 5 }],
+      ["write", "write", { path: "src/a.ts", content: "hidden" }],
+      ["edit", "edit", { path: "src/a.ts", replacementCount: 2 }],
+      ["bash", "command", { command: "npm run check" }],
+      ["custom-tool", "tool", { target: "src" }],
+    ] as const;
+
+    for (const [toolName, kind, args] of cases) {
+      const rendered = renderToolGroup({
+        kind,
+        rows: [{
+          ...row(toolName, args, { content: [], isError: true }),
+          errorSummary: "A long diagnostic that must remain below the value",
+        }],
+      }, 200, plainTheme).slice(2);
+      expect(rendered[0]).not.toContain(" - ");
+      expect(rendered[1]).toContain("A long diagnostic that must remain below the value");
+      expect(rendered[1]).not.toContain("-");
+    }
+  });
+
+  it("keeps diagnostics complete and independent from path and command trimming", () => {
+    const diagnostic = "ERROR_DIAGNOSTIC_KEEP_THE_WHOLE_LINE --exit-code=1 --detail=preserved";
+    const path = "/Users/fong/Documents/FHY/pi-storyboard/src/components/very-long-file-name.ts";
+    const command = "npm run check -- --reporter verbose --coverage --project storyboard";
+    const modes = ["none", "middle", "end"] as const;
+
+    for (const mode of modes) {
+      const settings = normalizePresentationSettings({
+        "pi-storyboard": { trimming: { fileNames: mode, commands: mode } },
+      });
+      const readLines = renderToolGroup({
+        kind: "read",
+        rows: [{
+          ...row("read", { path, offset: 240, limit: 80 }, { content: [], isError: true }),
+          errorSummary: diagnostic,
+        }],
+      }, 48, plainTheme, settings).slice(2);
+      const commandLines = renderToolGroup({
+        kind: "command",
+        rows: [{
+          ...row("bash", { command }, { content: [], isError: true }),
+          errorSummary: diagnostic,
+        }],
+      }, 48, plainTheme, settings).slice(2);
+
+      const readOutput = readLines.join("\n");
+      const commandOutput = commandLines.join("\n");
+      const readText = readOutput.replace(/\s+/gu, " ");
+      const commandText = commandOutput.replace(/\s+/gu, " ");
+      expect(readText).toContain(diagnostic);
+      expect(commandText).toContain(diagnostic);
+      expect(readOutput).toContain("offset=240");
+      expect(readOutput).toContain("limit=80");
+      expect(readOutput).not.toContain(" - ");
+      expect(commandOutput).not.toContain(" - ");
+      expect(readLines.some((line) => line.includes(diagnostic.slice(0, 20)))).toBe(true);
+      expect(commandLines.some((line) => line.includes(diagnostic.slice(0, 20)))).toBe(true);
+      expect(readLines.every((line) => visibleWidth(line) <= 48)).toBe(true);
+      expect(commandLines.every((line) => visibleWidth(line) <= 48)).toBe(true);
+    }
+  });
+
+  it("wraps presentation-only status details below their tool row without trimming", () => {
+    const detail = "Content fetched for 8/17 URLs [search-status]. Partial page content is ready for the next assistant turn. STATUS_DETAIL_END";
+    const group = {
+      kind: "tool" as const,
+      rows: [row("web_search", {})],
+      rowDetails: [[detail]],
+    };
+    const lines = renderToolGroup(group, 32, plainTheme).slice(2);
+    const output = lines.join(" ").replace(/\s+/gu, " ");
+
+    expect(output).toContain(detail);
+    expect(output).not.toContain("...");
+    expect(lines.findIndex((line) => line.includes("Content fetched"))).toBeGreaterThan(
+      lines.findIndex((line) => line.includes("web_search")),
     );
-    expect(formatToolRow(failed)).toBe("npm run check - Command exited with code 1");
-    expect(formatToolRow({ ...failed, errorSummary: undefined })).toBe("npm run check - Failed");
+    for (const width of [1, 8, 16, 32]) {
+      const narrowLines = renderToolGroup(group, width, plainTheme);
+      expect(narrowLines.every((line) => visibleWidth(line) <= width)).toBe(true);
+      if (width === 32) expect(narrowLines.join(" ").replace(/\s+/gu, " ")).toContain(detail);
+    }
+  });
+
+  it("preserves search metadata, command cwd, timing, and generic arguments", () => {
+    const settings = normalizePresentationSettings({
+      "pi-storyboard": { trimming: { fileNames: "end", commands: "end", tools: "none" } },
+    });
+    const search = renderToolGroup({
+      kind: "search",
+      rows: [row("grep", {
+        pattern: "renderToolGroup",
+        path: "/Users/fong/Documents/FHY/pi-storyboard/src/components",
+        glob: "*.test.ts",
+        limit: 10,
+      })],
+    }, 48, plainTheme, settings).slice(2).join("\n");
+    const command = renderToolGroup({
+      kind: "command",
+      rows: [{
+        ...row("bash", {
+          command: "npm run check -- --reporter verbose --coverage",
+          cwd: "/Users/fong/Documents/FHY/pi-storyboard",
+        }),
+        elapsedMs: 1488,
+      }],
+    }, 48, plainTheme, settings).slice(2).join("\n");
+    const generic = renderToolGroup({
+      kind: "tool",
+      rows: [row("mcp.lookup", {
+        target: "a-very-long-target-that-must-wrap-without-trimming",
+      })],
+    }, 48, plainTheme, settings).slice(2).join("\n");
+
+    expect(search.replace(/\s+/gu, " ")).toContain('grep "renderToolGroup"');
+    expect(search.replace(/\s+/gu, " ")).toContain('glob "*.test.ts"');
+    expect(search.replace(/\s+/gu, " ")).toContain("limit 10");
+    expect(command.replace(/\s+/gu, " ")).toContain("cwd /Users/fong/Documents/FHY/pi-storyboard");
+    expect(command.replace(/\s+/gu, " ")).toContain("took 1.5s");
+    const genericText = generic.replace(/\s+/gu, "");
+    expect(genericText).toContain('mcp.lookup{"target":"a-very-long-target-that-must-wrap-without-trimming"}');
+    expect(generic).not.toContain("...");
   });
 
   it("wraps the complete command and error diagnostic in none mode", () => {
@@ -156,6 +287,43 @@ describe("renderToolGroup", () => {
     );
     expect(formatToolRow(finished)).toBe("npm test (took 1.5s)");
     expect(formatToolRow(running)).toBe("npm test (elapsed 0.2s)");
+  });
+
+  it("toggles optional timing, replacement, and range details with one setting", () => {
+    const hidden = normalizePresentationSettings({
+      "pi-storyboard": { showToolMetadata: false },
+    });
+    const read = renderToolGroup({
+      kind: "read",
+      rows: [row("read", { path: "src/renderer.ts", offset: 130, limit: 75 })],
+    }, 200, plainTheme, hidden).join("\n");
+    const edit = renderToolGroup({
+      kind: "edit",
+      rows: [row("edit", { path: "src/renderer.ts", replacementCount: 2 })],
+    }, 200, plainTheme, hidden).join("\n");
+    const command = renderToolGroup({
+      kind: "command",
+      rows: [{ ...row("bash", { command: "npm test" }), elapsedMs: 612 }],
+    }, 200, plainTheme, hidden).join("\n");
+
+    expect(read).not.toContain("offset=130");
+    expect(read).not.toContain("limit=75");
+    expect(edit).not.toContain("2 replacements");
+    expect(command).not.toContain("took 0.6s");
+
+    const shown = normalizePresentationSettings(undefined);
+    expect(renderToolGroup({
+      kind: "read",
+      rows: [row("read", { path: "src/renderer.ts", offset: 130, limit: 75 })],
+    }, 200, plainTheme, shown).join("\n")).toContain("(offset=130, limit=75)");
+    expect(renderToolGroup({
+      kind: "edit",
+      rows: [row("edit", { path: "src/renderer.ts", replacementCount: 2 })],
+    }, 200, plainTheme, shown).join("\n")).toContain("(2 replacements)");
+    expect(renderToolGroup({
+      kind: "command",
+      rows: [{ ...row("bash", { command: "npm test" }), elapsedMs: 612 }],
+    }, 200, plainTheme, shown).join("\n")).toContain("(took 0.6s)");
   });
 
   it("formats search and list arguments", () => {
@@ -379,6 +547,40 @@ describe("renderToolGroup", () => {
           expect(visibleWidth(line)).toBeLessThanOrEqual(width);
         }
       }
+    }
+  });
+
+  it("trims generic custom-tool arguments with the tools mode", () => {
+    const args = {
+      conversationId: "fb839075-9d3e-42b2-81b8-e6d0358c321c",
+      apiName: "admin",
+      query: "mutation CreateE2EProduct($input: ProductInput!) { productCreate(input: $input) { product { id title handle } } } TAIL_MARKER",
+    };
+    const middle = normalizePresentationSettings({
+      "pi-storyboard": { trimming: { tools: "middle" } },
+    });
+    const none = normalizePresentationSettings({
+      "pi-storyboard": { trimming: { tools: "none" } },
+    });
+    const middleText = renderToolGroup({
+      kind: "tool",
+      rows: [row("mcp.lookup", args)],
+    }, 56, plainTheme, middle).slice(2).join("\n");
+    const noneText = renderToolGroup({
+      kind: "tool",
+      rows: [row("mcp.lookup", args)],
+    }, 56, plainTheme, none).slice(2).join("\n");
+
+    expect(middleText).toContain("mcp.lookup");
+    expect(middleText).toContain("...");
+    expect(middleText).toContain("TAIL_MARKER");
+    expect(noneText).not.toContain("...");
+    expect(noneText.replace(/\s+/gu, "")).toContain(JSON.stringify(args).replace(/\s+/gu, ""));
+    for (const line of renderToolGroup({
+      kind: "tool",
+      rows: [row("mcp.lookup", args)],
+    }, 56, plainTheme, middle)) {
+      expect(visibleWidth(line)).toBeLessThanOrEqual(56);
     }
   });
 });

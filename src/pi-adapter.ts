@@ -1,5 +1,6 @@
 import {
   AssistantMessageComponent,
+  CustomMessageComponent,
   ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -30,6 +31,7 @@ import {
   buildWorkSpan,
   type AssistantSceneSnapshot,
   type StoryboardAssistantContent,
+  type StoryboardBoundarySnapshot,
   type StoryboardAssistantContentType,
   type StoryboardChild,
   type StoryboardSegment,
@@ -38,6 +40,7 @@ import {
 } from "./storyboard.ts";
 import {
   renderNativeThinkingMarkersLayout,
+  renderStoryboardBoundary,
   renderStoryboardSceneLayout,
   renderStoryboardWorkSpanLayout,
   storyboardAssistantWidth,
@@ -202,6 +205,48 @@ function isPiStatusSpacer(value: unknown): boolean {
   if (!isRecord(value)) return false;
   const fields = value as Record<string, unknown>;
   return hasOwn(fields, "lines") && fields.lines === 1 && typeof fields.render === "function";
+}
+
+function inspectCompactionSummary(value: unknown):
+  | { readonly tokensBefore: number; readonly expanded: boolean }
+  | undefined {
+  if (!isRecord(value)) return undefined;
+  const fields = value as Record<string, unknown>;
+  const message = fields.message;
+  if (!isRecord(message) || message.role !== "compactionSummary") return undefined;
+  if (
+    typeof message.summary !== "string" ||
+    typeof message.tokensBefore !== "number" ||
+    !Number.isSafeInteger(message.tokensBefore) ||
+    message.tokensBefore < 0 ||
+    typeof fields.expanded !== "boolean" ||
+    !Array.isArray(fields.children) ||
+    typeof fields.render !== "function"
+  ) {
+    return undefined;
+  }
+  return Object.freeze({ tokensBefore: message.tokensBefore, expanded: fields.expanded });
+}
+
+function inspectStoryboardCustomStatus(value: unknown):
+  | { readonly customType: "web-search-content-ready"; readonly content: string }
+  | undefined {
+  if (!(value instanceof CustomMessageComponent) || !isRecord(value)) return undefined;
+  const message = (value as Record<string, unknown>).message;
+  if (
+    !isRecord(message) ||
+    message.customType !== "web-search-content-ready" ||
+    message.display !== true ||
+    typeof message.content !== "string"
+  ) {
+    return undefined;
+  }
+  const content = sanitizeDisplay(message.content);
+  if (content.length === 0) return undefined;
+  return Object.freeze({
+    customType: "web-search-content-ready",
+    content: Array.from(content).slice(0, 512).join(""),
+  });
 }
 
 function isPiSessionInfoStatus(value: unknown): boolean {
@@ -389,8 +434,8 @@ function extractErrorSummary(value: unknown): string | undefined {
   selected ??= lines.at(-1);
   if (selected === undefined) return undefined;
 
-  // Validation output commonly uses a bullet for its useful message. The row
-  // already supplies its own separator, so avoid rendering ` - - message`.
+  // Validation output commonly uses a bullet for its useful message. The
+  // compact renderer provides indentation, so retain only the diagnostic text.
   selected = selected.replace(/^[-*•]\s+/u, "");
   return Array.from(selected).slice(0, MAX_ERROR_SUMMARY_CODE_POINTS).join("");
 }
@@ -535,7 +580,7 @@ function inspectToolRow(row: unknown): CandidateClassification | undefined {
     }
 
     // Once the final result settles, retain only the path/count projection
-    // and, on failure, one generic error line.
+    // and, on failure, one bounded generic error summary.
     const args = resultError === true
       ? summarizeEditArgs(fields.args) ?? summarizeEditPath(fields.args)
       : summarizeEditArgs(fields.args);
@@ -749,14 +794,14 @@ function inspectAssistantPresentation(
     }));
   }
 
-  // Pi appends length/abort/error diagnostics after the content children. They
-  // are not message.content items, but retaining them as native parts keeps
-  // native diagnostics visible in an ordered scene.
+  // Pi appends terminal diagnostics after the content children. They are not
+  // message.content items; recognized Pi Text diagnostics become explicit
+  // storyboard breakouts while unknown trailing children remain native.
   while (childCursor < children.length) {
     const consumed = consumeChild();
     if (consumed === undefined) return undefined;
     parts.push(Object.freeze({
-      type: "native",
+      type: isPiTerminalDiagnostic(consumed.child, metadata.stopReason) ? "diagnostic" : "native",
       row: consumed.child,
       renderedLines: Object.freeze(consumed.lines),
     }));
@@ -765,13 +810,13 @@ function inspectAssistantPresentation(
   return lineCursor === renderedAssistantLines.length ? { parts: Object.freeze(parts) } : undefined;
 }
 
-function widenCommentaryPresentation(
+function widenStoryboardBreakouts(
   presentation: AssistantPresentation,
   width: number,
 ): AssistantPresentation | undefined {
   const parts: StoryboardAssistantContent[] = [];
   for (const part of presentation.parts) {
-    if (part.type !== "commentary") {
+    if (part.type !== "commentary" && part.type !== "diagnostic") {
       parts.push(part);
       continue;
     }
@@ -954,7 +999,9 @@ function componentForStoryboardChild(child: StoryboardChild): Component | undefi
     ? child.assistant.assistantRow
     : child.type === "tool"
       ? child.tool.toolRow
-      : child.row;
+      : child.type === "boundary"
+        ? child.boundary.row
+        : child.row;
   if (!row || typeof (row as Component).render !== "function") return undefined;
   return row as Component;
 }
@@ -987,6 +1034,26 @@ function makeStoryboardChild(
       };
     }
   }
+
+  const compaction = inspectCompactionSummary(child);
+  if (compaction !== undefined && !compaction.expanded) {
+    const boundary: StoryboardBoundarySnapshot = Object.freeze({
+      row: child,
+      kind: "compaction",
+      tokensBefore: compaction.tokensBefore,
+    });
+    return { type: "boundary", boundary };
+  }
+  const customStatus = inspectStoryboardCustomStatus(child);
+  if (customStatus !== undefined) {
+    const boundary: StoryboardBoundarySnapshot = Object.freeze({
+      row: child,
+      kind: "custom-status",
+      customType: customStatus.customType,
+      content: customStatus.content,
+    });
+    return { type: "boundary", boundary };
+  }
   return { type: "native", row: child };
 }
 
@@ -1005,11 +1072,71 @@ type SessionSceneInfo = {
 /** Number of projected direct children consumed by one storyboard segment. */
 function storyboardSegmentChildCount(segment: StoryboardSegment): number {
   if (segment.type === "native") return segment.children.length;
+  if (segment.type === "boundary") return 1;
   return 1 + segment.actionRuns.reduce((count, run) => count + run.rows.length, 0);
 }
 
 function hasCommentary(segment: SessionSceneInfo["segment"]): boolean {
-  return segment.assistant.assistantContent?.some((content) => content.type === "commentary") ?? false;
+  const content = segment.assistant.assistantContent;
+  if (content !== undefined) return content.some((item) => item.type === "commentary");
+  // Preliminary snapshots intentionally omit native assistant children while
+  // the adapter decides which owners may use the reduced storyboard width.
+  // The validated phase flags still distinguish commentary from final/unknown
+  // text for that first ownership pass.
+  return segment.assistant.hasText &&
+    !segment.assistant.hasFinalAnswer &&
+    !segment.assistant.hasUnknownText;
+}
+
+function hasNativeAssistantDiagnostic(stopReason: string): boolean {
+  return stopReason === "length" || stopReason === "aborted" || stopReason === "error";
+}
+
+function isPiTerminalDiagnostic(value: unknown, stopReason: string): boolean {
+  if (!hasNativeAssistantDiagnostic(stopReason) || !isRecord(value)) return false;
+  const fields = value as Record<string, unknown>;
+  if (
+    typeof fields.text !== "string" ||
+    fields.paddingX !== 1 ||
+    fields.paddingY !== 0 ||
+    typeof fields.render !== "function"
+  ) {
+    return false;
+  }
+
+  const text = stripTerminalSequences(fields.text).trim();
+  if (stopReason === "length") return text === "Response was truncated before completion.";
+  if (stopReason === "aborted") return text === "Operation aborted" || text.length > 0;
+  return text.startsWith("Error: ") && text.length > "Error: ".length;
+}
+
+/**
+ * Terminal states are storyboard-compatible only when Pi's extra visible
+ * assistant child is the documented Text diagnostic. Unknown native children
+ * remain a hard native boundary.
+ */
+function canUseReducedAssistantWidth(
+  row: unknown,
+  assistant: AssistantMetadata,
+): boolean {
+  if (!hasNativeAssistantDiagnostic(assistant.stopReason)) return true;
+  if (!isRecord(row)) return false;
+  const fields = row as Record<string, unknown>;
+  const contentContainer = fields.contentContainer;
+  if (!isRecord(contentContainer) || !Array.isArray(contentContainer.children)) return false;
+
+  const children = contentContainer.children as unknown[];
+  const expectedContentChildren =
+    (assistant.hasVisibleContent ? 1 : 0) + assistant.contentKinds.length;
+  if (children.length < expectedContentChildren) return false;
+
+  let diagnosticCount = 0;
+  for (const child of children.slice(expectedContentChildren)) {
+    if (isPiStatusSpacer(child)) continue;
+    if (!isPiTerminalDiagnostic(child, assistant.stopReason)) return false;
+    diagnosticCount++;
+  }
+  return diagnosticCount <= 1;
 }
 
 function canContinueEmptyThinking(
@@ -1037,16 +1164,21 @@ function canContinueEmptyThinking(
   return !previousTurn.boundaryAfter && !nextTurn.boundaryBefore;
 }
 
+type SessionSceneIndex = {
+  readonly sceneInfo: ReadonlyMap<number, SessionSceneInfo>;
+  readonly hasToolScene: boolean;
+};
+
 /**
- * Plan ordinary one-turn storyboards plus the narrow visual continuation for
- * directly adjacent settled turns whose later thinking is empty/absent. The
- * session projection proves active-path ownership and hard boundaries; it does
- * not create or imply a durable agent-run identity.
+ * Match only the settled tool scenes that the active-path projection can
+ * prove. A compacted transcript can still contain older native children that
+ * are intentionally absent from buildContextEntries(); those scenes are left
+ * out of this index and remain native instead of invalidating newer matches.
  */
-function planSessionWorkSpans(
+function indexSessionScenes(
   segments: ReturnType<typeof buildStoryboard>["segments"],
   session: SessionProjection,
-): readonly WorkSpanPlan[] | undefined {
+): SessionSceneIndex {
   const usedTurns = new Set<number>();
   const sceneInfo = new Map<number, SessionSceneInfo>();
   let hasToolScene = false;
@@ -1055,7 +1187,6 @@ function planSessionWorkSpans(
     const segment = segments[index];
     if (segment?.type !== "scene" || segment.assistant.expectedToolCallIds.length === 0) continue;
     hasToolScene = true;
-
     // A live assistant/tool scene is not complete in the public session path
     // yet: Pi has not written its toolResult while the tool is executing. The
     // direct TUI ownership checks above are still sufficient for this single
@@ -1075,16 +1206,102 @@ function planSessionWorkSpans(
           turn.hasVisibleThinking === segment.assistant.hasThinking &&
           turn.hasCommentary === hasCommentary(segment),
         );
-      if (matchingTurns.length !== 1) return undefined;
+      // No match means that this scene is outside the current public context
+      // projection (most notably before compaction). Ambiguous matches are
+      // equally unsafe; both cases stay native without blocking other scenes.
+      if (matchingTurns.length !== 1 || usedTurns.has(matchingTurns[0]?.candidateIndex ?? -1)) continue;
       turnIndex = matchingTurns[0]!.candidateIndex;
-      if (usedTurns.has(turnIndex)) return undefined;
       usedTurns.add(turnIndex);
     }
 
     sceneInfo.set(index, Object.freeze({ segment, live, ...(turnIndex === undefined ? {} : { turnIndex }) }));
   }
 
-  if (!hasToolScene) return Object.freeze([]);
+  return Object.freeze({ sceneInfo, hasToolScene });
+}
+
+function validatedSessionSceneIndexes(
+  segments: ReturnType<typeof buildStoryboard>["segments"],
+  session: SessionProjection,
+): ReadonlySet<number> {
+  return new Set(indexSessionScenes(segments, session).sceneInfo.keys());
+}
+
+type AttachedWebSearchStatus = {
+  readonly boundaryIndex: number;
+  readonly sceneIndex: number;
+  readonly toolCallId: string;
+  readonly content: string;
+  readonly boundary: StoryboardBoundarySnapshot;
+};
+
+/**
+ * Link a visible status to a storyboard scene only when the active-path
+ * projection proves its custom_message -> exact toolResult -> web_search
+ * toolCall chain, and the native boundary directly follows that scene.
+ */
+function indexAttachedWebSearchStatuses(
+  segments: ReturnType<typeof buildStoryboard>["segments"],
+  session: SessionProjection,
+): ReadonlyMap<number, AttachedWebSearchStatus> {
+  const sceneIndex = indexSessionScenes(segments, session);
+  const attached = new Map<number, AttachedWebSearchStatus>();
+
+  for (let boundaryIndex = 1; boundaryIndex < segments.length; boundaryIndex++) {
+    const boundarySegment = segments[boundaryIndex];
+    const previous = segments[boundaryIndex - 1];
+    if (boundarySegment?.type !== "boundary" || previous?.type !== "scene") continue;
+    const boundary = boundarySegment.boundary;
+    if (boundary.kind !== "custom-status") continue;
+
+    const info = sceneIndex.sceneInfo.get(boundaryIndex - 1);
+    if (info?.turnIndex === undefined) continue;
+    const turn = session.turns[info.turnIndex];
+    if (turn === undefined) continue;
+
+    const matches = (session.webSearchStatuses ?? []).filter((status) =>
+      status.assistantEntryId === turn.entryId &&
+      status.content === boundary.content &&
+      turn.resultEntryIds.includes(status.resultEntryId) &&
+      turn.toolCallIds.includes(status.toolCallId),
+    );
+    if (matches.length !== 1) continue;
+    const status = matches[0]!;
+    const matchingTools = previous.actionRuns.flatMap((run) => run.rows).filter((row) =>
+      row.toolCallId === status.toolCallId &&
+      row.snapshot.toolName === "web_search" &&
+      row.snapshot.isPartial === false &&
+      row.snapshot.expanded === false &&
+      row.snapshot.result?.isError === false,
+    );
+    if (matchingTools.length !== 1) continue;
+
+    attached.set(boundaryIndex, Object.freeze({
+      boundaryIndex,
+      sceneIndex: boundaryIndex - 1,
+      toolCallId: status.toolCallId,
+      content: boundary.content,
+      boundary,
+    }));
+  }
+  return attached;
+}
+
+/**
+ * Plan ordinary one-turn storyboards plus the narrow visual continuation for
+ * directly adjacent settled turns whose later thinking is empty/absent. The
+ * session projection proves active-path ownership and hard boundaries; it does
+ * not create or imply a durable agent-run identity. Scenes that cannot form a
+ * safe span are omitted so their direct children can remain native without
+ * disabling independent plans.
+ */
+function planSessionWorkSpans(
+  segments: ReturnType<typeof buildStoryboard>["segments"],
+  session: SessionProjection,
+): readonly WorkSpanPlan[] {
+  const indexed = indexSessionScenes(segments, session);
+  if (!indexed.hasToolScene) return Object.freeze([]);
+  const sceneInfo = indexed.sceneInfo;
 
   const plans: WorkSpanPlan[] = [];
   for (let index = 0; index < segments.length;) {
@@ -1114,12 +1331,24 @@ function planSessionWorkSpans(
       }
     }
 
-    const span = scenes.length > 1
+    let span = scenes.length > 1
       ? buildEmptyThinkingContinuation(scenes)
       : buildWorkSpan([first.segment]);
-    if (span === undefined) return undefined;
-    plans.push(Object.freeze({ start: index, end, span }));
-    index = end + 1;
+    if (span === undefined && scenes.length > 1) {
+      // A later scene may be incompatible without invalidating an otherwise
+      // valid earlier scene. Retry the first scene alone; the later scene is
+      // reconsidered as a native or independent plan on the next iteration.
+      span = buildWorkSpan([first.segment]);
+      end = index;
+    }
+    if (span !== undefined) {
+      plans.push(Object.freeze({ start: index, end, span }));
+      index = end + 1;
+    } else {
+      // Keep this incompatible scene native while allowing independent scenes
+      // elsewhere in the transcript to use their validated storyboard.
+      index++;
+    }
   }
 
   return Object.freeze(plans);
@@ -1165,7 +1394,12 @@ function renderStoryboardIfRequested(
     }
   }
 
-  const storyboardRequested = [...metadata.values()].some(
+  const hasCollapsedCompaction = children.some((child) => {
+    const compaction = inspectCompactionSummary(child);
+    return compaction?.expanded === false;
+  });
+  const hasStoryboardCustomStatus = children.some((child) => inspectStoryboardCustomStatus(child) !== undefined);
+  const storyboardRequested = hasCollapsedCompaction || hasStoryboardCustomStatus || [...metadata.values()].some(
     (assistant) => assistant.expectedToolCallIds.length > 0 || assistant.hasThinking,
   );
   // Pi's global expansion state also applies to no-tool assistant rows. Do not
@@ -1196,9 +1430,33 @@ function renderStoryboardIfRequested(
   }
   const preChildren = children.map((child) => makeStoryboardChild(child, metadata, preSnapshots, candidates));
   const preProjection = buildStoryboard(preChildren);
+  // Read the active-path snapshot before choosing the assistant render width.
+  // After compaction, older direct transcript children may not have a matching
+  // public session turn; those children must be rendered natively at full width
+  // while newer, provable scenes can still use the storyboard.
+  const sessionProjection = options.getSessionProjection?.();
+  if (options.getSessionProjection !== undefined && sessionProjection === undefined) {
+    return { requested: true };
+  }
+  const validatedSceneIndexes = sessionProjection === undefined
+    ? undefined
+    : validatedSessionSceneIndexes(preProjection.segments, sessionProjection);
   const sceneOwners = new Set<unknown>();
-  for (const segment of preProjection.segments) {
-    if (segment.type === "scene") sceneOwners.add(segment.assistant.assistantRow);
+  for (let index = 0; index < preProjection.segments.length; index++) {
+    const segment = preProjection.segments[index];
+    const sceneMetadata = segment?.type === "scene" && isAssistant(segment.assistant.assistantRow)
+      ? metadata.get(segment.assistant.assistantRow)
+      : undefined;
+    if (
+      segment?.type === "scene" &&
+      (options.getSessionProjection === undefined ||
+        segment.assistant.expectedToolCallIds.length === 0 ||
+        validatedSceneIndexes?.has(index)) &&
+      (segment.assistant.expectedToolCallIds.length === 0 ||
+        (sceneMetadata !== undefined && canUseReducedAssistantWidth(segment.assistant.assistantRow, sceneMetadata)))
+    ) {
+      sceneOwners.add(segment.assistant.assistantRow);
+    }
   }
 
   const nativeLines = new Map<Component, string[]>();
@@ -1206,6 +1464,8 @@ function renderStoryboardIfRequested(
   const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
   for (const child of children) {
     if (child instanceof ToolExecutionComponent) continue;
+    const compaction = inspectCompactionSummary(child);
+    if (compaction?.expanded === false || inspectStoryboardCustomStatus(child) !== undefined) continue;
     if (!child || typeof child.render !== "function") return { requested: true };
     const assistantMetadata = isAssistant(child) ? metadata.get(child) : undefined;
     const renderWidth = assistantMetadata !== undefined && sceneOwners.has(child)
@@ -1220,11 +1480,10 @@ function renderStoryboardIfRequested(
         presentation = inspectAssistantPresentation(child, assistantMetadata, renderWidth, lines);
         if (presentation === undefined) return { requested: true };
         if (
-          options.getSessionProjection !== undefined &&
           presentation !== null &&
           assistantMetadata.expectedToolCallIds.length > 0
         ) {
-          presentation = widenCommentaryPresentation(presentation, safeWidth);
+          presentation = widenStoryboardBreakouts(presentation, safeWidth);
           if (presentation === undefined) return { requested: true };
         }
       }
@@ -1273,9 +1532,7 @@ function renderStoryboardIfRequested(
     thinkingDecorations.set(owner, decoration);
   }
 
-  const renderNative = (child: StoryboardChild): string[] => {
-    const component = componentForStoryboardChild(child);
-    if (component === undefined) throw new Error("native storyboard child is not renderable");
+  const renderNativeComponent = (component: Component): string[] => {
     const decorated = thinkingDecorations.get(component);
     if (decorated !== undefined) return [...decorated.lines];
     const cached = nativeLines.get(component);
@@ -1286,11 +1543,21 @@ function renderStoryboardIfRequested(
     return lines;
   };
 
+  const renderNative = (child: StoryboardChild): string[] => {
+    const component = componentForStoryboardChild(child);
+    if (component === undefined) throw new Error("native storyboard child is not renderable");
+    return renderNativeComponent(component);
+  };
+
+  const renderBoundary = (
+    boundary: StoryboardBoundarySnapshot,
+    placement: "standalone" | "standalone-root" = "standalone",
+  ): string[] => renderStoryboardBoundary(boundary, safeWidth, theme, settings, placement);
+
   if (options.getSessionProjection !== undefined) {
-    const session = options.getSessionProjection();
+    const session = sessionProjection;
     if (session === undefined) return { requested: true };
     const plans = planSessionWorkSpans(projection.segments, session);
-    if (plans === undefined) return { requested: true };
 
     const expansionGaps = expansionStatus?.gaps ?? [];
     const gapLayouts = new Map<ExpansionStatusGap, readonly {
@@ -1307,14 +1574,16 @@ function renderStoryboardIfRequested(
     }
 
     const planByStart = new Map(plans.map((plan) => [plan.start, plan]));
+    const attachedWebSearchStatuses = indexAttachedWebSearchStatuses(projection.segments, session);
+    const statusByPlanStart = new Map<number, AttachedWebSearchStatus>();
     const covered = new Set<number>();
     const workMembers = new Set<Component>();
     const workMouse = new Map<Component, { component: Component; height: number }>();
     const workLayouts = new Map<number, { readonly lines: readonly string[] }>();
     const nativeMouse = new Map<Component, { component: Component; height: number }>();
     // Normally the private Container mouse layout follows direct-child order.
-    // A bridged status pair is rendered after its atomic scene, so use the
-    // actual visual order only for that compatibility path.
+    // Transient Pi status pairs can be projected out of ownership matching, so
+    // use the actual visual order only for that compatibility path.
     const visualMouseChildren: Array<{ component: Component; height: number }> | undefined =
       expansionGaps.length === 0 ? undefined : [];
     let nextExpansionGap = 0;
@@ -1346,6 +1615,25 @@ function renderStoryboardIfRequested(
       }
     };
 
+    // A settled scene that is absent from the active-path projection is most
+    // commonly an older transcript region hidden by compaction. Preserve Pi's
+    // native rendering for that direct-child range without sacrificing newer
+    // scenes whose call IDs are still provable.
+    const appendNativeDirectChildren = (start: number, end: number): void => {
+      for (let childIndex = start; childIndex < end; childIndex++) {
+        const child = children[childIndex];
+        if (!child || typeof (child as Component).render !== "function") {
+          throw new Error("native direct child is not renderable");
+        }
+        const component = child as Component;
+        const lines = renderNativeComponent(component);
+        rendered.push(...lines);
+        const mouse = { component, height: lines.length };
+        nativeMouse.set(component, mouse);
+        visualMouseChildren?.push(mouse);
+      }
+    };
+
     for (const plan of plans) {
       for (let index = plan.start; index <= plan.end; index++) {
         covered.add(index);
@@ -1355,12 +1643,26 @@ function renderStoryboardIfRequested(
         if (assistant === undefined) throw new Error("work span assistant is not renderable");
         workMembers.add(assistant);
         if (index !== plan.start) continue;
+        const trailingStatus = attachedWebSearchStatuses.get(plan.end + 1);
+        const attachedStatus = trailingStatus?.sceneIndex === plan.end ? trailingStatus : undefined;
+        const detailsByToolCallId = new Map<string, string>();
+        if (attachedStatus !== undefined) {
+          detailsByToolCallId.set(attachedStatus.toolCallId, attachedStatus.content);
+          statusByPlanStart.set(plan.start, attachedStatus);
+          const statusComponent = componentForStoryboardChild({
+            type: "boundary",
+            boundary: attachedStatus.boundary,
+          });
+          if (statusComponent === undefined) throw new Error("attached search status is not renderable");
+          workMembers.add(statusComponent);
+        }
         const layout = renderStoryboardWorkSpanLayout(
           plan.span,
           safeWidth,
           theme,
           options.renderGroup,
           settings,
+          detailsByToolCallId,
         );
         workLayouts.set(plan.start, layout);
         const proxy = new StoryboardSceneMouseProxy(
@@ -1398,6 +1700,15 @@ function renderStoryboardIfRequested(
           if (segment === undefined) throw new Error("work span segment missing");
           segmentEnd += storyboardSegmentChildCount(segment);
         }
+        const attachedStatus = statusByPlanStart.get(index);
+        if (attachedStatus !== undefined) {
+          const statusSegment = projection.segments[attachedStatus.boundaryIndex];
+          if (statusSegment?.type !== "boundary" || statusSegment.boundary !== attachedStatus.boundary) {
+            throw new Error("attached search status boundary changed");
+          }
+          segmentEnd += storyboardSegmentChildCount(statusSegment);
+          covered.add(attachedStatus.boundaryIndex);
+        }
         appendExpansionGapsBefore(segmentStart);
 
         const layout = workLayouts.get(index);
@@ -1414,7 +1725,7 @@ function renderStoryboardIfRequested(
         }
         projectedChildCursor = segmentEnd;
         appendExpansionGapsAfter(segmentStart, segmentEnd);
-        index = plan.end;
+        index = attachedStatus?.boundaryIndex ?? plan.end;
         continue;
       }
       if (covered.has(index)) continue;
@@ -1423,6 +1734,35 @@ function renderStoryboardIfRequested(
       const segmentStart = projectedChildCursor;
       const segmentEnd = segmentStart + storyboardSegmentChildCount(segment);
       appendExpansionGapsBefore(segmentStart);
+
+      if (segment.type === "boundary") {
+        const component = componentForStoryboardChild({ type: "boundary", boundary: segment.boundary });
+        if (component === undefined) throw new Error("boundary component is not renderable");
+        const leadingBlank = rendered.length > 0 && rendered.at(-1) !== "" ? 1 : 0;
+        if (leadingBlank > 0) rendered.push("");
+        const lines = renderBoundary(
+          segment.boundary,
+          segment.boundary.kind === "custom-status" ? "standalone-root" : "standalone",
+        );
+        rendered.push(...lines);
+        const mouse = { component, height: leadingBlank + lines.length };
+        nativeMouse.set(component, mouse);
+        visualMouseChildren?.push(mouse);
+        projectedChildCursor = segmentEnd;
+        appendExpansionGapsAfter(segmentStart, segmentEnd);
+        continue;
+      }
+
+      if (
+        segment.type === "scene" &&
+        plan === undefined &&
+        segment.assistant.expectedToolCallIds.length > 0
+      ) {
+        appendNativeDirectChildren(segmentStart, segmentEnd);
+        projectedChildCursor = segmentEnd;
+        appendExpansionGapsAfter(segmentStart, segmentEnd);
+        continue;
+      }
 
       if (segment.type === "scene") {
         const assistant = componentForStoryboardChild({ type: "assistant", assistant: segment.assistant });
@@ -1518,7 +1858,23 @@ function renderStoryboardIfRequested(
     return { requested: true, output: rendered };
   }
 
-  for (const segment of projection.segments) {
+  for (let index = 0; index < projection.segments.length; index++) {
+    const segment = projection.segments[index]!;
+    if (segment.type === "boundary") {
+      const component = componentForStoryboardChild({ type: "boundary", boundary: segment.boundary });
+      if (component === undefined) throw new Error("boundary component is not renderable");
+      const leadingBlank = rendered.length > 0 && rendered.at(-1) !== "" ? 1 : 0;
+      if (leadingBlank > 0) {
+        rendered.push("");
+      }
+      const lines = renderBoundary(
+        segment.boundary,
+        segment.boundary.kind === "custom-status" ? "standalone-root" : "standalone",
+      );
+      rendered.push(...lines);
+      mouseChildren.push({ component, height: leadingBlank + lines.length });
+      continue;
+    }
     if (segment.type === "scene") {
       const assistant = componentForStoryboardChild({ type: "assistant", assistant: segment.assistant });
       if (assistant === undefined) throw new Error("scene assistant is not renderable");

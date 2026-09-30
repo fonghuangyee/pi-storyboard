@@ -69,7 +69,7 @@ Relevant entry categories include:
 - `model_change`, `thinking_level_change`, `label`, and `session_info` entries;
 - additional schema entries introduced by later Pi versions.
 
-Known transparent state entries are safe for ownership continuity only when they are not visible transcript rows. User messages, system messages, visible custom messages, summaries, compaction, branch changes, unknown entries, and malformed parent chains are hard boundaries. A validated runtime `context_edit` deletion marker (`targetId` plus `replacement: null`) is also non-visual, but is treated as a hard boundary so exact scene ownership can continue without visually composing across a model-context edit. Replacement payloads or extra fields remain incompatible and fail open. If the projection cannot classify an entry safely, storyboard continuation fails open.
+Known transparent state entries are safe for ownership continuity only when they are not visible transcript rows. User messages, system messages, visible custom messages, summaries, branch changes, unknown entries, and malformed parent chains are hard boundaries. The recognized visible `web-search-content-ready` custom status remains a separate hard-boundary message. It is rendered as plain wrapped detail under a `web_search` tool row only when the active-path projection proves the custom-message entry's parent is its exact matched tool-result entry and that result belongs to an unambiguous `web_search` call; otherwise it is shown as a standalone plain-text storyboard status. No tool ID or ownership is invented. Other visible custom messages remain native. A collapsed compaction summary is a storyboard-owned hard-boundary row; only its explicitly expanded state uses Pi's native preview. A validated runtime `context_edit` deletion marker (`targetId` plus `replacement: null`) is also non-visual, but is treated as a hard boundary so exact scene ownership can continue without visually composing across a model-context edit. Replacement payloads or extra fields remain incompatible and fail open. If the projection cannot classify an entry safely, storyboard continuation fails open. A compaction can also leave older direct transcript children visible in the TUI while those entries are absent from `buildContextEntries()`; those unmatched older scenes remain native, while independently matched scenes after the compaction may still storyboard. The compaction boundary is never visually bridged.
 
 ### 2.2 Assistant content is ordered; tool results are separate
 
@@ -118,11 +118,11 @@ The sole cross-response visual exception is the constrained empty/absent-thinkin
 
 Pi's interactive transcript contains native assistant and tool-execution components as separate children. `AssistantMessageComponent` renders visible thinking and text but skips tool-call blocks; `ToolExecutionComponent` rows are rendered separately and later updated by matching tool results. This can flatten an interleaved assistant content array.
 
-The extension therefore reuses native assistant children and reconstructs only the presentation order around validated compact tool summaries. It never recreates Markdown, thinking text, diagnostics, diffs, or images.
+The extension therefore reuses native assistant children and reconstructs only the presentation order around validated compact tool summaries. It never recreates Markdown, thinking text, diffs, or images. A recognized Pi terminal diagnostic is retained as its original Text child and emitted as a storyboard-owned full-width diagnostic breakout. The recognized `web-search-content-ready` custom status is sanitized and bounded; when its exact active-path tool-result link is proven it becomes wrapped plain-text detail beneath that `web_search` row, otherwise it stays a standalone storyboard status. An unknown visible native child remains a native ownership boundary.
 
 Pi's native thinking renderer skips empty thinking runs. An empty `thinking: ""` block may still carry an opaque provider signature required for replay, so visual omission is permitted but message/content/signature mutation is not.
 
-Pi's global `app.tools.expand` action also appends a native spacer/status-text pair such as `Tool output: expanded` while the toggle is being reported. The interactive `/session` command can similarly append a `Text` status pair headed `Session Info` while a response is still streaming. If either pair lands between a still-streaming assistant component and the tool component created by a later message update, it is not transcript content and can otherwise strand the tool outside its owner window. In session-aware mode the adapter recognizes only these exact Pi-shaped pairs, proves the owner with the active-path tool-call IDs, and keeps each pair visible after the atomic scene. All other native children remain ownership boundaries; legacy adjacency mode does not bridge either pair.
+Pi's global `app.tools.expand` action also appends a native spacer/status-text pair such as `Tool output: expanded` while the toggle is being reported. The interactive `/session` command can similarly append a `Text` status pair headed `Session Info` while a response is still streaming. If either pair lands between a still-streaming assistant component and the tool component created by a later message update, it is not transcript content and can otherwise strand the tool outside its owner window. In session-aware mode the adapter recognizes only these exact Pi-shaped pairs, proves the owner with the active-path tool-call IDs, and keeps each pair visible after the atomic scene. A collapsed compaction summary is handled separately as a storyboard boundary; when Pi's native expansion state is active, the original component is rendered natively. The recognized `web-search-content-ready` custom status remains a separate transcript message and hard boundary; only its visually attached detail presentation is allowed when active-path IDs prove the exact `web_search` result. All other native children remain ownership boundaries; legacy adjacency mode does not bridge these rows.
 
 ## 3. Marketplace-facing behavior
 
@@ -218,14 +218,15 @@ Command timing is shown only when Pi exposes valid `startedAt`/`endedAt` state. 
 
 ### 3.4 Failure and running behavior
 
-Failures remain in their normal semantic group. They use an error-colored `●` and one generic bounded diagnostic, separated from the main value by the literal ` - `:
+Failures remain in their normal semantic group. They use an error-colored `●`, while the bounded generic diagnostic is always rendered on a new indented line:
 
 ```text
 Run 1 command
-  ● npm run check - Command exited with code 1
+  ● npm run check
+    Command exited with code 1
 ```
 
-The adapter does not classify tool-specific error formats. It scans text result blocks, sanitizes lines, skips empty/structural tails such as `}` and serialized property lines, prefers the last generic diagnostic-looking line, and otherwise uses the last useful line. The stored summary is capped at 512 Unicode code points; if no usable text exists, it is `Failed`. Full output remains owned by Pi and is available through native expansion.
+The adapter does not classify tool-specific error formats. It scans text result blocks, sanitizes lines, skips empty/structural tails such as `}` and serialized property lines, prefers the last generic diagnostic-looking line, and otherwise uses the last useful line. The stored summary is capped at 512 Unicode code points; if no usable text exists, it is `Failed`. The complete bounded summary is wrapped rather than trimmed, and no `-` prefix is added. Full output remains owned by Pi and is available through native expansion.
 
 Every running call, including a running edit, is compact while collapsed. A running edit never copies `oldText`, `newText`, diff, patch, preview, or full result details. If it later settles or fails, its compact row updates without invoking the native edit renderer in collapsed mode.
 
@@ -273,17 +274,19 @@ Empty or absent thinking is semantically retained but visually empty:
 - the legacy per-turn fallback, when no session projection is available, may use a presentation-only `Thinking...` header for a tool-only response;
 - the commentary-suffix placeholder is a separate, same-response exception and does not change this policy.
 
-A continuous thinking block longer than four paragraphs shows the first two and last two, with an explicit presentation-only hidden count such as `↳ 2 thinking steps behind the scenes`. The native thinking component and full content remain available through Pi's normal thinking toggle. Commentary is never collapsed.
+A continuous thinking block longer than four paragraphs shows the first paragraph and last three paragraphs, with an explicit presentation-only hidden count such as `↳ 2 thinking steps behind the scenes`. The native thinking component and full content remain available through Pi's normal thinking toggle. Commentary is never collapsed.
 
 ### 3.7 Presentation settings
 
-`/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path and command trimming modes, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
+`/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path, command, and generic-tool-argument trimming modes, one `showToolMetadata` switch for optional timing and argument metadata, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
 
 The command buffers edits until Save. Saving atomically replaces the selected dedicated settings file, `~/.pi/agent/pi-storyboard.json` for global scope or `.pi/pi-storyboard.json` for project scope. Pi's unrelated `settings.json` files are never changed. The project scope is unavailable when `ctx.isProjectTrusted()` is false. A successful save runs Pi's reload flow so the new immutable snapshot is active immediately; cancelling writes nothing. Non-TUI modes show a warning and perform no I/O.
 
 Settings are read from `~/.pi/agent/pi-storyboard.json` and, for trusted projects, `.pi/pi-storyboard.json`. Project values override global values; an invalid project field falls back to the corresponding validated global field so one bad project value cannot erase unrelated global customization. Invalid global values fall back independently to built-in defaults. Symbols cannot contain terminal controls or line breaks, and colors are allowlisted Pi theme tokens. The editor accepts short text input for symbols and cycles through the allowlisted color names. Theme ANSI strings are still generated at render time.
 
-Each trimming field accepts one of three values: `none` preserves the complete relevant collapsed-row text, including bounded error diagnostics, by wrapping it across lines; `middle` keeps both the beginning and end with a middle ellipsis; and `end` keeps the beginning with an end ellipsis. The default is `middle`. The previous boolean schema remains readable for migration (`true` maps to `middle`, `false` maps to `none`); settings saved by the editor use the string modes.
+Each trimming field accepts one of three values: `none` preserves the complete target value by wrapping it; `middle` keeps both the beginning and end with a middle ellipsis; and `end` keeps the beginning with an end ellipsis. `fileNames` applies only to path/filename values, `commands` applies only to Bash/PowerShell command values, and `tools` applies to the compact JSON arguments of custom, MCP, and subagent tools. Offsets, limits, search metadata, replacement counts, `cwd`, timing, bounded error diagnostics, and bounded web-search status details are never trim targets; they remain complete and wrap when necessary. Errors and attached status details start on their own indented line without a `-` prefix. The default is `middle`. The previous boolean schema remains readable for migration (`true` maps to `middle`, `false` maps to `none`); settings saved by the editor use the string modes.
+
+`showToolMetadata` defaults to `true`. When false, the compact renderer hides optional timing, range, replacement-count, search-option, `cwd`, and similar metadata suffixes while retaining the primary path/command/tool-argument value, tool name, status marker, headings, and bounded error diagnostics. It does not affect native expansion or ownership.
 
 The settings page is presentation-only: it does not change ownership, grouping, source order, native expansion, messages, session entries, tools, prompts, or model behavior.
 
@@ -300,7 +303,11 @@ running > failed > complete > note
 - `complete`: settled scene with tools and no failure;
 - `note`: thinking content without tools.
 
-The final meaningful source child gets `╰─`; earlier action runs get `├─`. If native content is the final child, its terminal marker closes the scene instead.
+The final meaningful source child gets `╰─`; earlier action runs get `├─`. A recognized terminal diagnostic is a full-width storyboard breakout in its exact source position, so it is not placed on the action rail. Unknown native content remains a native boundary.
+
+A Pi terminal diagnostic is presentation data, not a reason to discard an otherwise validated scene. For the known `Text` diagnostic shape, the adapter reuses Pi's rendered lines and original child for mouse mapping while the storyboard owns placement. If the stop reason or private child shape is not recognized, the conservative native fallback still applies.
+
+A collapsed compaction summary is presentation-owned as an independent hard boundary: it displays only `Compacted from N tokens`, derived from Pi's `tokensBefore` field. The caption is generated by the extension, not copied from the summary text; no expansion hint is appended. The summary never visually joins the scene before or after it. When Pi marks it expanded, the original component is the sole native preview; collapsing it returns to the concise boundary caption. The validated `web-search-content-ready` custom message remains distinct, but when active-path IDs prove its parent tool result belongs to an unambiguous `web_search` call, its sanitized, bounded content is rendered as plain wrapped detail beneath that exact tool row. It does not add a tool count or receive a synthetic `toolCallId`. If that link cannot be proven, the status is a standalone plain-text storyboard row. Both cases omit the custom-type label and native message box.
 
 Pi's configured global tool expansion state is authoritative. Expanded mode is a hard boundary: all affected tool rows and storyboard decoration return to Pi's complete native rendering, including live output, edit diffs, images, custom details, diagnostics, and no-tool thinking markers. The extension does not register a shortcut or assume a particular key binding.
 
@@ -338,7 +345,7 @@ type StoryboardWorkSpan = {
 };
 ```
 
-`StoryboardScene` is the ownership unit. `StoryboardWorkSpan` is a presentation composition. `StoryboardChapter` contains thinking/action items; `StoryboardBreakout` contains full-width commentary. Synthetic placeholder nodes are presentation-only and never become native or session data.
+`StoryboardScene` is the ownership unit. `StoryboardWorkSpan` is a presentation composition. `StoryboardChapter` contains thinking/action items; `StoryboardBreakout` contains full-width commentary or a recognized Pi terminal diagnostic. `StoryboardBoundarySegment` contains a collapsed compaction boundary or a recognized web-search status. A proven web-search status may be passed as presentation-only row detail for its exact call; it remains a separate boundary/message and does not change the scene's assistant/tool ownership. Synthetic placeholder nodes and boundaries are presentation-only and never become model or session data.
 
 ### 4.2 Building one scene
 
@@ -349,13 +356,13 @@ type StoryboardWorkSpan = {
 3. require unique assistant call IDs and unique tool-row IDs;
 4. require the complete direct window to have exactly the assistant's call-ID set;
 5. reorder validated rows by assistant source call order;
-6. reject expanded or malformed rows, final/unknown text with tools, extra rows, missing rows, or unsupported children;
-7. make a native segment for every rejected affected region;
+6. reject expanded or malformed rows, final/unknown text with tools, extra rows, missing rows, or unsupported children; recognize only the validated Pi terminal diagnostic Text shape, collapsed compaction boundary, and `web-search-content-ready` custom status as storyboard content;
+7. make a native segment for every rejected affected region; expanded compaction remains a native segment so Pi's expansion state restores its full summary preview, while the recognized custom status remains a hard storyboard boundary and never renders its native message box; only its visual placement as row detail requires exact `web_search` result association;
 8. otherwise create one scene and split adjacent same-kind tools into action runs.
 
 When no tool calls exist, only a thinking-only assistant can become a quiet scene. Ordinary final answers and unrelated assistant messages remain native.
 
-Native children and diagnostic children are never silently absorbed. A visible native child is a boundary. An invisible assistant component may be skipped by the legacy grouping state machine only when it has no rendered output; it does not justify semantic ownership guessing.
+Unknown native children and unrecognized diagnostic children are never silently absorbed. A visible unknown native child is a boundary. A recognized Pi terminal diagnostic is the explicit exception described above and is retained as a source-ordered storyboard breakout. A collapsed compaction component and the recognized web-search completion status are explicit boundary exceptions described above; an expanded compaction state remains native. An invisible assistant component may be skipped by the legacy grouping state machine only when it has no rendered output; it does not justify semantic ownership guessing.
 
 ### 4.3 Source-order content
 
@@ -366,7 +373,7 @@ When native child extraction is available, `orderedChildren` contains:
 { type: "tool", tool: StoryboardToolSnapshot }
 ```
 
-The renderer uses that order, not direct child order or tool completion order. Each native assistant child remains the original component and rendered line set. Text phase metadata is reduced to a validated enum; raw signatures never leave the adapter.
+The renderer uses that order, not direct child order or tool completion order. Each assistant child remains tied to the original component and rendered line set; recognized terminal diagnostics are rendered as full-width storyboard breakouts rather than as the original assistant preview. Collapsed compaction summaries are rendered as boundary segments, while expanded summaries remain the original Pi component. A proven custom status is passed separately as a bounded row-detail annotation, never inserted into `AssistantMessage.content` or the tool-call list. Text phase metadata is reduced to a validated enum; raw signatures never leave the adapter.
 
 A source sequence such as:
 
@@ -428,6 +435,14 @@ type ProjectedAssistantTurn = {
   boundaryBefore: boolean;
   boundaryAfter: boolean;
 };
+
+type ProjectedWebSearchStatus = {
+  entryId: string;
+  assistantEntryId: string;
+  resultEntryId: string;
+  toolCallId: string;
+  content: string; // sanitized, capped at 512 code points; only for visible-status matching
+};
 ```
 
 The module:
@@ -439,6 +454,7 @@ The module:
 - marks incomplete or duplicate ownership invalid;
 - treats model/thinking-level/label/session-info entries and hidden custom state as transparent;
 - treats user/assistant/non-tool messages, compaction, branch summaries, and visible custom state as boundaries;
+- retains only sanitized bounded text plus exact entry, assistant, result, and call IDs for a recognized web-search status whose parent is its matching tool-result entry and whose assistant call name is `web_search`; the status still marks a hard visual boundary;
 - returns `undefined` on ambiguity rather than guessing.
 
 It retains no full message, provider payload, thinking signature, tool argument, output, diff, patch, or result detail.
@@ -450,7 +466,7 @@ Within a validated scene/work span:
 - visible thinking starts or continues a chapter;
 - validated commentary flushes the chapter and renders as a full-width native breakout;
 - eligible action after a same-response commentary breakout receives the fixed placeholder only when a visible thinking root already exists;
-- final/unknown/native diagnostic content cannot safely be placed in a cross-turn rail and causes the affected scene to remain native;
+- final/unknown text and unrecognized visible native content remain native; recognized Pi terminal diagnostics (`Response was truncated before completion.` and compatible validated terminal Text shapes) are storyboard breakouts and no longer force the whole assistant/tool scene native; the diagnostic remains source ordered and mouse-addressable;
 - action runs merge within their original validated scene; a validated empty/absent-thinking continuation may additionally coalesce adjacent same-kind runs for presentation without merging scene ownership.
 
 The renderer never turns commentary into a synthetic title and never moves it after tools.
@@ -469,7 +485,8 @@ Eligibility and grouping are separate from rendering:
 
 1. `src/pi-adapter.ts` validates a native row and creates a minimal `ToolRowSnapshot`.
 2. `grouping.ts` merges adjacent matching kinds and preserves native boundaries.
-3. `src/renderer.ts` formats and width-checks the immutable group snapshot.
+3. `src/renderer.ts` formats and width-checks the immutable group snapshot, including any separately proven, bounded presentation-only detail aligned with its exact tool row.
+4. `src/safe-display.ts` contains the pure terminal-control sanitizer shared by the renderer and session projection.
 
 The legacy grouping path allows an empty assistant component between visually adjacent tool rows without flushing a run. It does not skip visible assistant output or incompatible components. Singleton groups are intentional so one collapsed row has the same compact presentation as a batch.
 
@@ -479,11 +496,13 @@ The legacy grouping path allows an empty assistant component between visually ad
 
 - uses the active theme at render time;
 - uses `visibleWidth()`, `sliceByColumn()`, and `truncateToWidth()` from `pi-tui`;
-- strips ANSI CSI/OSC and C0/C1 control sequences from model/tool-controlled display values;
+- uses the pure `safe-display.ts` helper to strip ANSI CSI/OSC and C0/C1 control sequences from model/tool-controlled display values;
 - flattens newlines, tabs, and other line-breaking controls;
-- uses independent `none`, `middle`, or `end` modes for long path/file-name and command values, defaulting to `middle`;
-- wraps complete affected row text, including bounded error diagnostics, when a mode is `none`, while keeping every returned line within the requested width;
-- reserves width for the literal failure separator before truncating the diagnostic;
+- uses independent `none`, `middle`, or `end` modes for long path/file-name, command, and generic-tool-argument values, defaulting to `middle`;
+- applies trimming only to the selected path/file-name, command, or generic-tool-argument value; all metadata remains complete and wraps when necessary;
+- renders every bounded error diagnostic on a new indented line without a prefix marker and wraps it without applying trim modes;
+- renders a proven web-search completion status as plain wrapped row detail with the same no-trim, new-indented-line behavior; it does not display the internal custom type or pretend the status is a tool result;
+- hides optional timing and argument metadata when `showToolMetadata` is false without hiding the primary value or diagnostic;
 - never returns a line wider than the requested width, including widths from 1 through 200;
 - falls back to compact JSON for malformed recognized arguments without guessing;
 - never renders successful result contents, write content, command output, diffs, patches, image data, or generic tool output;
@@ -507,6 +526,7 @@ pi-storyboard/
 │   ├── index.ts              # extension command, lifecycle, projection cache
 │   ├── grouping.ts           # pure semantic grouping state machine
 │   ├── renderer.ts           # safe compact group summaries
+│   ├── safe-display.ts       # pure terminal-control sanitizer
 │   ├── storyboard.ts         # pure scene/work-span/order validation
 │   ├── session-projection.ts  # pure public active-path index
 │   ├── storyboard-renderer.ts # rails, markers, chapters, width, closure
@@ -555,6 +575,8 @@ The adapter feature-detects:
 - `Container.prototype.render` and its original property descriptor;
 - constructibility of `ToolExecutionComponent`;
 - native assistant/tool private fields needed for validation;
+- collapsed/expanded compaction-summary message and component shapes;
+- the recognized visible custom-message shape and active-path proof needed for web-search row details;
 - native assistant child and mouse-layout shapes;
 - the exact native spacer/status shape used by Pi's expansion feedback;
 - valid theme and group-renderer output.
@@ -570,32 +592,33 @@ Symbol.for("pi-storyboard.container.v1")
 A patched container render follows this flow:
 
 1. Copy the direct child array for this pass; in session-aware mode, project only the exact Pi expansion or `/session` status pair out of ownership matching while retaining its native rows for output.
-2. Inspect assistant metadata and tool-row snapshots without retaining unsafe payloads.
+2. Inspect assistant metadata, collapsed compaction-boundary fields, and tool-row snapshots without retaining unsafe payloads.
 3. Build a preliminary storyboard to identify owners.
-4. Render each native non-tool child once at the correct width.
+4. Render each native non-tool child once at the correct width; collapsed compaction components and recognized web-search status components are represented by storyboard boundaries and are not rendered.
 5. Reconstruct native assistant child regions from Pi's own `contentContainer` and mouse layout.
 6. Rebuild the final storyboard from validated snapshots.
-7. In session-aware mode, uniquely match settled scenes to the active-path projection.
+7. In session-aware mode, uniquely match settled scenes to the active-path projection; scenes absent from that projection (including pre-compaction transcript children) remain native.
 8. Build ordinary work spans or the restricted empty-thinking continuation.
-9. Render compact groups and native children in source order.
+9. Render compact groups, recognized diagnostic breakouts, compact status/compaction boundaries, and native fallback children in source order; render a web-search status as detail under its exact `web_search` row only when the active-path entry chain proves the custom-message parent is that call's tool result; otherwise render it as standalone plain status; render a compaction component natively only while explicitly expanded;
 10. Rebuild the container's mouse layout with storyboard proxies and zero-height grouped members.
 11. Return the projected output.
-12. On any incompatibility, exception, invalid child output, ambiguous ownership, or renderer failure, call Pi's original container renderer once for the complete affected container.
+12. On any incompatibility, exception, invalid child output, ambiguous ownership, or renderer failure that cannot be isolated, call Pi's original container renderer once for the complete affected container. An isolated incompatible scene remains native while independently validated scene plans continue.
 
 The adapter never embeds a native tool renderer inside a valid collapsed storyboard. A collapsed running edit remains a compact row; explicit expansion restores the original native component.
 
 ### 6.4 Native components and mouse interaction
 
-Native assistant children remain the actual Pi components. Storyboard layout subtracts the measured assistant/branch gutter before asking native children to render. Native content is not recreated, so Markdown styling, links, OSC behavior, code blocks, diagnostics, and thinking toggles remain Pi-owned.
+Native assistant children remain the actual Pi components. Storyboard layout subtracts the measured assistant/branch gutter before asking compatible children to render. Native content is not recreated, so Markdown styling, links, OSC behavior, code blocks, and thinking toggles remain Pi-owned; recognized terminal diagnostics reuse Pi's rendered Text lines inside a storyboard breakout.
 
 Because the storyboard changes visible heights and prefixes, the adapter rebuilds the private container mouse layout. It uses:
 
 - an inert mouse sink for compact group blocks;
 - a scene proxy that translates storyboard coordinates back to native assistant children;
 - a thinking proxy for mixed no-tool responses where only thinking markers move and final/unknown text stays at native coordinates;
-- zero-height entries for hidden grouped tool members.
+- zero-height entries for hidden grouped tool members;
+- boundary entries mapped to their original components so native compaction expansion state can be observed on the next render; an attached custom status maps to a mouse sink within the storyboard-owned tool detail, while a standalone status keeps its own boundary mapping.
 
-Branches and summaries are presentation-only mouse sinks. Native expansion and thinking toggles remain active.
+Branches and summaries are presentation-only mouse sinks. Native expansion and thinking toggles remain active; a collapsed compaction summary is never rendered through Pi's component.
 
 ### 6.5 Presentation-settings boundary
 
@@ -630,9 +653,9 @@ The complete affected region remains native when any of the following occurs:
 - a missing result after a settled response;
 - expanded rows or global expansion;
 - final-answer, unknown, malformed, or in-progress text that cannot be safely classified;
-- unsupported assistant content or entry type;
-- session mapping ambiguity, active-path uncertainty, compaction/branch uncertainty, or a hard boundary;
-- a visible custom/native child between candidate scenes (except the exact session-proven Pi expansion or `/session` status pair described in [Section 2.4](#24-native-tui-behavior));
+- unsupported assistant content or entry type, or an unrecognized visible terminal diagnostic child;
+- session mapping ambiguity, active-path uncertainty, compaction/branch uncertainty, or a hard boundary; an affected scene remains native, while independently proven scenes elsewhere in the container may still storyboard;
+- a visible custom/native child between candidate scenes; the recognized web-search status remains its own hard boundary, with optional exact row-detail display only, while the exact session-proven Pi expansion or `/session` status pair described in [Section 2.4](#24-native-tui-behavior) remains native but outside tool ownership matching;
 - incompatible private component fields or mouse layout;
 - invalid native child/group output;
 - an exception in classification, projection, layout, or rendering;
@@ -660,7 +683,7 @@ The extension must never:
 - make network calls or LLM calls;
 - perform filesystem writes outside the explicit user-initiated settings save boundary, subprocess work, timers, or background work.
 
-Allowed state is limited to immutable extension-owned snapshots and minimal ephemeral active-path IDs/boundary flags needed for presentation validation. All state is session-local, discarded on invalidation/shutdown, and never sent back to Pi's model or session.
+Allowed state is limited to immutable extension-owned snapshots, minimal ephemeral active-path IDs/boundary flags needed for presentation validation, and sanitized web-search status text capped at 512 code points for exact visible-message matching and display. All state is session-local, discarded on invalidation/shutdown, and never sent back to Pi's model or session.
 
 Display values remain model/tool-controlled and may contain sensitive arguments. The renderer sanitizes terminal controls and bounds failure summaries, but it does not claim to redact arguments. Results and write content are intentionally excluded from collapsed summaries.
 
@@ -685,16 +708,16 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 ### 9.2 Test responsibilities
 
 - `grouping.test.ts`: semantic adjacency, singleton groups, invisible assistant boundaries, and native segments.
-- `renderer.test.ts`: labels, argument summaries, sanitization, errors, timing, safe edit/write behavior, independent `none`/`middle`/`end` modes, wrapping, truncation, and widths 1–200;
+- `renderer.test.ts`: labels, argument summaries, sanitization, errors, optional-detail visibility, timing, safe edit/write behavior, independent `none`/`middle`/`end` modes, wrapping, truncation, and widths 1–200;
 - `presentation-settings.test.ts`: defaults, validation, trust-aware precedence, immutability, dedicated-file paths, and atomic settings writes without Pi settings mutation.
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, and native fallback.
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, and placeholder styling.
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, validated context-edit boundaries, compaction, boundaries, and text phases.
 - `work-span.test.ts`: empty-thinking continuation, adjacent same-kind cross-scene visual grouping, action roots, commentary suffix, source order, and no-placeholder cases.
-- `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, settings threading, expansion/status restoration, native thinking-marker restoration, mouse translation, fallback, owner counting, and wrapper composition.
+- `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, settings threading, expansion/status restoration, native thinking-marker restoration, validated terminal-diagnostic storyboard breakouts, exact active-path web-search row-detail association, ambiguous/unmatched standalone status, narrow wrapped details, compaction caption, unknown-diagnostic native fallback, mouse translation, isolated incompatible-scene fallback, fallback, owner counting, and wrapper composition.
 - `transcript-replay.test.ts`: native Pi components in the fixed diagnostic replay.
 - `tui-preview.test.ts`: current preview gallery, settings defaults/custom fixture, and public `pi-tui` component coverage.
-- `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from the renderer/adapter path; the explicit settings-store write boundary remains isolated.
+- `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from the projection/rendering path, including the pure display sanitizer; the explicit settings-store write boundary remains isolated.
 
 ### 9.3 Required semantic matrix
 
@@ -710,15 +733,20 @@ At minimum, preserve tests for:
 - thinking → tool, thinking → commentary → tool, and thinking → tool → thinking → tool;
 - rich commentary with headings, lists, code, links, tables, multiline text, and OSC;
 - final-answer and unknown text native fallback;
+- validated Pi terminal diagnostics rendered as storyboard breakouts without losing their text;
+- the recognized `web-search-content-ready` status rendered without its native message box or custom-type label; exact active-path `web_search` associations render as wrapped plain-text row detail, while ambiguous/unmatched statuses stay standalone;
+- unrecognized visible diagnostic/native children remaining native;
 - thinking-only notes;
 - tool-only leading action roots;
 - same-response commentary-suffix placeholder;
 - adjacent settled empty/absent-thinking continuation;
 - visible thinking on every turn staying separate;
-- hard boundaries from user/custom/native/compaction/branch/context-edit content;
+- hard boundaries from user/custom/native/branch/context-edit content;
+- collapsed compaction boundaries rendered as `Compacted from N tokens` without an inline expansion hint, with native compaction rendering only while Pi marks it expanded;
+- recognized web-search statuses rendered as wrapped plain-text detail only with exact active-path result/call proof, otherwise standalone, without changing tool counts or ownership;
 - streaming before and after settlement;
 - thinking toggles, expanded tools, theme changes, narrow widths, and mouse coordinates;
-- session reload, resume, fork, tree navigation, new session, and compaction;
+- session reload, resume, fork, tree navigation, new session, collapsed compaction storyboard boundaries, expanded compaction native preview, older visible children, and storyboard rendering after the compaction boundary;
 - original `Container.render` restoration and coexistence with later wrappers.
 
 ### 9.4 Architecture guard
@@ -820,7 +848,7 @@ Important version rule: a session file's version number is not a complete featur
 | Native output becomes stale after theme change | Resolve theme at render time; do not cache ANSI-rendered strings across themes. |
 | Long transcripts cause render cost | Render each child once per pass; benchmark before adding a bounded settled cache. |
 | Sensitive argument values appear | Document argument visibility; never include result data or write content; sanitize terminal controls. |
-| Compact presentation hides complete diagnostics | Show one bounded generic failure line; global expansion restores Pi's native details. |
+| Compact presentation hides complete diagnostics | Show one bounded generic failure diagnostic block; global expansion restores Pi's native details. |
 | Empty thinking is mistaken for absent semantics | Suppress only visual output; retain original message/signature untouched. |
 
 ### Not currently shipped: long-span windowing
@@ -865,11 +893,11 @@ The implementation remains acceptable only when:
 - commentary remains complete native Markdown at its original position;
 - the fixed commentary-suffix placeholder remains same-response and presentation-only;
 - empty/absent thinking does not create fake model content;
-- expanded, ambiguous, incompatible, or unsafe cases render through Pi natively;
+- expanded, ambiguous, incompatible, or unsafe scene/tool cases render through Pi natively; an ambiguous recognized web-search association remains a standalone plain-text status;
 - compact rows never expose successful output, write content, edit text/diffs, image data, or full errors;
-- all output respects terminal width and strips unsafe display controls; `none` trimming preserves complete relevant row text, including bounded error diagnostics, by wrapping it across lines;
+- all output respects terminal width and strips unsafe display controls; path/command/tool-argument `none` trimming preserves complete target values by wrapping, while metadata, bounded error diagnostics, and bounded web-search status details remain complete in every mode;
 - no tools, messages, context, session entries, prompts, model settings, or agent behavior are changed;
-- `/storyboard-settings` writes only the validated dedicated `pi-storyboard.json` file after explicit user Save, never changing Pi settings or session data;
+- `/storyboard-settings` writes only the validated dedicated `pi-storyboard.json` file after explicit user Save, never changing Pi settings or session data; `showToolMetadata` affects only collapsed presentation metadata;
 - no network, subprocess, timer, or background work is introduced;
 - patch installation/uninstallation is idempotent and does not overwrite later wrappers;
 - tests and package validation pass;

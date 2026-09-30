@@ -28,42 +28,48 @@ describe("presentation settings", () => {
     expect(Object.isFrozen(settings)).toBe(true);
     expect(Object.isFrozen(settings.symbols)).toBe(true);
     expect(Object.isFrozen(settings.colors.status)).toBe(true);
+    expect(settings.showToolMetadata).toBe(true);
   });
 
   it("migrates the previous boolean trimming schema", () => {
     const settings = normalizePresentationSettings({
       "pi-storyboard": { trimming: { fileNames: true, commands: false } },
     });
-    expect(settings.trimming).toEqual({ fileNames: "middle", commands: "none" });
+    expect(settings.trimming).toEqual({ fileNames: "middle", commands: "none", tools: "middle" });
   });
 
   it("merges trusted project values and ignores untrusted project values", () => {
     const global = {
       "pi-storyboard": {
-        trimming: { fileNames: "none", commands: "middle" },
+        trimming: { fileNames: "none", commands: "middle", tools: "middle" },
+        showToolMetadata: false,
         symbols: { toolDot: "G" },
       },
     };
     const project = {
       "pi-storyboard": {
         trimming: { commands: "none" },
+        showToolMetadata: true,
         symbols: { thinkingRoot: "P" },
       },
     };
 
     const trusted = resolvePresentationSettings(global, project, true);
-    expect(trusted.trimming).toEqual({ fileNames: "none", commands: "none" });
+    expect(trusted.trimming).toEqual({ fileNames: "none", commands: "none", tools: "middle" });
     expect(trusted.symbols.toolDot).toBe("G");
     expect(trusted.symbols.thinkingRoot).toBe("P");
+    expect(trusted.showToolMetadata).toBe(true);
 
     const untrusted = resolvePresentationSettings(global, project, false);
-    expect(untrusted.trimming).toEqual({ fileNames: "none", commands: "middle" });
+    expect(untrusted.trimming).toEqual({ fileNames: "none", commands: "middle", tools: "middle" });
     expect(untrusted.symbols.thinkingRoot).toBe("◉");
+    expect(untrusted.showToolMetadata).toBe(false);
   });
 
   it("falls back invalid fields independently and sanitizes unknown tool dots", () => {
     const settings = normalizePresentationNamespace({
       trimming: { fileNames: "invalid", commands: "none" },
+      showToolMetadata: "yes",
       symbols: {
         toolDot: "T",
         toolDots: { read: "R", command: "\u001b[31m" },
@@ -76,7 +82,8 @@ describe("presentation settings", () => {
       },
     });
 
-    expect(settings.trimming).toEqual({ fileNames: "middle", commands: "none" });
+    expect(settings.trimming).toEqual({ fileNames: "middle", commands: "none", tools: "middle" });
+    expect(settings.showToolMetadata).toBe(true);
     expect(settings.symbols.toolDot).toBe("T");
     expect(settings.symbols.toolDots.read).toBe("R");
     expect(settings.symbols.toolDots.command).toBe("T");
@@ -106,7 +113,7 @@ describe("presentation settings", () => {
       true,
     );
 
-    expect(settings.trimming).toEqual({ fileNames: "none", commands: "middle" });
+    expect(settings.trimming).toEqual({ fileNames: "none", commands: "middle", tools: "middle" });
     expect(settings.symbols.toolDot).toBe("G");
     expect(settings.symbols.toolDots.read).toBe("R");
     expect(settings.symbols.toolDots.search).toBe("S");
@@ -135,7 +142,7 @@ describe("presentation settings", () => {
     const manager = SettingsManager.create(cwd, agentDir, { projectTrusted: true });
     const source = readPresentationSettings(cwd, manager, agentDir);
     expect(source.global.trimming.fileNames).toBe("none");
-    expect(source.effective.trimming).toEqual({ fileNames: "none", commands: "none" });
+    expect(source.effective.trimming).toEqual({ fileNames: "none", commands: "none", tools: "middle" });
     expect(source.effective.symbols).toMatchObject({ toolDot: "G", thinkingRoot: "P" });
 
     writePresentationSettings(cwd, "project", source.effective, agentDir);

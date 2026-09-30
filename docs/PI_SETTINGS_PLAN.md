@@ -8,10 +8,11 @@ This feature must not change scene ownership, tool eligibility, source order, na
 
 The first settings version should support:
 
-1. independent `none`/`middle`/`end` trimming modes for file/path values and shell commands;
-2. configurable storyboard symbols, including per-tool-kind dots and thinking/rail/branch symbols;
-3. configurable lifecycle/status colors and one structural color for the vertical rail and `L`-shaped branch markers;
-4. an interactive `/storyboard-settings [global|project]` TUI page that saves the dedicated settings file and reloads Pi.
+1. independent `none`/`middle`/`end` trimming modes for file/path values, shell commands, and generic tool arguments;
+2. one `showToolMetadata` switch for optional timing and tool-argument metadata;
+3. configurable storyboard symbols, including per-tool-kind dots and thinking/rail/branch symbols;
+4. configurable lifecycle/status colors and one structural color for the vertical rail and `L`-shaped branch markers;
+5. an interactive `/storyboard-settings [global|project]` TUI page that saves the dedicated settings file and reloads Pi.
 
 The defaults must produce the current output:
 
@@ -19,8 +20,10 @@ The defaults must produce the current output:
 {
   "trimming": {
     "fileNames": "middle",
-    "commands": "middle"
+    "commands": "middle",
+    "tools": "middle"
   },
+  "showToolMetadata": true,
   "symbols": {
     "toolDot": "●",
     "toolDots": {
@@ -64,7 +67,7 @@ Storyboard settings are dedicated files: global at `~/.pi/agent/pi-storyboard.js
 
 The current Pi API exposes `SettingsManager.create()` publicly but not a settings manager on `ExtensionContext`. `src/presentation-settings-store.ts` creates the public manager at `session_start` for trust detection, then reads the dedicated files into an immutable `PresentationSettings` snapshot. It never uses private context/session fields for reads.
 
-`/storyboard-settings` is available only in interactive TUI mode. With no argument it asks for `global` or trusted `project` scope; either argument selects that scope directly. The page uses `SettingsList` plus text-input submenus for symbols. It exposes both trimming switches, the default and per-kind dots, thinking/placeholder/rail/branch symbols, all status/thinking/structure color tokens, reset-to-defaults, and Save and reload. Escape cancels without writing.
+`/storyboard-settings` is available only in interactive TUI mode. With no argument it asks for `global` or trusted `project` scope; either argument selects that scope directly. The page uses `SettingsList` plus text-input submenus for symbols. It exposes all three trimming switches, the `showToolMetadata` switch, the default and per-kind dots, thinking/placeholder/rail/branch symbols, all status/thinking/structure color tokens, reset-to-defaults, and Save and reload. Escape cancels without writing.
 
 On explicit Save, the store validates the complete settings object and atomically replaces only the selected dedicated `pi-storyboard.json` file. This is the sole filesystem write in the extension and never runs in the renderer, lifecycle listeners, or background work. A successful save calls `ctx.reload()`; the new session lifecycle creates the active snapshot. An unavailable, malformed, or incompatible settings API uses the current defaults and does not disable storyboard rendering.
 
@@ -72,7 +75,8 @@ On explicit Save, the store validates the complete settings object and atomicall
 
 `src/presentation-settings.ts` contains the Pi-independent defaults, types, layered merge, and validation. It accepts unknown JSON and returns a complete immutable snapshot. Invalid fields fall back independently instead of invalidating the whole configuration.
 
-- Trimming values must be booleans.
+- Trimming values must be `none`, `middle`, or `end`; legacy booleans remain readable for migration.
+- `showToolMetadata` must be a boolean; invalid values fall back independently to the corresponding lower-precedence or built-in value.
 - Symbols must be single-line, terminal-control-free, bounded display strings. Reject or default values containing ANSI/control sequences, line breaks, or excessive visible width. Do not allow settings to inject raw ANSI styling.
 - Color settings must be references to an allowlisted Pi theme color token, not raw ANSI or arbitrary escape sequences. Users who need a particular RGB value should define it in a Pi theme and select that theme token here.
 - Unknown group kinds, color names, nulls, malformed nested objects, and invalid strings use the nearest default; invalid project fields inherit the corresponding validated global field.
@@ -80,9 +84,9 @@ On explicit Save, the store validates the complete settings object and atomicall
 
 ## Trimming semantics
 
-`src/renderer.ts` classifies the main display value before fitting it. `trimming.fileNames` controls path-like values used by Read, List, Write, Edit, Search, and command `cwd` summaries. `trimming.commands` controls only the Bash/PowerShell command value. Each field accepts `none`, `middle`, or `end`; timing, error diagnostics, tool names, and result-safety rules remain unchanged.
+`src/renderer.ts` classifies the display segments before fitting them. `trimming.fileNames` controls only path/filename values used by Read, List, Write, Edit, and Search. `trimming.commands` controls only the Bash/PowerShell command value. `trimming.tools` controls only compact JSON arguments for custom, MCP, and subagent tools. Each field accepts `none`, `middle`, or `end`; offsets, limits, search metadata, replacement counts, `cwd`, timing, error diagnostics, and result-safety rules remain unchanged.
 
-`middle` keeps both a useful prefix and filename/command tail, `end` keeps the beginning and adds an end ellipsis, and `none` preserves the complete relevant collapsed-row text, including bounded error diagnostics, by wrapping it across lines. Every returned line remains within the terminal width. The previous boolean schema remains readable for migration (`true` maps to `middle`, `false` maps to `none`), while saved settings use the string modes. Successful result output, write content, edit text/diffs, image data, and full command output remain excluded regardless of either setting.
+`middle` keeps both a useful prefix and filename/command/argument tail, `end` keeps the beginning and adds an end ellipsis, and `none` preserves the complete target value by wrapping it across lines. Non-target metadata remains complete and wraps instead of being shortened. Failed diagnostics are always rendered on a new indented line without a `-` prefix and are wrapped without applying trim modes; the stored summary remains bounded. When `showToolMetadata` is false, the renderer hides optional timing and argument metadata suffixes as one group while retaining the primary value and diagnostics. Every returned line remains within the terminal width. The previous boolean schema remains readable for migration (`true` maps to `middle`, `false` maps to `none`), while saved settings use the string modes. Successful result output, write content, edit text/diffs, image data, and full command output remain excluded regardless of either setting.
 
 ## Symbol and color rendering
 
@@ -103,7 +107,7 @@ The settings snapshot should be passed into the renderers as data; it must not e
 - `src/presentation-settings-store.ts`: owns public `SettingsManager` trust detection, dedicated-file reads, trusted scope handling, and atomic settings-file replacement.
 - `src/presentation-settings-ui.ts`: owns the interactive TUI page and draft editing; it does not decide semantic ownership.
 - `src/pi-adapter.ts`: threads the snapshot through the existing guarded render path without using settings for ownership decisions; all private Pi/TUI inspection and mouse-layout patching remains here.
-- `src/renderer.ts`: applies field-aware `none`/`middle`/`end` file and command trimming modes, wrapping complete `none` row text (including bounded diagnostics) and preserving configurable per-kind dots and width checks.
+- `src/renderer.ts`: applies field-aware `none`/`middle`/`end` trimming to file/path, command, and generic-tool-argument values, applies `showToolMetadata`, wraps complete metadata and bounded diagnostics, and preserves configurable per-kind dots and width checks.
 - `src/storyboard-renderer.ts`: applies resolved markers/colors and recalculates prefix widths, rails, closure, placeholders, and mouse translations.
 - `src/tui-preview.ts`: includes a fixed defaults/custom-settings gallery without reading or writing user settings.
 - `src/storyboard.ts`, `src/grouping.ts`, and `src/session-projection.ts`: do not use presentation settings for semantic grouping, ownership, or active-path validation.
@@ -113,10 +117,10 @@ The settings snapshot should be passed into the renderers as data; it must not e
 Implemented and covered by focused tests:
 
 - a new settings test suite for defaults, global/project precedence, untrusted project settings, per-field invalid fallback, control-character rejection, color-token validation, and immutable snapshots;
-- renderer cases proving file-name and command modes are independent, `none` rows—including errors—wrap without shortening, `middle` preserves both ends, `end` truncates at the tail, all modes remain width-safe at widths 1–200, and generic/error/detail safety is unchanged;
+- renderer cases proving file-name, command, and generic-tool-argument modes are independent, the single detail switch hides timing/replacements/ranges, diagnostics are separate and untrimmed, metadata wraps without shortening, `middle` preserves both target ends, `end` truncates only the target tail, all modes remain width-safe at widths 1–200, and result-safety rules are unchanged;
 - storyboard-renderer cases for every configurable marker, per-kind dots, custom marker widths, custom status/thinking/structure colors, long thinking summaries, commentary suffixes, closure, and narrow terminals;
 - adapter cases proving settings are threaded without mutating Pi objects, are refreshed across session reload/replacement, keep native expansion/fallback behavior unchanged, and preserve mouse translation;
 - preview coverage includes the configured/default fixture gallery;
 - manual verification remains required for global versus project settings, project trust, `/storyboard-settings [global|project]`, `/reload`, live theme changes, expanded rows, streaming rows, Unicode symbols, and coexistence with another transcript patcher.
 
-Acceptance is met when absent or malformed settings produce the current presentation, valid settings affect only collapsed storyboard output, `none` rows—including bounded error diagnostics—wrap without shortening, every line remains within the terminal width, Save changes only the selected dedicated settings file, and all ownership/privacy/native-fallback tests continue to pass. Any future behavior change must update `docs/ARCHITECTURE.md`, this contract, the marketplace-facing README, preview fixtures, and compatibility/test matrices together, then run `npm run check` and `npm run package:check`.
+Acceptance is met when absent or malformed settings produce the current presentation, valid settings affect only collapsed storyboard output, only path/filename, command, and generic-tool-argument targets are trimmed, `showToolMetadata` toggles optional metadata as one setting, metadata and bounded error diagnostics wrap without shortening, failed diagnostics appear on separate lines without a `-` prefix, every line remains within the terminal width, Save changes only the selected dedicated settings file, and all ownership/privacy/native-fallback tests continue to pass. Any future behavior change must update `docs/ARCHITECTURE.md`, this contract, the marketplace-facing README, preview fixtures, and compatibility/test matrices together, then run `npm run check` and `npm run package:check`.

@@ -409,7 +409,8 @@ describe("Container adapter", () => {
     ).render(80).join("\\n");
     expect(output).toContain("old native thinking");
     expect(output).toContain("native read");
-    expect(output).toContain("├─ Compacted from 263,325 tokens");
+    expect(output).toContain("◉ Compacted from 263,325 tokens");
+    expect(output).not.toContain("├─ Compacted from");
     expect(output).not.toContain("ctrl+o to expand");
     expect(output).not.toContain("native compaction preview");
     expect(output).toContain("storyboarded new scene");
@@ -502,7 +503,8 @@ describe("Container adapter", () => {
     });
 
     const output = container(owner, firstSearch, secondSearch, firstStatus, secondStatus).render(80).join("\n");
-    expect(output.match(/Content fetched for 6\/11 URLs/gu)).toHaveLength(2);
+    expect(output.match(/◉ Content fetched for 6\/11 URLs/gu)).toHaveLength(2);
+    expect(output).not.toContain("├─ Content fetched for 6/11 URLs");
     expect(output).not.toContain("web-search-content-ready");
     expect(output).not.toContain("native web-search preview");
     expect(firstStatus.render).not.toHaveBeenCalled();
@@ -513,7 +515,7 @@ describe("Container adapter", () => {
   it.each([
     { label: "expanded", expanded: true, isError: false },
     { label: "failed", expanded: false, isError: true },
-  ])("keeps a web-search status standalone for an $label row", ({ expanded, isError }) => {
+  ])("renders a standalone web-search status with a root marker for an $label row", ({ expanded, isError }) => {
     const statusText = "Content fetched for 6/11 URLs [status-id].";
     const owner = storyboardAssistant(["thinking"], ["search-1"], { toolName: "web_search" });
     const search = tool("web_search", { query: "delivery" }, result(isError), expanded);
@@ -542,6 +544,7 @@ describe("Container adapter", () => {
 
     const output = container(owner, search, status).render(80).join("\n");
     expect(output).toContain("◉ Content fetched for 6/11 URLs");
+    expect(output).not.toContain("├─ Content fetched for 6/11 URLs");
     expect(output).not.toContain("web-search-content-ready");
     expect(status.render).not.toHaveBeenCalled();
     if (expanded) expect(search.render).toHaveBeenCalledOnce();
@@ -584,7 +587,7 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("starts a standalone web-search status with the storyboard root marker", () => {
+  it("starts a standalone web-search status with the thinking-root marker", () => {
     const status = webSearchStatus();
     const handle = installToolGroupingPatch({
       getTheme: () => theme,
@@ -594,8 +597,8 @@ describe("Container adapter", () => {
 
     const output = container(status).render(80).join("\\n");
     expect(output).toContain("◉ Content fetched for 6/11 URLs");
-    expect(output).not.toContain("web-search-content-ready");
     expect(output).not.toContain("├─ Content fetched");
+    expect(output).not.toContain("web-search-content-ready");
     expect(status.render).not.toHaveBeenCalled();
     handle?.uninstall();
   });

@@ -40,21 +40,18 @@ export function renderStoryboardBoundary(
   width: number,
   theme: ThemeLike,
   settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
-  placement: "standalone" | "standalone-root" = "standalone",
 ): string[] {
   const safeWidth = Math.max(1, Math.floor(width));
   const layout = layoutForWidth(safeWidth, settings);
+  const root = `${layout.indent}${theme.fg(settings.colors.thinking.settled, settings.symbols.thinkingRoot)}`;
+  const prefix = layout.assistantPrefixWidth === 0
+    ? ""
+    : `${padPrefix(root, layout.assistantPrefixWidth)} `;
   if (boundary.kind === "custom-status") {
-    const prefix = placement === "standalone-root"
-      ? `${layout.assistantPrefixWidth === 0 ? "" : padPrefix(
-        `${layout.indent}${theme.fg(settings.colors.thinking.settled, settings.symbols.thinkingRoot)}`,
-        layout.assistantPrefixWidth,
-      )} `
-      : `${branchPrefix(false, layout, theme)} `;
     return wrapBoundaryText(prefix, theme.fg("text", boundary.content), safeWidth);
   }
   const text = theme.fg("text", `Compacted from ${boundary.tokensBefore.toLocaleString()} tokens`);
-  return wrapBoundaryText(`${branchPrefix(false, layout, theme)} `, text, safeWidth);
+  return wrapBoundaryText(prefix, text, safeWidth);
 }
 
 export type StoryboardMarkerColor = StoryboardColorName;

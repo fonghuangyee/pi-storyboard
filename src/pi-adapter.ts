@@ -1549,10 +1549,8 @@ function renderStoryboardIfRequested(
     return renderNativeComponent(component);
   };
 
-  const renderBoundary = (
-    boundary: StoryboardBoundarySnapshot,
-    placement: "standalone" | "standalone-root" = "standalone",
-  ): string[] => renderStoryboardBoundary(boundary, safeWidth, theme, settings, placement);
+  const renderBoundary = (boundary: StoryboardBoundarySnapshot): string[] =>
+    renderStoryboardBoundary(boundary, safeWidth, theme, settings);
 
   if (options.getSessionProjection !== undefined) {
     const session = sessionProjection;
@@ -1740,10 +1738,7 @@ function renderStoryboardIfRequested(
         if (component === undefined) throw new Error("boundary component is not renderable");
         const leadingBlank = rendered.length > 0 && rendered.at(-1) !== "" ? 1 : 0;
         if (leadingBlank > 0) rendered.push("");
-        const lines = renderBoundary(
-          segment.boundary,
-          segment.boundary.kind === "custom-status" ? "standalone-root" : "standalone",
-        );
+        const lines = renderBoundary(segment.boundary);
         rendered.push(...lines);
         const mouse = { component, height: leadingBlank + lines.length };
         nativeMouse.set(component, mouse);
@@ -1867,10 +1862,7 @@ function renderStoryboardIfRequested(
       if (leadingBlank > 0) {
         rendered.push("");
       }
-      const lines = renderBoundary(
-        segment.boundary,
-        segment.boundary.kind === "custom-status" ? "standalone-root" : "standalone",
-      );
+      const lines = renderBoundary(segment.boundary);
       rendered.push(...lines);
       mouseChildren.push({ component, height: leadingBlank + lines.length });
       continue;

@@ -209,6 +209,13 @@ export async function openPresentationSettings(
         currentValue: draft.showToolMetadata ? "yes" : "no",
         values: ["yes", "no"],
       },
+      {
+        id: "show-tool-result-summary",
+        label: "Show tool result summary",
+        description: "Show one bounded useful text line from completed successful tool results.",
+        currentValue: draft.showToolResultSummary ? "yes" : "no",
+        values: ["yes", "no"],
+      },
       ...SYMBOL_FIELDS.map(([field, label, description]) => symbolItem(`symbol-${field}`, label, description, field)),
       ...presentationGroupKinds.map(toolDotItem),
       colorItem("color-status-running", "Running status color", "Tool rows still executing.", "running"),
@@ -247,6 +254,9 @@ export async function openPresentationSettings(
           return;
         case "show-tool-metadata":
           setAndNormalize((next) => { next.showToolMetadata = value === "yes"; });
+          return;
+        case "show-tool-result-summary":
+          setAndNormalize((next) => { next.showToolResultSummary = value === "yes"; });
           return;
         case "reset-defaults":
           draft = clonePresentationSettings(normalizePresentationSettings(undefined));
@@ -288,6 +298,7 @@ export async function openPresentationSettings(
       if (id === "trim-commands") return draft.trimming.commands;
       if (id === "trim-tools") return draft.trimming.tools;
       if (id === "show-tool-metadata") return draft.showToolMetadata ? "yes" : "no";
+      if (id === "show-tool-result-summary") return draft.showToolResultSummary ? "yes" : "no";
       if (id === "reset-defaults") return "reset";
       if (id === "save-reload") return "save";
       if (id.startsWith("symbol-")) return valueForSymbol(draft, id.slice("symbol-".length) as SymbolField);

@@ -392,6 +392,7 @@ const FAILED_RESULT: ToolResultSnapshot = Object.freeze({
 });
 
 const MAX_ERROR_SUMMARY_CODE_POINTS = 512;
+const MAX_RESULT_SUMMARY_CODE_POINTS = 512;
 
 function minimalResult(isError: boolean): ToolResultSnapshot {
   return isError ? FAILED_RESULT : SUCCESSFUL_RESULT;
@@ -438,6 +439,38 @@ function extractErrorSummary(value: unknown): string | undefined {
   // compact renderer provides indentation, so retain only the diagnostic text.
   selected = selected.replace(/^[-*•]\s+/u, "");
   return Array.from(selected).slice(0, MAX_ERROR_SUMMARY_CODE_POINTS).join("");
+}
+
+function isUsefulResultLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed.length === 0 || /^[()[\]{};,.:]+$/u.test(trimmed)) return false;
+  // Shell tools often append their own timing footer; Pi already exposes
+  // validated command timing separately, and it is not the result summary.
+  return !/^(?:took|elapsed|duration)\s+\d+(?:\.\d+)?\s*(?:ms|msec|milliseconds?|s|sec|seconds?)$/iu.test(trimmed);
+}
+
+/** Retain only the last useful plain-text line from a settled successful result. */
+function extractResultSummary(value: unknown): string | undefined {
+  if (!isRecord(value) || !Array.isArray(value.content)) return undefined;
+
+  let selected: string | undefined;
+  for (const rawBlock of value.content) {
+    if (!isRecord(rawBlock) || rawBlock.type !== "text" || typeof rawBlock.text !== "string") continue;
+    const text = rawBlock.text;
+    let lineStart = 0;
+    for (let end = 0; end <= text.length; end++) {
+      const separator = text.charCodeAt(end);
+      if (end < text.length && separator !== 10 && separator !== 13) continue;
+      const line = sanitizeDisplay(text.slice(lineStart, end));
+      if (isUsefulResultLine(line)) selected = line;
+      if (separator === 13 && text.charCodeAt(end + 1) === 10) end++;
+      lineStart = end + 1;
+    }
+  }
+
+  return selected === undefined
+    ? undefined
+    : Array.from(selected).slice(0, MAX_RESULT_SUMMARY_CODE_POINTS).join("");
 }
 
 type EditSummaryArgs = {
@@ -525,7 +558,7 @@ function toolExpandedState(row: unknown): boolean | undefined {
     : undefined;
 }
 
-function inspectToolRow(row: unknown): CandidateClassification | undefined {
+function inspectToolRow(row: unknown, includeResultSummary = true): CandidateClassification | undefined {
   if (!(row instanceof ToolExecutionComponent)) return undefined;
   if (!isRecord(row)) return undefined;
   const fields = row as unknown as Record<string, unknown>;
@@ -591,6 +624,9 @@ function inspectToolRow(row: unknown): CandidateClassification | undefined {
       args,
       result: minimalResult(resultError === true),
       errorSummary: resultError === true ? extractErrorSummary(fields.result) : undefined,
+      ...(includeResultSummary && resultError === false && !fields.isPartial
+        ? { resultSummary: extractResultSummary(fields.result) }
+        : {}),
       isPartial: false,
       expanded: false,
     });
@@ -616,6 +652,9 @@ function inspectToolRow(row: unknown): CandidateClassification | undefined {
     args,
     result: fields.result === undefined ? undefined : minimalResult(resultError === true),
     errorSummary: resultError === true ? extractErrorSummary(fields.result) : undefined,
+    ...(includeResultSummary && resultError === false && !fields.isPartial
+      ? { resultSummary: extractResultSummary(fields.result) }
+      : {}),
     ...(elapsedMs === undefined ? {} : { elapsedMs }),
     isPartial: fields.isPartial,
     expanded: fields.expanded,
@@ -1386,7 +1425,7 @@ function renderStoryboardIfRequested(
   const metadata = new Map<AssistantMessageComponent, AssistantMetadata>();
   for (const child of children) {
     if (child instanceof ToolExecutionComponent) {
-      const candidate = inspectToolRow(child);
+      const candidate = inspectToolRow(child, settings.showToolResultSummary);
       if (candidate !== undefined) candidates.set(child, candidate);
     } else if (isAssistant(child)) {
       const assistant = inspectAssistantMetadata(child);
@@ -1957,6 +1996,7 @@ function renderPatched(
     if (children.length === 0) {
       fallback = true;
     } else {
+      const settings = options.getSettings?.() ?? DEFAULT_PRESENTATION_SETTINGS;
       const classifications: ChildClassification[] = [];
       // The grouping core sees immutable snapshots, never live Pi rows. This
       // reverse map is only needed when a singleton candidate must be rendered
@@ -1965,7 +2005,7 @@ function renderPatched(
       let candidateCount = 0;
 
       for (const child of children) {
-        const candidate = inspectToolRow(child);
+        const candidate = inspectToolRow(child, settings.showToolResultSummary);
         if (candidate?.snapshot !== undefined) {
           classifications.push(candidateClassification(candidate.snapshot, candidate));
           candidates.set(candidate.snapshot, child as ToolExecutionComponent);
@@ -2031,7 +2071,7 @@ function renderPatched(
               kind: segment.kind,
               rows: Object.freeze(rows),
             });
-            const lines = options.renderGroup(group, width, options.getTheme(), options.getSettings?.() ?? DEFAULT_PRESENTATION_SETTINGS);
+            const lines = options.renderGroup(group, width, options.getTheme(), settings);
             if (!validRenderedLines(lines)) throw new Error("group renderer returned invalid lines");
             groupLines.set(segment, lines);
             const anchor = members[0];

@@ -36,8 +36,10 @@ export type ToolRowSnapshot = {
   readonly toolName: ToolName;
   readonly args: unknown;
   readonly result?: ToolResultSnapshot;
-  /** Bounded, generic text extracted from a failed result; full output is never copied. */
+  /** Bounded, generic text extracted from a failed result. */
   readonly errorSummary?: string;
+  /** One bounded useful line from a completed successful result's text blocks. */
+  readonly resultSummary?: string;
   /** Pi's shell renderer timing, when it exposes a valid start/end clock. */
   readonly elapsedMs?: number;
   readonly isPartial: boolean;
@@ -366,6 +368,21 @@ function mainTextForRow(row: ToolRowSnapshot, parts: ToolRowParts): string {
 }
 
 const MAX_ERROR_SUMMARY_CODE_POINTS = 512;
+const MAX_RESULT_SUMMARY_CODE_POINTS = 512;
+
+function resultSummaryText(row: ToolRowSnapshot, show: boolean): string | undefined {
+  if (
+    !show ||
+    row.result?.isError !== false ||
+    row.isPartial ||
+    row.resultSummary === undefined
+  ) {
+    return undefined;
+  }
+  const text = sanitizeDisplay(row.resultSummary);
+  if (text.length === 0) return undefined;
+  return Array.from(text).slice(0, MAX_RESULT_SUMMARY_CODE_POINTS).join("");
+}
 
 function errorText(row: ToolRowSnapshot): string | undefined {
   if (row.result?.isError !== true) return undefined;
@@ -390,8 +407,10 @@ function elapsedDetail(row: ToolRowSnapshot): string {
 function formatRow(row: ToolRowSnapshot): string {
   const parts = formatRowParts(row);
   const main = mainTextForRow(row, parts);
+  const summary = resultSummaryText(row, true);
   const error = errorText(row);
-  return `${main}${parts.detail ?? ""}${elapsedDetail(row)}${error === undefined ? "" : `\n${error}`}`;
+  const diagnostics = [summary, error].filter((value): value is string => value !== undefined);
+  return `${main}${parts.detail ?? ""}${elapsedDetail(row)}${diagnostics.map((value) => `\n${value}`).join("")}`;
 }
 
 function heading(kind: GroupKind, count: number): string {
@@ -580,6 +599,7 @@ function renderToolRow(
   parts: ToolRowParts,
   normalDetailText: string,
   rowDetails: readonly string[],
+  summary: string | undefined,
   failure: string | undefined,
   prefix: string,
   width: number,
@@ -615,6 +635,9 @@ function renderToolRow(
       continuation,
     );
   }
+  if (summary !== undefined) {
+    appendWrappedLine(lines, styled(theme, "muted", summary), width, continuation);
+  }
   for (const detail of rowDetails) {
     appendWrappedLine(lines, styled(theme, "muted", detail), width, continuation);
   }
@@ -630,7 +653,7 @@ function renderToolRow(
   return lines;
 }
 
-/** Render one compact group with only minimal failure text, never full result contents. */
+/** Render compact tool rows with bounded result/failure lines, never complete result contents. */
 export function renderToolGroup(
   group: GroupSnapshot,
   width: number,
@@ -661,6 +684,7 @@ export function renderToolGroup(
     const normalDetailText = settings.showToolMetadata
       ? `${parts.detail ?? ""}${elapsedDetail(row)}`
       : "";
+    const summary = resultSummaryText(row, settings.showToolResultSummary);
     const failure = errorText(row);
     const marker = settings.symbols.toolDots[group.kind] ?? settings.symbols.toolDot;
     const prefix = styled(theme, color, `  ${marker} `);
@@ -669,6 +693,7 @@ export function renderToolGroup(
       parts,
       normalDetailText,
       group.rowDetails?.[rowIndex] ?? [],
+      summary,
       failure,
       prefix,
       safeWidth,

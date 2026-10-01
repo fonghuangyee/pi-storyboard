@@ -6,7 +6,7 @@ A presentation-only Pi extension that turns collapsed tool activity into compact
 
 - Groups compatible `read`, `grep`/`find`, `ls`, `write`, `edit`, `bash`/`powershell`, custom, MCP, and subagent rows.
 - Keeps tool calls in assistant source order and shows clear thinking/action branches.
-- Shows compact running and failed states while hiding successful output, file contents, diffs, and images; failures expose one bounded, wrapped diagnostic on its own line.
+- Shows compact running and failed states, one bounded result-text excerpt beneath completed tool rows by default, and one wrapped failure diagnostic; the excerpt may include a short line from file or command output, while full tool output remains available through Pi's native expansion.
 - Renders a validated web-search completion status as wrapped plain-text detail under its exactly matched `web_search` row, or standalone when association is ambiguous; collapsed compaction summaries show a concise pre-compaction token count, while Pi retains the expanded native preview.
 - Includes a `/storyboard-preview` gallery for the grouped-tool and turn-storyboard presentations.
 - Includes `/storyboard-settings [global|project]` for interactive trimming, symbol, and color configuration.
@@ -37,7 +37,7 @@ Use `Turn storyboard` for the fixed storyboard reference or `Transcript replay` 
 
 ## Settings
 
-In interactive TUI mode, run `/storyboard-settings` to choose global or trusted project settings, or pass `global` or `project` directly. The page configures independent file/path, command, and custom-tool-argument trim modes (`none`, `middle`, or `end`), one `Show tool metadata` switch for timing and optional argument metadata, per-kind dots, thinking/branch symbols, and theme color tokens. Saving reloads the extension automatically. Settings are stored in `~/.pi/agent/pi-storyboard.json` or the trusted project’s `.pi/pi-storyboard.json`.
+In interactive TUI mode, run `/storyboard-settings` to choose global or trusted project settings, or pass `global` or `project` directly. The page configures independent file/path, command, and custom-tool-argument trim modes (`none`, `middle`, or `end`), switches for `Show tool metadata` and `Show tool result summary`, per-kind dots, thinking/branch symbols, and theme color tokens. `showToolResultSummary` defaults to `true` in `pi-storyboard.json`; set it to `false` to hide successful result summaries. Saving reloads the extension automatically. Settings are stored in `~/.pi/agent/pi-storyboard.json` or the trusted project’s `.pi/pi-storyboard.json`.
 
 ## Compatibility
 

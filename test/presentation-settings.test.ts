@@ -29,6 +29,7 @@ describe("presentation settings", () => {
     expect(Object.isFrozen(settings.symbols)).toBe(true);
     expect(Object.isFrozen(settings.colors.status)).toBe(true);
     expect(settings.showToolMetadata).toBe(true);
+    expect(settings.showToolResultSummary).toBe(true);
   });
 
   it("migrates the previous boolean trimming schema", () => {
@@ -43,6 +44,7 @@ describe("presentation settings", () => {
       "pi-storyboard": {
         trimming: { fileNames: "none", commands: "middle", tools: "middle" },
         showToolMetadata: false,
+        showToolResultSummary: false,
         symbols: { toolDot: "G" },
       },
     };
@@ -50,6 +52,7 @@ describe("presentation settings", () => {
       "pi-storyboard": {
         trimming: { commands: "none" },
         showToolMetadata: true,
+        showToolResultSummary: true,
         symbols: { thinkingRoot: "P" },
       },
     };
@@ -59,17 +62,20 @@ describe("presentation settings", () => {
     expect(trusted.symbols.toolDot).toBe("G");
     expect(trusted.symbols.thinkingRoot).toBe("P");
     expect(trusted.showToolMetadata).toBe(true);
+    expect(trusted.showToolResultSummary).toBe(true);
 
     const untrusted = resolvePresentationSettings(global, project, false);
     expect(untrusted.trimming).toEqual({ fileNames: "none", commands: "middle", tools: "middle" });
     expect(untrusted.symbols.thinkingRoot).toBe("◉");
     expect(untrusted.showToolMetadata).toBe(false);
+    expect(untrusted.showToolResultSummary).toBe(false);
   });
 
   it("falls back invalid fields independently and sanitizes unknown tool dots", () => {
     const settings = normalizePresentationNamespace({
       trimming: { fileNames: "invalid", commands: "none" },
       showToolMetadata: "yes",
+      showToolResultSummary: "yes",
       symbols: {
         toolDot: "T",
         toolDots: { read: "R", command: "\u001b[31m" },
@@ -84,6 +90,7 @@ describe("presentation settings", () => {
 
     expect(settings.trimming).toEqual({ fileNames: "middle", commands: "none", tools: "middle" });
     expect(settings.showToolMetadata).toBe(true);
+    expect(settings.showToolResultSummary).toBe(true);
     expect(settings.symbols.toolDot).toBe("T");
     expect(settings.symbols.toolDots.read).toBe("R");
     expect(settings.symbols.toolDots.command).toBe("T");
@@ -134,6 +141,7 @@ describe("presentation settings", () => {
     }));
     writeFileSync(projectPath, JSON.stringify({
       trimming: { commands: "none" },
+      showToolResultSummary: false,
       symbols: { thinkingRoot: "P" },
     }));
     writeFileSync(piGlobalPath, JSON.stringify({ theme: "dark" }));
@@ -144,6 +152,7 @@ describe("presentation settings", () => {
     expect(source.global.trimming.fileNames).toBe("none");
     expect(source.effective.trimming).toEqual({ fileNames: "none", commands: "none", tools: "middle" });
     expect(source.effective.symbols).toMatchObject({ toolDot: "G", thinkingRoot: "P" });
+    expect(source.effective.showToolResultSummary).toBe(false);
 
     writePresentationSettings(cwd, "project", source.effective, agentDir);
 

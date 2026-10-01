@@ -1482,6 +1482,85 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
+  it("captures only one bounded sanitized success summary for every collapsed tool kind", () => {
+    const cases = [
+      ["read", { path: "file.ts" }],
+      ["grep", { pattern: "needle" }],
+      ["find", { pattern: "*.ts" }],
+      ["ls", { path: "src/" }],
+      ["write", { path: "file.ts", content: "private file contents" }],
+      ["edit", { path: "file.ts", edits: [{ oldText: "private old", newText: "private new" }] }],
+      ["bash", { command: "run check" }],
+      ["powershell", { command: "Get-ChildItem" }],
+      ["custom-tool", { target: "src" }],
+      ["mcp.lookup", { id: 42 }],
+    ] as const;
+
+    for (const [name, args] of cases) {
+      const row = tool(name, args, {
+        content: [
+          { type: "text", text: `Earlier ${name} output\n\nSTATUS_${name}=ready\nTook 15.0s` },
+          { type: "image", data: "private image data", mimeType: "image/png" },
+        ],
+        details: { fullOutput: "private structured details" },
+        isError: false,
+      });
+      const snapshot = classifyToolRowForTesting(row);
+      expect(snapshot?.resultSummary).toBe(`STATUS_${name}=ready`);
+      expect(snapshot?.result).toEqual({ content: [], isError: false });
+      const serialized = JSON.stringify(snapshot);
+      expect(serialized).not.toContain(`Earlier ${name} output`);
+      expect(serialized).not.toContain("private image data");
+      expect(serialized).not.toContain("private structured details");
+      if (name === "write") expect(serialized).not.toContain("private file contents");
+      if (name === "edit") {
+        expect(serialized).not.toContain("private old");
+        expect(serialized).not.toContain("private new");
+      }
+    }
+
+    const unsafe = tool("read", { path: "file.ts" }, {
+      content: [{ type: "text", text: `${String.fromCharCode(27)}[31m${"x".repeat(600)}${String.fromCharCode(27)}[0m` }],
+      details: {},
+      isError: false,
+    });
+    const bounded = classifyToolRowForTesting(unsafe)?.resultSummary;
+    expect(bounded).toBe("x".repeat(512));
+    expect(bounded).not.toContain(String.fromCharCode(27));
+
+    const running = tool("bash", { command: "still running" });
+    expect(classifyToolRowForTesting(running)?.resultSummary).toBeUndefined();
+    const partial = tool("bash", { command: "partial result" }, result(false, [
+      { type: "text", text: "in-progress output" },
+    ]));
+    (partial as unknown as Record<string, unknown>).isPartial = true;
+    expect(classifyToolRowForTesting(partial)?.resultSummary).toBeUndefined();
+    const failed = tool("bash", { command: "failed" }, result(true));
+    expect(classifyToolRowForTesting(failed)?.resultSummary).toBeUndefined();
+  });
+
+  it("does not extract successful result text when result summaries are disabled", () => {
+    const completed = tool("bash", { command: "npm test" }, result(false, [
+      { type: "text", text: "sensitive result content" },
+    ]));
+    const snapshots: Array<{ rows: readonly ToolRowSnapshot[] }> = [];
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSettings: () => normalizePresentationSettings({
+        "pi-storyboard": { showToolResultSummary: false },
+      }),
+      renderGroup: (group) => {
+        snapshots.push(group);
+        return ["group"];
+      },
+    });
+
+    expect(container(completed).render(80)).toEqual(["group"]);
+    expect(snapshots[0]?.rows[0]?.resultSummary).toBeUndefined();
+    expect(completed.render).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
   it("chooses a useful diagnostic instead of a trailing structural line", () => {
     const validationFailure = tool("edit", { path: "test/tui-preview.test.ts" }, {
       content: [{

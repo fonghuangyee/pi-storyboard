@@ -16,7 +16,7 @@ The implementation is complete for the current design:
 - a narrow active-path continuation can hide directly adjacent empty/absent-thinking roots without merging ownership;
 - a same-response commentary-to-tool suffix can receive a fixed presentation-only `Thinking...` placeholder;
 - expanded or ambiguous content falls back to Pi's original renderer;
-- `/storyboard-settings [global|project]` opens the interactive presentation-settings page and saves only the validated dedicated `pi-storyboard.json` file;
+- `/storyboard-settings [global|project]` opens the interactive presentation-settings page and saves only the validated dedicated `pi-storyboard.json` file, including a switch for bounded successful result summaries;
 - the guarded private adapter, settings validation/storage, and pure projection layers are covered by unit tests.
 
 Remaining release work is interactive verification against live streaming, expansion, theme changes, session replacement, and coexistence with other transcript-patching extensions. Optional long-span UI windowing is deliberately not shipped.
@@ -212,11 +212,11 @@ Collapsed summaries expose only the minimum safe display data:
 - generic tools: tool name plus sanitized compact JSON arguments;
 - image-producing calls: path/status only, never image data.
 
-The adapter validates recognized argument shapes. Malformed recognized arguments use the tool name and sanitized compact JSON rather than an invented label. A failed malformed edit may still use the safe label `edit` and its bounded failure line.
+The adapter validates recognized argument shapes. Malformed recognized arguments use the tool name and sanitized compact JSON rather than an invented label. A failed malformed edit may still use the safe label `edit` and its bounded failure line. When enabled, a separate successful-result summary may expose one bounded line from plain-text result content for any tool kind.
 
-Command timing is shown only when Pi exposes valid `startedAt`/`endedAt` state. No duration is invented.
+Command timing is shown only when Pi exposes valid `startedAt`/`endedAt` state. No duration is invented. For a settled successful result, the adapter may retain one sanitized, bounded useful line from its plain-text result blocks as a presentation-only summary; it never retains the complete result or opaque `details` object. This summary is enabled by default and independently controlled by `showToolResultSummary`.
 
-### 3.4 Failure and running behavior
+### 3.4 Result summaries, failure, and running behavior
 
 Failures remain in their normal semantic group. They use an error-colored `●`, while the bounded generic diagnostic is always rendered on a new indented line:
 
@@ -226,7 +226,15 @@ Run 1 command
     Command exited with code 1
 ```
 
-The adapter does not classify tool-specific error formats. It scans text result blocks, sanitizes lines, skips empty/structural tails such as `}` and serialized property lines, prefers the last generic diagnostic-looking line, and otherwise uses the last useful line. The stored summary is capped at 512 Unicode code points; if no usable text exists, it is `Failed`. The complete bounded summary is wrapped rather than trimmed, and no `-` prefix is added. Full output remains owned by Pi and is available through native expansion.
+For successful settled calls, the adapter scans plain-text result blocks and keeps the last non-empty useful line, skipping only structural punctuation and common `Took`/`Elapsed`/`Duration` timing footers. It strips terminal controls, caps the retained line at 512 Unicode code points, and stores no other result text. This can expose a short excerpt of read-file or command output, so `showToolResultSummary` is independently configurable and defaults to `true`; setting it to `false` hides the excerpt without affecting errors or native expansion. No summary is shown for a running or failed call, or when there is no usable text. The complete bounded summary is wrapped rather than trimmed and has no `-` prefix:
+
+```text
+Run 1 command
+  ● npm test
+    142 tests passed
+```
+
+For failures, the adapter does not classify tool-specific error formats. It scans text result blocks, sanitizes lines, skips empty/structural tails such as `}` and serialized property lines, prefers the last generic diagnostic-looking line, and otherwise uses the last useful line. The stored diagnostic is capped at 512 Unicode code points; if no usable text exists, it is `Failed`. The complete bounded diagnostic is wrapped rather than trimmed, and no `-` prefix is added. Full output remains owned by Pi and is available through native expansion.
 
 Every running call, including a running edit, is compact while collapsed. A running edit never copies `oldText`, `newText`, diff, patch, preview, or full result details. If it later settles or fails, its compact row updates without invoking the native edit renderer in collapsed mode.
 
@@ -278,15 +286,15 @@ A continuous thinking block longer than four paragraphs shows the first paragrap
 
 ### 3.7 Presentation settings
 
-`/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path, command, and generic-tool-argument trimming modes, one `showToolMetadata` switch for optional timing and argument metadata, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
+`/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path, command, and generic-tool-argument trimming modes, a `showToolMetadata` switch for optional timing and argument metadata, a `showToolResultSummary` switch for bounded successful-result excerpts, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
 
 The command buffers edits until Save. Saving atomically replaces the selected dedicated settings file, `~/.pi/agent/pi-storyboard.json` for global scope or `.pi/pi-storyboard.json` for project scope. Pi's unrelated `settings.json` files are never changed. The project scope is unavailable when `ctx.isProjectTrusted()` is false. A successful save runs Pi's reload flow so the new immutable snapshot is active immediately; cancelling writes nothing. Non-TUI modes show a warning and perform no I/O.
 
 Settings are read from `~/.pi/agent/pi-storyboard.json` and, for trusted projects, `.pi/pi-storyboard.json`. Project values override global values; an invalid project field falls back to the corresponding validated global field so one bad project value cannot erase unrelated global customization. Invalid global values fall back independently to built-in defaults. Symbols cannot contain terminal controls or line breaks, and colors are allowlisted Pi theme tokens. The editor accepts short text input for symbols and cycles through the allowlisted color names. Theme ANSI strings are still generated at render time.
 
-Each trimming field accepts one of three values: `none` preserves the complete target value by wrapping it; `middle` keeps both the beginning and end with a middle ellipsis; and `end` keeps the beginning with an end ellipsis. `fileNames` applies only to path/filename values, `commands` applies only to Bash/PowerShell command values, and `tools` applies to the compact JSON arguments of custom, MCP, and subagent tools. Offsets, limits, search metadata, replacement counts, `cwd`, timing, bounded error diagnostics, and bounded web-search status details are never trim targets; they remain complete and wrap when necessary. Errors and attached status details start on their own indented line without a `-` prefix. The default is `middle`. The previous boolean schema remains readable for migration (`true` maps to `middle`, `false` maps to `none`); settings saved by the editor use the string modes.
+Each trimming field accepts one of three values: `none` preserves the complete target value by wrapping it; `middle` keeps both the beginning and end with a middle ellipsis; and `end` keeps the beginning with an end ellipsis. `fileNames` applies only to path/filename values, `commands` applies only to Bash/PowerShell command values, and `tools` applies to the compact JSON arguments of custom, MCP, and subagent tools. Offsets, limits, search metadata, replacement counts, `cwd`, timing, bounded successful-result summaries, bounded error diagnostics, and bounded web-search status details are never trim targets; they remain complete and wrap when necessary. Errors and attached status details start on their own indented line without a `-` prefix. The default is `middle`. The previous boolean schema remains readable for migration (`true` maps to `middle`, `false` maps to `none`); settings saved by the editor use the string modes.
 
-`showToolMetadata` defaults to `true`. When false, the compact renderer hides optional timing, range, replacement-count, search-option, `cwd`, and similar metadata suffixes while retaining the primary path/command/tool-argument value, tool name, status marker, headings, and bounded error diagnostics. It does not affect native expansion or ownership.
+`showToolMetadata` defaults to `true`. When false, the compact renderer hides optional timing, range, replacement-count, search-option, `cwd`, and similar metadata suffixes while retaining the primary path/command/tool-argument value, tool name, status marker, headings, result summaries, and bounded error diagnostics. `showToolResultSummary` also defaults to `true`; setting it to `false` hides only the one-line successful-result excerpt. Neither setting affects native expansion or ownership.
 
 The settings page is presentation-only: it does not change ownership, grouping, source order, native expansion, messages, session entries, tools, prompts, or model behavior.
 
@@ -502,11 +510,12 @@ The legacy grouping path allows an empty assistant component between visually ad
 - applies trimming only to the selected path/file-name, command, or generic-tool-argument value; all metadata remains complete and wraps when necessary;
 - renders every bounded error diagnostic on a new indented line without a prefix marker and wraps it without applying trim modes;
 - renders a proven web-search completion status as plain wrapped row detail with the same no-trim, new-indented-line behavior; it does not display the internal custom type or pretend the status is a tool result;
-- hides optional timing and argument metadata when `showToolMetadata` is false without hiding the primary value or diagnostic;
+- hides optional timing and argument metadata when `showToolMetadata` is false without hiding the primary value, successful-result summary, or diagnostic;
+- shows one bounded sanitized successful-result text line by default and hides only that line when `showToolResultSummary` is false;
 - never returns a line wider than the requested width, including widths from 1 through 200;
 - falls back to compact JSON for malformed recognized arguments without guessing;
-- never renders successful result contents, write content, command output, diffs, patches, image data, or generic tool output;
-- never stores complete failed output—only a bounded generic error summary.
+- never renders complete successful result contents, write arguments/content, command output, diffs, patches, image data, or generic tool output; the sole successful-result exception is one explicitly configurable, sanitized line capped at 512 Unicode code points;
+- never stores complete successful or failed output—only the bounded successful-result excerpt and/or bounded generic error diagnostic.
 
 The compact renderer is a summary, not a result viewer. Native expansion is the source of complete details.
 
@@ -679,13 +688,13 @@ The extension must never:
 - modify prompts, model selection, compaction, branching, thinking level, or token usage;
 - use private harness run/turn IDs as ownership proof;
 - read session JSONL files from the renderer;
-- copy raw thinking, signatures, provider payloads, successful result content, written content, command output, edit text, diffs, patches, or full errors into extension state;
+- copy raw thinking, signatures, provider payloads, complete successful result content, written content/arguments, command output, edit text, diffs, patches, or full errors into extension state; the sole success-result exception is one sanitized line capped at 512 Unicode code points when `showToolResultSummary` is enabled;
 - make network calls or LLM calls;
 - perform filesystem writes outside the explicit user-initiated settings save boundary, subprocess work, timers, or background work.
 
-Allowed state is limited to immutable extension-owned snapshots, minimal ephemeral active-path IDs/boundary flags needed for presentation validation, and sanitized web-search status text capped at 512 code points for exact visible-message matching and display. All state is session-local, discarded on invalidation/shutdown, and never sent back to Pi's model or session.
+Allowed state is limited to immutable extension-owned snapshots, minimal ephemeral active-path IDs/boundary flags needed for presentation validation, sanitized web-search status text capped at 512 code points for exact visible-message matching and display, and (when enabled) one sanitized successful-result text line capped at 512 code points per settled tool row. Disabling `showToolResultSummary` prevents extraction and retention of these lines. All state is session-local, discarded on invalidation/shutdown, and never sent back to Pi's model or session.
 
-Display values remain model/tool-controlled and may contain sensitive arguments. The renderer sanitizes terminal controls and bounds failure summaries, but it does not claim to redact arguments. Results and write content are intentionally excluded from collapsed summaries.
+Display values remain model/tool-controlled and may contain sensitive arguments or result text. The renderer sanitizes terminal controls and bounds result/failure summaries, but it does not claim to redact them. Complete results and write content are intentionally excluded from collapsed summaries; the configurable single-line successful-result excerpt is the documented exception.
 
 ## 9. Verification and development workflow
 
@@ -708,13 +717,13 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 ### 9.2 Test responsibilities
 
 - `grouping.test.ts`: semantic adjacency, singleton groups, invisible assistant boundaries, and native segments.
-- `renderer.test.ts`: labels, argument summaries, sanitization, errors, optional-detail visibility, timing, safe edit/write behavior, independent `none`/`middle`/`end` modes, wrapping, truncation, and widths 1–200;
+- `renderer.test.ts`: labels, argument and successful-result summaries, sanitization, errors, optional-detail visibility, timing, safe edit/write behavior, independent `none`/`middle`/`end` modes, wrapping, truncation, and widths 1–200;
 - `presentation-settings.test.ts`: defaults, validation, trust-aware precedence, immutability, dedicated-file paths, and atomic settings writes without Pi settings mutation.
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, and native fallback.
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, and placeholder styling.
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, validated context-edit boundaries, compaction, boundaries, and text phases.
 - `work-span.test.ts`: empty-thinking continuation, adjacent same-kind cross-scene visual grouping, action roots, commentary suffix, source order, and no-placeholder cases.
-- `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, failure summaries, settings threading, expansion/status restoration, native thinking-marker restoration, validated terminal-diagnostic storyboard breakouts, exact active-path web-search row-detail association, ambiguous/unmatched standalone status, narrow wrapped details, compaction caption, unknown-diagnostic native fallback, mouse translation, isolated incompatible-scene fallback, fallback, owner counting, and wrapper composition.
+- `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, bounded successful-result and failure summaries for all tool kinds, settings threading, expansion/status restoration, native thinking-marker restoration, validated terminal-diagnostic storyboard breakouts, exact active-path web-search row-detail association, ambiguous/unmatched standalone status, narrow wrapped details, compaction caption, unknown-diagnostic native fallback, mouse translation, isolated incompatible-scene fallback, fallback, owner counting, and wrapper composition.
 - `transcript-replay.test.ts`: native Pi components in the fixed diagnostic replay.
 - `tui-preview.test.ts`: current preview gallery, settings defaults/custom fixture, and public `pi-tui` component coverage.
 - `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from the projection/rendering path, including the pure display sanitizer; the explicit settings-store write boundary remains isolated.
@@ -728,6 +737,7 @@ At minimum, preserve tests for:
 - source order differing from completion/direct-row order;
 - duplicate, missing, extra, and malformed ownership IDs;
 - running, successful, failed, and malformed-argument edits;
+- bounded successful-result summaries across built-in, custom, and MCP tools, with default-visible and configured-hidden cases, no running/error summaries, and no retention of full results;
 - generic custom/MCP/subagent rows retaining tool names;
 - image rows collapsed versus expanded;
 - thinking → tool, thinking → commentary → tool, and thinking → tool → thinking → tool;
@@ -847,7 +857,7 @@ Important version rule: a session file's version number is not a complete featur
 | Prototype wrapper conflict | Owner-counted guarded patch, conservative uninstall, composition tests, native fallback. |
 | Native output becomes stale after theme change | Resolve theme at render time; do not cache ANSI-rendered strings across themes. |
 | Long transcripts cause render cost | Render each child once per pass; benchmark before adding a bounded settled cache. |
-| Sensitive argument values appear | Document argument visibility; never include result data or write content; sanitize terminal controls. |
+| Sensitive argument or result text appears | Document visibility; show at most one sanitized successful-result line by default, provide `showToolResultSummary: false` to disable extraction/display, never include write arguments/content, and preserve native expansion for full results. |
 | Compact presentation hides complete diagnostics | Show one bounded generic failure diagnostic block; global expansion restores Pi's native details. |
 | Empty thinking is mistaken for absent semantics | Suppress only visual output; retain original message/signature untouched. |
 
@@ -894,10 +904,10 @@ The implementation remains acceptable only when:
 - the fixed commentary-suffix placeholder remains same-response and presentation-only;
 - empty/absent thinking does not create fake model content;
 - expanded, ambiguous, incompatible, or unsafe scene/tool cases render through Pi natively; an ambiguous recognized web-search association remains a standalone plain-text status;
-- compact rows never expose successful output, write content, edit text/diffs, image data, or full errors;
+- compact rows expose at most one configurable sanitized line from a settled successful text result, never write arguments/content, edit text/diffs, image data, or full errors;
 - all output respects terminal width and strips unsafe display controls; path/command/tool-argument `none` trimming preserves complete target values by wrapping, while metadata, bounded error diagnostics, and bounded web-search status details remain complete in every mode;
 - no tools, messages, context, session entries, prompts, model settings, or agent behavior are changed;
-- `/storyboard-settings` writes only the validated dedicated `pi-storyboard.json` file after explicit user Save, never changing Pi settings or session data; `showToolMetadata` affects only collapsed presentation metadata;
+- `/storyboard-settings` writes only the validated dedicated `pi-storyboard.json` file after explicit user Save, never changing Pi settings or session data; `showToolMetadata` and `showToolResultSummary` affect only collapsed presentation;
 - no network, subprocess, timer, or background work is introduced;
 - patch installation/uninstallation is idempotent and does not overwrite later wrappers;
 - tests and package validation pass;

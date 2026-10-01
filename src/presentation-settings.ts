@@ -77,6 +77,8 @@ export type PresentationSettings = Readonly<{
   }>;
   /** Show optional timing and tool-argument metadata suffixes. */
   showToolMetadata: boolean;
+  /** Show one bounded text summary from each completed successful tool result. */
+  showToolResultSummary: boolean;
   symbols: Readonly<{
     toolDot: string;
     toolDots: Readonly<Record<GroupKind, string>>;
@@ -110,6 +112,7 @@ export type PresentationSettingsDraft = {
     tools: TrimMode;
   };
   showToolMetadata: boolean;
+  showToolResultSummary: boolean;
   symbols: {
     toolDot: string;
     toolDots: Record<GroupKind, string>;
@@ -153,6 +156,7 @@ const DEFAULT_MUTABLE_SETTINGS: PresentationSettingsDraft = {
     tools: "middle",
   },
   showToolMetadata: true,
+  showToolResultSummary: true,
   symbols: {
     toolDot: "●",
     toolDots: { ...DEFAULT_TOOL_DOTS },
@@ -317,6 +321,7 @@ export function normalizePresentationSettings(
       tools: readTrimMode(trimming, "tools", fallback.trimming.tools),
     },
     showToolMetadata: readBoolean(source, "showToolMetadata", fallback.showToolMetadata),
+    showToolResultSummary: readBoolean(source, "showToolResultSummary", fallback.showToolResultSummary),
     symbols: {
       toolDot,
       toolDots: { ...fallback.symbols.toolDots },

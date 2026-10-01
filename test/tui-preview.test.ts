@@ -33,6 +33,7 @@ describe("TuiPreview", () => {
 
     const first = preview.render(100).join("\n");
     expect(first).toContain("Read 3 files");
+    expect(first).toContain("export function renderStoryboard(): string[] {");
     expect(first).toContain("●");
     expect(first).toContain("...");
 
@@ -46,7 +47,6 @@ describe("TuiPreview", () => {
     expect(storyboard).toContain("╰─ Read 2 files");
     expect(storyboard).toContain("native results confirm commentary can contain Markdown");
     expect(storyboard).toContain("Confirming the diagnostic below the first read");
-    expect(storyboard).toContain("Response was truncated before completion.");
     expect(storyboard).toContain("expanded");
     expect(storyboard).toContain("native Pi rows");
     expect(storyboard).toContain("native thinking starts a visual Pi turn block");
@@ -73,6 +73,7 @@ describe("TuiPreview", () => {
     expect(scrolledStoryboard).toContain("Final answer");
     expect(scrolledStoryboard).toContain("Unknown text phase");
     expect(scrolledStoryboard).toContain("Locating registerTool definitions");
+    expect(scrolledStoryboard).toContain("Response was truncated before completion.");
     expect(scrolledStoryboard).toContain("Compacted from");
     expect(scrolledStoryboard).not.toContain("ctrl+o to expand");
     expect(scrolledStoryboard.split("\n").every((line) => visibleWidth(line) <= 100)).toBe(true);

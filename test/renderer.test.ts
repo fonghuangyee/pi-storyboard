@@ -135,6 +135,82 @@ describe("renderToolGroup", () => {
     }
   });
 
+  it("shows one successful result summary line after every tool kind by default", () => {
+    const cases = [
+      ["read", "read", { path: "src/a.ts" }],
+      ["grep", "search", { pattern: "x" }],
+      ["find", "search", { pattern: "*.ts" }],
+      ["ls", "list", { path: "src/" }],
+      ["write", "write", { path: "src/a.ts" }],
+      ["edit", "edit", { path: "src/a.ts", replacementCount: 1 }],
+      ["bash", "command", { command: "npm test" }],
+      ["custom-tool", "tool", { target: "src" }],
+    ] as const;
+
+    for (const [toolName, kind, args] of cases) {
+      const summary = `Useful result for ${toolName}`;
+      const lines = renderToolGroup({
+        kind,
+        rows: [{
+          ...row(toolName, args),
+          resultSummary: summary,
+        }],
+      }, 200, plainTheme).slice(2);
+      expect(lines[0]).toContain(String(Object.values(args)[0]));
+      expect(lines[1]).toContain(summary);
+      expect(lines[1]).not.toContain(" - ");
+    }
+  });
+
+  it("hides successful result summaries when configured, but keeps failures and running rows distinct", () => {
+    const hidden = normalizePresentationSettings({
+      "pi-storyboard": { showToolResultSummary: false },
+    });
+    const successful = {
+      ...row("bash", { command: "npm test" }),
+      resultSummary: "Tests passed",
+    };
+    const failed = {
+      ...row("bash", { command: "npm test" }, { content: [], isError: true }),
+      resultSummary: "Must not replace the error",
+      errorSummary: "Command exited with code 1",
+    };
+    const running = {
+      ...row("bash", { command: "npm test" }, undefined, true),
+      resultSummary: "Must not show while running",
+    };
+
+    const shown = renderToolGroup({ kind: "command", rows: [successful] }, 200, plainTheme).join("\n");
+    expect(shown).toContain("Tests passed");
+    expect(renderToolGroup({ kind: "command", rows: [successful] }, 200, plainTheme, hidden).join("\n")).not.toContain("Tests passed");
+
+    const failedLines = renderToolGroup({ kind: "command", rows: [failed] }, 200, plainTheme).join("\n");
+    expect(failedLines).toContain("Command exited with code 1");
+    expect(failedLines).not.toContain("Must not replace the error");
+    expect(renderToolGroup({ kind: "command", rows: [running] }, 200, plainTheme).join("\n")).not.toContain("Must not show while running");
+  });
+
+  it("sanitizes, caps, and wraps successful result summaries independently of tool metadata", () => {
+    const summary = `\u001b[31m${"x".repeat(600)}\u001b[0m`;
+    const group = {
+      kind: "read" as const,
+      rows: [{
+        ...row("read", { path: "a.ts", offset: 1 }),
+        resultSummary: summary,
+      }],
+    };
+    const lines = renderToolGroup(group, 24, plainTheme).slice(2);
+    const summaryLines = lines.slice(1);
+    const renderedSummary = summaryLines.map((line) => line.trimStart()).join("");
+
+    expect(renderedSummary).toBe("x".repeat(512));
+    expect(lines[0]).toContain("offset=1");
+    expect(summaryLines.every((line) => visibleWidth(line) <= 24)).toBe(true);
+    for (let width = 1; width <= 200; width++) {
+      expect(renderToolGroup(group, width, plainTheme).every((line) => visibleWidth(line) <= width)).toBe(true);
+    }
+  });
+
   it("wraps presentation-only status details below their tool row without trimming", () => {
     const detail = "Content fetched for 8/17 URLs [search-status]. Partial page content is ready for the next assistant turn. STATUS_DETAIL_END";
     const group = {
@@ -295,7 +371,10 @@ describe("renderToolGroup", () => {
     });
     const read = renderToolGroup({
       kind: "read",
-      rows: [row("read", { path: "src/renderer.ts", offset: 130, limit: 75 })],
+      rows: [{
+        ...row("read", { path: "src/renderer.ts", offset: 130, limit: 75 }),
+        resultSummary: "Read the requested source range.",
+      }],
     }, 200, plainTheme, hidden).join("\n");
     const edit = renderToolGroup({
       kind: "edit",
@@ -308,6 +387,7 @@ describe("renderToolGroup", () => {
 
     expect(read).not.toContain("offset=130");
     expect(read).not.toContain("limit=75");
+    expect(read).toContain("Read the requested source range.");
     expect(edit).not.toContain("2 replacements");
     expect(command).not.toContain("took 0.6s");
 
@@ -425,7 +505,7 @@ describe("renderToolGroup", () => {
     expect(formatToolRow(row("read", { path: "a\u0000\u001b[2J\nb" }))).toBe("a b");
   });
 
-  it("does not render result contents", () => {
+  it("does not render unprojected result contents", () => {
     const lines = renderToolGroup(
       {
         kind: "search",
@@ -438,7 +518,7 @@ describe("renderToolGroup", () => {
     expect(lines.join("\n")).not.toContain("secret result");
   });
 
-  it("does not expose write content, command output, or generic results", () => {
+  it("does not expose write arguments or unprojected command/generic result text", () => {
     const lines = renderToolGroup(
       {
         kind: "tool",

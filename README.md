@@ -1,14 +1,14 @@
 # pi-storyboard
 
-A presentation-only Pi extension that turns collapsed tool activity into compact, source-ordered storyboards while preserving Pi's native tools and detailed views.
+A presentation-only Pi extension that turns eligible collapsed tool activity into compact, source-ordered storyboards while leaving tools, messages, and detailed views under Pi's control.
 
 ## Features
 
 - Groups compatible `read`, `grep`/`find`, `ls`, `write`, `edit`, `bash`/`powershell`, custom, MCP, and subagent rows.
-- Keeps tool calls in assistant source order and shows clear thinking/action branches, with an explicit presentation-only `Thinking...` root when tools have no visible source reasoning.
-- Shows compact running and failed states, one bounded result-text excerpt beneath completed tool rows by default, and one wrapped failure diagnostic; the excerpt may include a short line from file or command output, while full tool output remains available through Pi's native expansion.
-- Renders a validated web-search completion status as wrapped plain-text detail under its exactly matched `web_search` row, or standalone when association is ambiguous; collapsed compaction summaries show a concise pre-compaction token count, while Pi retains the expanded native preview.
-- Includes `/storyboard-settings [global|project]` for interactive trimming, symbol, and color configuration.
+- Preserves assistant source order and native thinking/commentary. Eligible tool scenes with absent or empty source thinking get a fixed `Thinking...` presentation label—not generated reasoning.
+- Shows compact running and failed states, a wrapped failure diagnostic, and one sanitized, bounded successful-result excerpt by default. Excerpts may contain file or command output; disable them in settings if preferred. Full details remain available through Pi's native expansion.
+- Displays recognized web-search status as plain text only when its exact tool association is proven; otherwise it stays standalone. Collapsed compaction summaries show a concise token count, with Pi's native preview available when expanded.
+- Offers configurable trimming, metadata visibility, result-summary visibility, symbols, and colors.
 
 ## Install
 
@@ -26,10 +26,12 @@ pi install ./path/to/pi-storyboard
 
 ## Settings
 
-In interactive TUI mode, run `/storyboard-settings` to choose global or trusted project settings, or pass `global` or `project` directly. The page configures independent file/path, command, and custom-tool-argument trim modes (`none`, `middle`, or `end`), switches for `Show tool metadata` and `Show tool result summary`, per-kind dots, thinking/branch symbols, and theme color tokens. `showToolResultSummary` defaults to `true` in `pi-storyboard.json`; set it to `false` to hide successful result summaries. Saving reloads the extension automatically. Settings are stored in `~/.pi/agent/pi-storyboard.json` or the trusted project’s `.pi/pi-storyboard.json`.
+In interactive TUI mode, run `/storyboard-settings` to open the global settings page (`/storyboard-settings global` is also accepted). The command edits only `~/.pi/agent/pi-storyboard.json`; `project` is not a supported command argument. Trusted project settings in `.pi/pi-storyboard.json` can still override global values.
+
+Configure independent file/path, command, and custom-tool-argument trimming (`none`, `middle`, or `end`), optional tool metadata, successful-result excerpts, per-kind dots, symbols, and theme color tokens. Result excerpts are enabled by default. Saving reloads Pi so the settings take effect.
 
 ## Compatibility
 
-Pi's core packages are optional peer dependencies and are not bundled. The extension is feature-detected and fails back to Pi's native transcript when the required component shape is unavailable. Expanded tool mode always restores Pi's complete native rendering.
+Pi core packages are optional peer dependencies and are not bundled. The extension feature-detects the native transcript components and falls back to Pi's renderer when required shapes are unavailable. Expanded tool mode always restores Pi's complete native rendering.
 
-For the implementation contract, architecture, safety invariants, compatibility notes, and maintainer workflow, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+For the implementation contract, safety rules, compatibility notes, and maintainer workflow, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

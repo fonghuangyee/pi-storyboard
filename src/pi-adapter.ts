@@ -695,6 +695,7 @@ function inspectAssistantMetadata(row: unknown): AssistantMetadata | undefined {
   const contentKinds: AssistantContentKind[] = [];
   const sourceOrder: StoryboardSourceItem[] = [];
   let hasThinking = false;
+  let hasThinkingBlock = false;
   let hasText = false;
   let hasFinalAnswer = false;
   let hasUnknownText = false;
@@ -720,6 +721,7 @@ function inspectAssistantMetadata(row: unknown): AssistantMetadata | undefined {
         addAssistantContent(phase ?? "text");
       }
     } else if (rawBlock.type === "thinking") {
+      hasThinkingBlock = true;
       const thinkingBlocks: string[] = [];
       for (; index < message.content.length; index++) {
         const thinkingContent = message.content[index];
@@ -759,6 +761,7 @@ function inspectAssistantMetadata(row: unknown): AssistantMetadata | undefined {
     stopReason: message.stopReason,
     isStreaming: fields.isStreaming,
     hasThinking,
+    thinkingPresence: hasThinking ? "visible" : hasThinkingBlock ? "empty" : "absent",
     hasText,
     hasFinalAnswer,
     hasUnknownText,
@@ -881,6 +884,7 @@ function withAssistantLines(
     stopReason: metadata.stopReason,
     isStreaming: metadata.isStreaming,
     hasThinking: metadata.hasThinking,
+    thinkingPresence: metadata.thinkingPresence,
     hasText: metadata.hasText,
     hasFinalAnswer: metadata.hasFinalAnswer,
     hasUnknownText: metadata.hasUnknownText,
@@ -1354,7 +1358,7 @@ function planSessionWorkSpans(
     let end = index;
     let previous = first;
     // Only a visible-thinking scene can anchor a continuation. Empty scenes
-    // without such an anchor remain truthful action roots on their own.
+    // without such an anchor keep their separate presentation-only UI roots.
     if (
       !first.live &&
       first.segment.assistant.hasThinking &&

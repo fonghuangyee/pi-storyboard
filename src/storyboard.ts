@@ -40,7 +40,10 @@ export type AssistantSceneSnapshot = {
   readonly expectedToolCallIds: readonly string[];
   readonly stopReason: string;
   readonly isStreaming: boolean;
+  /** Non-empty source reasoning, independently of Pi's thinking visibility toggle. */
   readonly hasThinking: boolean;
+  /** Optional compatibility metadata; no source text or replay signature is retained. */
+  readonly thinkingPresence?: "absent" | "empty" | "visible";
   readonly hasText: boolean;
   /** A validated TextSignatureV1 phase was `final_answer`. */
   readonly hasFinalAnswer: boolean;
@@ -109,6 +112,12 @@ export type StoryboardChapterItem =
       /** A fixed presentation-only node for an orphan tool suffix after commentary. */
       readonly type: "synthetic-thinking-placeholder";
       readonly scene: StoryboardScene;
+    }
+  | {
+      /** An inert UI root, never source reasoning or a continuation anchor. */
+      readonly type: "synthetic-scene-root";
+      readonly scene: StoryboardScene;
+      readonly reason: "absent-thinking" | "empty-thinking" | "unanchored-actions";
     }
   | {
       readonly type: "action";
@@ -224,6 +233,10 @@ function isAssistantSnapshot(value: unknown): value is AssistantSceneSnapshot {
   ) {
     return false;
   }
+  if (value.thinkingPresence !== undefined && (
+    !["absent", "empty", "visible"].includes(value.thinkingPresence as string) ||
+    (value.thinkingPresence === "visible") !== value.hasThinking
+  )) return false;
   if (value.assistantContent !== undefined &&
       (!Array.isArray(value.assistantContent) || !value.assistantContent.every(isAssistantContent))) {
     return false;
@@ -717,6 +730,23 @@ function buildWorkSpanInternal(
         chapterItems.push(Object.freeze({
           type: "synthetic-thinking-placeholder",
           scene,
+        }));
+      } else if (
+        !continuation &&
+        chapterItems.length === 0 &&
+        (!scene.assistant.hasThinking || hasVisibleThinkingBefore || nodes.some((item) => item.type === "thinking"))
+      ) {
+        // Source-empty/absent reasoning and unanchored action chapters receive
+        // a UI node, not a fabricated native child. Render-hidden real thinking
+        // alone must not be reclassified as source-empty reasoning.
+        chapterItems.push(Object.freeze({
+          type: "synthetic-scene-root",
+          scene,
+          reason: scene.assistant.hasThinking
+            ? "unanchored-actions"
+            : scene.assistant.thinkingPresence === "empty"
+              ? "empty-thinking"
+              : "absent-thinking",
         }));
       }
       previousPartWasCommentary = false;

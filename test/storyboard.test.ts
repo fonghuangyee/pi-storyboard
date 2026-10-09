@@ -82,6 +82,17 @@ function sceneFrom(result: ReturnType<typeof buildStoryboard>, index = 0) {
 }
 
 describe("buildStoryboard", () => {
+  it.each([
+    { hasThinking: true, thinkingPresence: "empty" },
+    { hasThinking: false, thinkingPresence: "visible" },
+    { hasThinking: false, thinkingPresence: "unknown" },
+  ])("fails open for inconsistent source-thinking metadata %j", (metadata) => {
+    const owner = { ...assistant(["r1"]), ...metadata } as unknown as AssistantSceneSnapshot;
+    const children = [assistantChild(owner), toolChild(tool("r1", "read"))];
+    const result = buildStoryboard(children);
+    expect(result.segments).toEqual([{ type: "native", children }]);
+  });
+
   it("keeps a collapsed compaction summary as a storyboard boundary", () => {
     const row = { render: () => ["native compaction"] };
     const result = buildStoryboard([{

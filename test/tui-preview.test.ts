@@ -59,12 +59,17 @@ describe("TuiPreview", () => {
     // Enter the preview pane and scroll through the complete scenario matrix.
     preview.handleInput("\t");
     let scrolledStoryboard = "";
-    for (let index = 0; index < 100; index++) {
+    for (let index = 0; index < 180; index++) {
       preview.handleInput("\u001b[B");
       scrolledStoryboard += preview.render(100).join("\n");
     }
     expect(scrolledStoryboard).toContain("Write 1 file");
-    expect(scrolledStoryboard).toContain("◉ Run 2 commands");
+    expect(scrolledStoryboard).toContain("fixture/signed-empty.ts");
+    expect(scrolledStoryboard).toContain("Leading commentary stays complete before the tools.");
+    expect(scrolledStoryboard).toContain("fixture/running.ts");
+    expect(scrolledStoryboard).toContain("fixture-failing-command");
+    expect(scrolledStoryboard).toContain("╰─ Run 2 commands");
+    expect(scrolledStoryboard).not.toContain("◉ Run 2 commands");
     expect(scrolledStoryboard).toContain("Collapsed running edit");
     expect(scrolledStoryboard).toContain("Planning handler with effect for default config");
     expect(scrolledStoryboard).toContain("◉ Thinking...");

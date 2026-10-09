@@ -5,6 +5,7 @@ import {
   type PresentationSettings,
   type StoryboardColorName,
 } from "./presentation-settings.ts";
+import { buildWorkSpan } from "./storyboard.ts";
 import type {
   SceneState,
   StoryboardActionRun,
@@ -373,23 +374,7 @@ function thinkingPlaceholderLines(
   ).render(contentWidth);
 }
 
-function renderEmptyThinkingHeader(
-  scene: StoryboardScene,
-  width: number,
-  layout: StoryLayout,
-  theme: ThemeLike,
-): string[] {
-  return [...renderAssistantHeader(
-    scene,
-    thinkingPlaceholderLines(width, layout, theme),
-    width,
-    true,
-    layout,
-    theme,
-  ).lines];
-}
-
-/** Render the explicit same-response commentary-suffix placeholder. */
+/** Render an inert UI root; callers keep its source-empty/suffix identity distinct. */
 function renderSyntheticThinkingPlaceholder(
   scene: StoryboardScene,
   width: number,
@@ -683,8 +668,6 @@ function orderedSceneLayout(
     for (const region of header.regions) {
       assistantRegions.push({ row: first.row, ...region, start: start + region.start });
     }
-  } else if (scene.actionRuns.length > 0 && !scene.assistant.hasThinking) {
-    lines.push(...renderEmptyThinkingHeader(scene, safeWidth, layout, theme));
   }
 
   if (nodes.length > 0 && nodes.every((node) => node.type === "group")) {
@@ -806,24 +789,6 @@ function legacySceneLayout(
   const body = nativeAssistantLines.slice(leading.count);
   const lines = [...leading.leading];
   const assistantRegions: StoryboardAssistantRenderRegion[] = [];
-  if (body.length === 0 && scene.actionRuns.length > 0) {
-    lines.push(...renderEmptyThinkingHeader(scene, safeWidth, layout, theme));
-    lines.push(fit(assistantRailPrefix(layout, theme), safeWidth));
-    for (let index = 0; index < scene.actionRuns.length; index++) {
-      if (index > 0) lines.push(fit(assistantRailPrefix(layout, theme), safeWidth));
-      lines.push(...renderActionRun(
-        scene.actionRuns[index]!,
-        index === scene.actionRuns.length - 1,
-        safeWidth,
-        layout,
-        theme,
-        renderGroup,
-        detailsByToolCallId,
-      ));
-    }
-    return { lines, assistantRegions };
-  }
-
   const headerStart = lines.length;
   const header = renderAssistantHeader(
     scene,
@@ -869,6 +834,18 @@ export function renderStoryboardSceneLayout(
   settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
   detailsByToolCallId: ReadonlyMap<string, string> = new Map(),
 ): StoryboardSceneLayout {
+  if (scene.actionRuns.length > 0 && !scene.assistant.hasThinking) {
+    // Source-empty scene, preview, legacy and session-aware paths share the
+    // pure root policy. Real thinking retains its established native layout.
+    const span = buildWorkSpan([Object.freeze({
+      ...scene,
+      assistant: Object.freeze({ ...scene.assistant, renderedAssistantLines: nativeAssistantLines }),
+    })]);
+    if (span !== undefined) {
+      return renderStoryboardWorkSpanLayout(span, width, theme, renderGroup, settings, detailsByToolCallId);
+    }
+    throw new Error("incompatible source-empty storyboard scene content");
+  }
   return scene.orderedChildren === undefined
     ? legacySceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings, detailsByToolCallId)
     : orderedSceneLayout(scene, nativeAssistantLines, width, theme, renderGroup, settings, detailsByToolCallId);
@@ -929,7 +906,7 @@ function renderWorkChapter(
 
     if (index > 0) lines.push(fit(assistantRailPrefix(layout, theme), width));
     const terminal = endIndex === terminalIndex;
-    if (renderItem.type === "synthetic-thinking-placeholder") {
+    if (renderItem.type === "synthetic-thinking-placeholder" || renderItem.type === "synthetic-scene-root") {
       lines.push(...renderSyntheticThinkingPlaceholder(renderItem.scene, width, layout, theme));
     } else if (renderItem.type === "thinking") {
       const start = lines.length;

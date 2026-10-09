@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pi-storyboard.local/schema/pi-session.schema.json",
+  "title": "Pi persisted session record — reviewed upstream snapshot",
+  "$comment": "Development-only schema, not runtime eligibility. See docs/TRANSCRIPT_SCHEMA.md. Upstream commit 6fb2e7815167e6b19006fc526d1a5d0f5f998787; baseline v0.85.1 d981de1229ef899957bbe968bc8dcda02a21f477. Apply to each parsed JSONL record, not a JSON array. Unknown discriminators remain native boundaries; additional properties are preserved, never permission to storyboard.",
+  "oneOf": [
+    { "$ref": "#/$defs/SessionHeader" },
+    { "$ref": "#/$defs/SessionEntry" }
+  ],
+  "$defs": {
+    "TextContent": {
+      "type": "object", "required": ["type", "text"],
+      "properties": { "type": { "const": "text" }, "text": { "type": "string" }, "textSignature": { "type": "string" } }
+    },
+    "ThinkingContent": {
+      "type": "object", "required": ["type", "thinking"],
+      "properties": { "type": { "const": "thinking" }, "thinking": { "type": "string" }, "thinkingSignature": { "type": "string" }, "redacted": { "type": "boolean" } }
+    },
+    "ImageContent": {
+      "type": "object", "required": ["type", "data", "mimeType"],
+      "properties": { "type": { "const": "image" }, "data": { "type": "string" }, "mimeType": { "type": "string" } }
+    },
+    "ToolCall": {
+      "type": "object", "required": ["type", "id", "name", "arguments"],
+      "properties": { "type": { "const": "toolCall" }, "id": { "type": "string" }, "name": { "type": "string" }, "arguments": { "type": "object" }, "thoughtSignature": { "type": "string" }, "namespace": { "type": "string" } }
+    },
+    "TextSignatureV1": {
+      "$comment": "Decoded metadata only; textSignature itself remains a string. A missing phase is valid upstream but unknown for storyboard.",
+      "type": "object", "required": ["v", "id"],
+      "properties": { "v": { "const": 1 }, "id": { "type": "string" }, "phase": { "enum": ["commentary", "final_answer"] } }
+    },
+    "UserContent": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "oneOf": [{ "$ref": "#/$defs/TextContent" }, { "$ref": "#/$defs/ImageContent" }] } }] },
+    "AssistantContent": { "type": "array", "items": { "oneOf": [{ "$ref": "#/$defs/TextContent" }, { "$ref": "#/$defs/ThinkingContent" }, { "$ref": "#/$defs/ToolCall" }] } },
+    "ResultContent": { "type": "array", "items": { "oneOf": [{ "$ref": "#/$defs/TextContent" }, { "$ref": "#/$defs/ImageContent" }] } },
+    "Usage": {
+      "type": "object", "required": ["input", "output", "cacheRead", "cacheWrite", "totalTokens", "cost"],
+      "properties": {
+        "input": { "type": "number" }, "output": { "type": "number" }, "cacheRead": { "type": "number" }, "cacheWrite": { "type": "number" }, "cacheWrite1h": { "type": "number" }, "reasoning": { "type": "number" }, "totalTokens": { "type": "number" },
+        "cost": { "type": "object", "required": ["input", "output", "cacheRead", "cacheWrite", "total"], "properties": { "input": { "type": "number" }, "output": { "type": "number" }, "cacheRead": { "type": "number" }, "cacheWrite": { "type": "number" }, "total": { "type": "number" } } }
+      }
+    },
+    "DiagnosticErrorInfo": {
+      "type": "object", "required": ["message"],
+      "properties": { "name": { "type": "string" }, "message": { "type": "string" }, "stack": { "type": "string" }, "code": { "type": ["string", "number"] } }
+    },
+    "AssistantMessageDiagnostic": {
+      "type": "object", "required": ["type", "timestamp"],
+      "properties": { "type": { "type": "string" }, "timestamp": { "type": "number" }, "error": { "$ref": "#/$defs/DiagnosticErrorInfo" }, "details": { "type": "object" } }
+    },
+    "DeferredHandle": {
+      "type": "object", "required": ["provider", "modelId", "api", "id"],
+      "properties": { "provider": { "type": "string" }, "modelId": { "type": "string" }, "api": { "type": "string" }, "id": { "type": "string" }, "expiresAt": { "type": "number" }, "pollAfterMs": { "type": "number" }, "data": {} }
+    },
+    "ConstrainedSamplingConfig": {
+      "oneOf": [
+        { "const": false },
+        { "type": "object", "required": ["type", "strict"], "properties": { "type": { "const": "json_schema" }, "strict": { "enum": ["prefer", "require"] } } },
+        { "type": "object", "required": ["type", "variants"], "properties": { "type": { "const": "grammar" }, "variants": { "type": "object", "properties": { "openai_lark": { "type": "string" }, "openai_regex": { "type": "string" } } } } }
+      ]
+    },
+    "Tool": {
+      "type": "object", "required": ["name", "description", "parameters"],
+      "properties": { "name": { "type": "string" }, "description": { "type": "string" }, "parameters": { "type": "object" }, "constrainedSampling": { "$ref": "#/$defs/ConstrainedSamplingConfig" } }
+    },
+    "ToolReference": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string" } } },
+    "SystemMessage": {
+      "type": "object", "required": ["role", "content", "timestamp"],
+      "properties": {
+        "role": { "const": "system" }, "timestamp": { "type": "number" },
+        "content": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "$ref": "#/$defs/TextContent" } }] },
+        "sections": { "type": "object", "additionalProperties": { "type": ["string", "null"] } },
+        "toolsAdded": { "type": "array", "items": { "$ref": "#/$defs/Tool" } }, "toolsRemoved": { "type": "array", "items": { "$ref": "#/$defs/ToolReference" } }
+      }
+    },
+    "UserMessage": {
+      "type": "object", "required": ["role", "content", "timestamp"],
+      "properties": { "role": { "const": "user" }, "content": { "$ref": "#/$defs/UserContent" }, "timestamp": { "type": "number" } }
+    },
+    "LiveAssistantMessage": {
+      "type": "object", "required": ["role", "content", "api", "provider", "model", "usage", "stopReason", "timestamp"],
+      "properties": {
+        "role": { "const": "assistant" }, "content": { "$ref": "#/$defs/AssistantContent" }, "api": { "type": "string" }, "provider": { "type": "string" }, "model": { "type": "string" },
+        "responseModel": { "type": "string" }, "responseId": { "type": "string" }, "providerThinkingLevel": { "type": "string" }, "thinkingLevel": { "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"] },
+        "diagnostics": { "type": "array", "items": { "$ref": "#/$defs/AssistantMessageDiagnostic" } }, "usage": { "$ref": "#/$defs/Usage" },
+        "stopReason": { "enum": ["pending", "stop", "length", "toolUse", "error", "aborted", "deferred"] }, "deferred": { "$ref": "#/$defs/DeferredHandle" }, "errorMessage": { "type": "string" }, "rawStopReason": { "type": "string" }, "endTurn": { "type": "boolean" }, "timestamp": { "type": "number" }, "durationMs": { "type": "number" }
+      }
+    },
+    "AssistantMessage": {
+      "$comment": "Persistence profile: Pi does not persist pending assistant messages. A deferred handle's semantic necessity is checked separately.",
+      "allOf": [{ "$ref": "#/$defs/LiveAssistantMessage" }, { "properties": { "stopReason": { "not": { "const": "pending" } } } }]
+    },
+    "NestedToolCallRecord": {
+      "type": "object", "required": ["id", "name", "status"],
+      "properties": { "id": { "type": "string" }, "name": { "type": "string" }, "arguments": { "type": "object" }, "argumentsBytes": { "type": "number" }, "status": { "enum": ["ok", "error", "unfinished"] }, "durationMs": { "type": "number" }, "error": { "type": "string" } }
+    },
+    "NestedToolCalls": { "type": "object", "required": ["calls", "complete"], "properties": { "calls": { "type": "array", "items": { "$ref": "#/$defs/NestedToolCallRecord" } }, "complete": { "type": "boolean" } } },
+    "ToolResultMessage": {
+      "type": "object", "required": ["role", "toolCallId", "toolName", "content", "isError", "timestamp"],
+      "properties": { "role": { "const": "toolResult" }, "toolCallId": { "type": "string" }, "toolName": { "type": "string" }, "content": { "$ref": "#/$defs/ResultContent" }, "details": {}, "usage": { "$ref": "#/$defs/Usage" }, "nestedCalls": { "$ref": "#/$defs/NestedToolCalls" }, "isError": { "type": "boolean" }, "timestamp": { "type": "number" }, "durationMs": { "type": "number" } }
+    },
+    "BashExecutionMessage": {
+      "type": "object", "required": ["role", "command", "output", "cancelled", "truncated", "timestamp"],
+      "properties": { "role": { "const": "bashExecution" }, "command": { "type": "string" }, "output": { "type": "string" }, "exitCode": { "type": "number" }, "cancelled": { "type": "boolean" }, "truncated": { "type": "boolean" }, "fullOutputPath": { "type": "string" }, "excludeFromContext": { "type": "boolean" }, "timestamp": { "type": "number" } }
+    },
+    "CustomMessage": {
+      "type": "object", "required": ["role", "customType", "content", "display", "timestamp"],
+      "properties": { "role": { "const": "custom" }, "customType": { "type": "string" }, "content": { "$ref": "#/$defs/UserContent" }, "display": { "type": "boolean" }, "details": {}, "timestamp": { "type": "number" } }
+    },
+    "BranchSummaryMessage": {
+      "type": "object", "required": ["role", "summary", "fromId", "timestamp"],
+      "properties": { "role": { "const": "branchSummary" }, "summary": { "type": "string" }, "fromId": { "type": ["string", "null"] }, "timestamp": { "type": "number" } }
+    },
+    "CompactionSummaryMessage": {
+      "type": "object", "required": ["role", "summary", "tokensBefore", "timestamp"],
+      "properties": { "role": { "const": "compactionSummary" }, "summary": { "type": "string" }, "tokensBefore": { "type": "number" }, "timestamp": { "type": "number" } }
+    },
+    "UnknownMessage": {
+      "$comment": "Preservation envelope for declaration-merged/future roles. Never a storyboard-eligible message.",
+      "type": "object", "required": ["role"],
+      "properties": { "role": { "type": "string", "not": { "enum": ["system", "user", "assistant", "toolResult", "bashExecution", "custom", "branchSummary", "compactionSummary"] } } }
+    },
+    "AgentMessage": { "oneOf": [{ "$ref": "#/$defs/SystemMessage" }, { "$ref": "#/$defs/UserMessage" }, { "$ref": "#/$defs/AssistantMessage" }, { "$ref": "#/$defs/ToolResultMessage" }, { "$ref": "#/$defs/BashExecutionMessage" }, { "$ref": "#/$defs/CustomMessage" }, { "$ref": "#/$defs/BranchSummaryMessage" }, { "$ref": "#/$defs/CompactionSummaryMessage" }, { "$ref": "#/$defs/UnknownMessage" }] },
+    "SessionHeader": {
+      "type": "object", "required": ["type", "id", "timestamp", "cwd"],
+      "properties": { "type": { "const": "session" }, "version": { "type": "number" }, "id": { "type": "string" }, "timestamp": { "type": "string", "format": "date-time" }, "cwd": { "type": "string" }, "parentSession": { "type": "string" } }
+    },
+    "EntryBase": {
+      "type": "object", "required": ["type", "id", "parentId", "timestamp"],
+      "properties": { "type": { "type": "string" }, "id": { "type": "string" }, "parentId": { "type": ["string", "null"] }, "timestamp": { "type": "string", "format": "date-time" } }
+    },
+    "SessionMessageEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["message"], "properties": { "type": { "const": "message" }, "message": { "$ref": "#/$defs/AgentMessage" } } }] },
+    "ThinkingLevelChangeEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["thinkingLevel"], "properties": { "type": { "const": "thinking_level_change" }, "thinkingLevel": { "type": "string" } } }] },
+    "ModelChangeEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["provider", "modelId"], "properties": { "type": { "const": "model_change" }, "provider": { "type": "string" }, "modelId": { "type": "string" } } }] },
+    "UsageEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["kind", "provider", "model", "usage"], "properties": { "type": { "const": "usage" }, "kind": { "type": "string" }, "provider": { "type": "string" }, "model": { "type": "string" }, "usage": { "$ref": "#/$defs/Usage" }, "note": { "type": "string" } } }] },
+    "CompactionEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["summary", "firstKeptEntryId", "tokensBefore"], "properties": { "type": { "const": "compaction" }, "summary": { "type": "string" }, "firstKeptEntryId": { "type": "string" }, "tokensBefore": { "type": "number" }, "details": {}, "usage": { "$ref": "#/$defs/Usage" }, "fromHook": { "type": "boolean" }, "systemMessage": { "$ref": "#/$defs/SystemMessage" } } }] },
+    "BranchSummaryEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["fromId", "summary"], "properties": { "type": { "const": "branch_summary" }, "fromId": { "type": "string" }, "summary": { "type": "string" }, "details": {}, "usage": { "$ref": "#/$defs/Usage" }, "fromHook": { "type": "boolean" } } }] },
+    "CustomEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["customType"], "properties": { "type": { "const": "custom" }, "customType": { "type": "string" }, "data": {} } }] },
+    "CustomMessageEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["customType", "content", "display"], "properties": { "type": { "const": "custom_message" }, "customType": { "type": "string" }, "content": { "$ref": "#/$defs/UserContent" }, "details": {}, "display": { "type": "boolean" } } }] },
+    "ContextEditEntry": {
+      "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["targetId", "replacement"], "properties": {
+        "type": { "const": "context_edit" }, "targetId": { "type": "string" },
+        "replacement": { "oneOf": [{ "type": "null" }, { "type": "object", "required": ["content"], "properties": { "content": { "oneOf": [{ "type": "string" }, { "type": "array", "items": { "oneOf": [{ "$ref": "#/$defs/TextContent" }, { "$ref": "#/$defs/ImageContent" }, { "$ref": "#/$defs/ThinkingContent" }, { "$ref": "#/$defs/ToolCall" }] } }] } } }] }
+      } }]
+    },
+    "LabelEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "required": ["targetId"], "properties": { "type": { "const": "label" }, "targetId": { "type": "string" }, "label": { "type": "string" } } }] },
+    "SessionInfoEntry": { "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "properties": { "type": { "const": "session_info" }, "name": { "type": "string" } } }] },
+    "UnknownEntry": {
+      "$comment": "Future entry preservation only. Malformed known entries cannot match this alternative.",
+      "allOf": [{ "$ref": "#/$defs/EntryBase" }, { "properties": { "type": { "not": { "enum": ["session", "message", "thinking_level_change", "model_change", "usage", "compaction", "branch_summary", "custom", "custom_message", "context_edit", "label", "session_info"] } } } }]
+    },
+    "SessionEntry": { "oneOf": [{ "$ref": "#/$defs/SessionMessageEntry" }, { "$ref": "#/$defs/ThinkingLevelChangeEntry" }, { "$ref": "#/$defs/ModelChangeEntry" }, { "$ref": "#/$defs/UsageEntry" }, { "$ref": "#/$defs/CompactionEntry" }, { "$ref": "#/$defs/BranchSummaryEntry" }, { "$ref": "#/$defs/CustomEntry" }, { "$ref": "#/$defs/CustomMessageEntry" }, { "$ref": "#/$defs/ContextEditEntry" }, { "$ref": "#/$defs/LabelEntry" }, { "$ref": "#/$defs/SessionInfoEntry" }, { "$ref": "#/$defs/UnknownEntry" }] }
+  }
+}

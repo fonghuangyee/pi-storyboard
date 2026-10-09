@@ -7,9 +7,10 @@ import {
   type AssistantSceneSnapshot,
   type StoryboardToolSnapshot,
 } from "../src/storyboard.ts";
-import { renderStoryboardWorkSpanLayout } from "../src/storyboard-renderer.ts";
+import { renderStoryboardSceneLayout, renderStoryboardWorkSpanLayout } from "../src/storyboard-renderer.ts";
 import type { GroupKind } from "../src/grouping.ts";
 import type { ThemeLike } from "../src/renderer.ts";
+import { DEFAULT_PRESENTATION_SETTINGS, normalizePresentationSettings } from "../src/presentation-settings.ts";
 
 const theme: ThemeLike = { fg: (_color, text) => text, bold: (text) => text };
 const ok = { content: [], isError: false } as const;
@@ -31,7 +32,8 @@ function scene(id: string, callId: string, kind: GroupKind, thinking?: string, c
     expectedToolCallIds: [callId],
     stopReason: "stop",
     isStreaming: false,
-    hasThinking: thinking !== undefined,
+    hasThinking: thinking !== undefined && thinking.trim().length > 0,
+    thinkingPresence: thinking === undefined ? "absent" : thinking.trim().length > 0 ? "visible" : "empty",
     hasText: commentary !== undefined,
     hasFinalAnswer: false,
     hasUnknownText: false,
@@ -54,14 +56,78 @@ function scene(id: string, callId: string, kind: GroupKind, thinking?: string, c
 }
 
 describe("work-span projection", () => {
-  it("keeps separate turns in separate spans and omits empty thinking", () => {
+  it.each([undefined, "", " \t\n"])("adds one inert root for absent/empty source thinking %j", (thinking) => {
+    const source = scene("empty", "call", "read", thinking);
+    const before = JSON.stringify(source);
+    const span = buildWorkSpan([source])!;
+    const root = span.chapters[0]!.items[0]!;
+    expect(root).toMatchObject({
+      type: "synthetic-scene-root",
+      reason: thinking === undefined ? "absent-thinking" : "empty-thinking",
+    });
+    expect("content" in root).toBe(false);
+    expect("toolCallId" in root).toBe(false);
+    expect(Object.isFrozen(root)).toBe(true);
+    const renderGroup = () => ["", " Read 1 file", "  ● fixture.ts"];
+    const work = renderStoryboardWorkSpanLayout(span, 80, theme, renderGroup);
+    const single = renderStoryboardSceneLayout(source, source.assistant.renderedAssistantLines, 80, theme, renderGroup);
+    expect(single.lines).toEqual(work.lines);
+    expect(work.lines.join("\n").match(/Thinking\.\.\./gu)).toHaveLength(1);
+    expect(work.lines.join("\n")).toContain("╰─ Read 1 file");
+    expect(work.assistantRegions).toHaveLength(0);
+    expect(buildEmptyThinkingContinuation([source, scene("next", "next", "read")])).toBeUndefined();
+    expect(JSON.stringify(source)).toBe(before);
+  });
+
+  it("does not reinterpret render-hidden real reasoning as source-empty", () => {
+    const source = scene("hidden", "call", "read", "source thought");
+    const thinking = source.orderedChildren![0]!;
+    if (thinking.type !== "assistant") throw new Error("expected thinking");
+    const hidden = {
+      ...source,
+      assistant: { ...source.assistant, renderedAssistantLines: [] },
+      orderedChildren: [
+        { ...thinking, content: { ...thinking.content, renderedLines: [] } },
+        ...source.orderedChildren!.slice(1),
+      ],
+    };
+    const span = buildWorkSpan([hidden])!;
+    expect(span.chapters[0]!.items.map((item) => item.type)).toEqual(["action"]);
+    expect(renderStoryboardSceneLayout(hidden, [], 80, theme, () => ["", " read 1"]).lines.join("\n"))
+      .not.toContain("Thinking...");
+  });
+
+  it.each(["running", "failed", "complete"] as const)("uses assistant lifecycle color for a %s source-empty root", (state) => {
+    const source = { ...scene("state", "call", "read"), state };
+    const colors: string[] = [];
+    const coloredTheme: ThemeLike = { fg: (color, text) => { if (text === "◉") colors.push(color); return text; } };
+    const span = buildWorkSpan([source])!;
+    const rendered = renderStoryboardWorkSpanLayout(span, 80, coloredTheme, () => ["", " read 1"]);
+    expect(rendered.lines.join("\n")).toContain("Thinking...");
+    expect(colors).toEqual([state === "running" ? "syntaxKeyword" : "success"]);
+  });
+
+  it("fits explicit roots and configured symbols at every width 1–200", () => {
+    const span = buildWorkSpan([scene("narrow", "call", "read")])!;
+    const custom = normalizePresentationSettings({ "pi-storyboard": {
+      symbols: { thinkingRoot: "ROOT", rail: "RAIL", branch: "BRANCH", lastBranch: "END" },
+    } });
+    for (const settings of [DEFAULT_PRESENTATION_SETTINGS, custom]) {
+      for (let width = 1; width <= 200; width++) {
+        const output = renderStoryboardWorkSpanLayout(span, width, theme, () => ["", " Read 1 file", "  ● 文件.ts"], settings);
+        expect(output.lines.length).toBeGreaterThan(0);
+        expect(output.lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+      }
+    }
+  });
+  it("keeps separate turns in separate spans with an explicit source-empty UI root", () => {
     const first = scene("a", "a", "read", "inspect");
     const second = scene("b", "b", "read");
     const firstSpan = buildWorkSpan([first]);
     const secondSpan = buildWorkSpan([second]);
     expect(buildWorkSpan([first, second])).toBeUndefined();
     expect(firstSpan?.chapters[0]?.items.map((item) => item.type)).toEqual(["thinking", "action"]);
-    expect(secondSpan?.chapters[0]?.items.map((item) => item.type)).toEqual(["action"]);
+    expect(secondSpan?.chapters[0]?.items.map((item) => item.type)).toEqual(["synthetic-scene-root", "action"]);
   });
 
   it("continues adjacent empty-thinking actions under the previous visible root", () => {
@@ -163,10 +229,10 @@ describe("work-span projection", () => {
     expect(layout.lines.every((line) => visibleWidth(line) <= 40)).toBe(true);
   });
 
-  it("does not synthesize a placeholder when commentary has no preceding thinking", () => {
+  it("starts tools after leading commentary with a source-empty UI root", () => {
     const second = scene("b", "b", "edit", undefined, "Applying the fix");
     const span = buildWorkSpan([second]);
-    expect(span?.chapters[0]?.items.map((item) => item.type)).toEqual(["action"]);
+    expect(span?.chapters[0]?.items.map((item) => item.type)).toEqual(["synthetic-scene-root", "action"]);
     const layout = renderStoryboardWorkSpanLayout(
       span!,
       80,
@@ -174,7 +240,9 @@ describe("work-span projection", () => {
       (group) => ["", ` ${group.kind} ${group.rows.length}`],
     );
     const output = layout.lines.join("\n");
-    expect(output).toContain("◉ edit 1");
-    expect(output).not.toContain("Thinking...");
+    expect(output).toContain("◉ Thinking...");
+    expect(output).toContain("╰─ edit 1");
+    expect(output.indexOf("Thinking...")).toBeGreaterThan(output.indexOf("Applying the fix"));
+    expect(output).not.toContain("◉ edit 1");
   });
 });

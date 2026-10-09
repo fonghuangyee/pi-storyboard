@@ -1328,7 +1328,7 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("uses validated text phase and fails open for final or unknown text", () => {
+  it("requires source-order composition for leading commentary and fails open for final or unknown text", () => {
     const commentaryOwner = storyboardAssistant(["commentary update"], ["read-commentary"], {
       thinking: false,
       text: true,
@@ -1343,9 +1343,12 @@ describe("Container adapter", () => {
       renderGroup: commentaryRender,
     });
     const commentaryLines = container(commentaryOwner, commentaryTool).render(80).join("\n");
-    expect(commentaryLines).toContain("○commentary update");
-    expect(commentaryLines).toContain("╰─ Read 1 file");
-    expect(commentaryTool.render).not.toHaveBeenCalled();
+    // This older/test-double shape has no native contentContainer. A valid
+    // phase alone cannot prove commentary placement or justify a fake thought.
+    expect(commentaryLines).toBe("commentary update\nnative read");
+    expect(commentaryLines).not.toContain("Thinking...");
+    expect(commentaryRender).not.toHaveBeenCalled();
+    expect(commentaryTool.render).toHaveBeenCalledOnce();
     commentaryHandle?.uninstall();
 
     for (const textPhase of ["final_answer", undefined] as const) {

@@ -4,10 +4,12 @@ import {
   createEditToolDefinition,
   ToolExecutionComponent,
   type Theme,
+  type SessionEntry,
 } from "@earendil-works/pi-coding-agent";
 import {
   Key,
   Container,
+  Text,
   matchesKey,
   truncateToWidth,
   visibleWidth,
@@ -42,7 +44,7 @@ type ReplayContentBlock = {
 };
 
 type ReplayContent =
-  | { readonly type: "thinking"; readonly thinking: string }
+  | { readonly type: "thinking"; readonly thinking: string; readonly thinkingSignature?: string; readonly redacted?: boolean }
   | { readonly type: "tool"; readonly call: ReplayToolCall }
   | {
       readonly type: "text";
@@ -244,7 +246,7 @@ function replayAssistantMessage(scene: ReplayAssistant): ReplayAssistantMessage 
   return {
     role: "assistant",
     content: sourceContent.map((content) => {
-      if (content.type === "thinking") return { type: "thinking", thinking: content.thinking };
+      if (content.type === "thinking") return { ...content };
       if (content.type === "text") {
         return {
           type: "text",
@@ -268,6 +270,9 @@ function replayAssistantMessage(scene: ReplayAssistant): ReplayAssistantMessage 
       };
     }),
     stopReason: scene.stopReason,
+    api: "fixture", provider: "fixture", model: "fixture",
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     timestamp: 0,
   } as unknown as ReplayAssistantMessage;
 }
@@ -310,7 +315,86 @@ function createNativeTranscript(tui: TUI, cwd: string): Container {
       transcript.addChild(tool);
     }
   }
+  const incident = createNoThinkingTranscriptReplay(tui, cwd);
+  for (const child of incident.transcript.children) transcript.addChild(child);
   return transcript;
+}
+
+/**
+ * Fixed synthetic reproduction of the four no-thinking incident responses.
+ * This constructs native components and public entry data only; it never
+ * reads a session, executes a tool, or inspects private Pi component fields.
+ */
+export function createNoThinkingTranscriptReplay(tui: TUI, cwd: string): {
+  transcript: Container;
+  entries: readonly SessionEntry[];
+  leafId: string;
+  assistants: readonly AssistantMessageComponent[];
+  tools: readonly ToolExecutionComponent[];
+  messages: readonly ReplayAssistantMessage[];
+} {
+  const call = (id: string, name: string, args: Record<string, unknown>): ReplayToolCall => ({
+    id, name, args, result: EMPTY_RESULT,
+  });
+  const batches: readonly (readonly ReplayToolCall[])[] = [
+    [call("call-a1", "read", { path: "fixture/a.ts" }), call("call-a2", "read", { path: "fixture/b.ts" }),
+      call("call-a3", "bash", { command: "fixture-command" }), call("call-a4", "web_enable", {})],
+    [call("call-b1", "fetch_content", { urls: ["https://example.invalid/fixture"], mode: "readable" }),
+      call("call-b2", "bash", { command: "fixture-command" })],
+    [call("call-c1", "bash", { command: "fixture-command" })],
+    [call("call-d1", "read", { path: "fixture/c.ts" }), call("call-d2", "read", { path: "fixture/d.ts" }),
+      call("call-d3", "get_search_content", { responseId: "fixture", urlIndex: 0, offset: 0, limit: 100 }),
+      call("call-d4", "fetch_content", { url: "https://example.invalid/fixture", mode: "readable" })],
+  ];
+  const transcript = new Container();
+  const entries: SessionEntry[] = [];
+  const assistants: AssistantMessageComponent[] = [];
+  const tools: ToolExecutionComponent[] = [];
+  const messages: ReplayAssistantMessage[] = [];
+  let parentId: string | null = null;
+  const append = (entry: Record<string, unknown>): void => {
+    entries.push({ ...entry, parentId, timestamp: "2026-01-01T00:00:00Z" } as unknown as SessionEntry);
+    parentId = entry.id as string;
+  };
+  append({ type: "message", id: "incident-user", message: { role: "user", content: "Proceed with the fixture.", timestamp: 0 } });
+  transcript.addChild(new Text("Proceed with the fixture.", 1, 0));
+  for (let index = 0; index < batches.length; index++) {
+    const calls = batches[index]!;
+    const content: ReplayContent[] = [
+      ...(index === 2 ? [{ type: "thinking" as const, thinking: "", thinkingSignature: "synthetic-opaque-signature" }] : []),
+      ...calls.map((toolCall) => ({ type: "tool" as const, call: toolCall })),
+    ];
+    const message = replayAssistantMessage({ thinking: [], calls, content, stopReason: "toolUse" });
+    messages.push(message);
+    const assistant = new AssistantMessageComponent(message);
+    assistants.push(assistant);
+    transcript.addChild(assistant);
+    append({ type: "message", id: `incident-assistant-${index}`, message });
+    if (index === 1 || index === 3) {
+      // Hidden custom state has no native transcript child. If a host renders
+      // a visible custom row instead, the adapter's usual boundary rules win.
+      append({ type: "custom", id: `incident-state-${index}`, customType: "web-search-results", data: {} });
+    }
+    const batchTools = calls.map((toolCall) => {
+      const tool = new ToolExecutionComponent(toolCall.name, toolCall.id, toolCall.args, undefined,
+        replayToolDefinition(toolCall, cwd), tui, cwd);
+      tool.markExecutionStarted();
+      tool.setArgsComplete();
+      transcript.addChild(tool);
+      tools.push(tool);
+      return { tool, toolCall };
+    });
+    // Parallel completions intentionally differ from declared source order.
+    for (const { tool, toolCall } of [...batchTools].reverse()) {
+      tool.updateResult(replayToolResult(toolCall.result));
+      append({ type: "message", id: `incident-result-${toolCall.id}`, message: {
+        role: "toolResult", toolCallId: toolCall.id, toolName: toolCall.name,
+        content: [], isError: false, timestamp: 0,
+      } });
+    }
+  }
+  return { transcript, entries: Object.freeze(entries), leafId: parentId!,
+    assistants: Object.freeze(assistants), tools: Object.freeze(tools), messages: Object.freeze(messages) };
 }
 
 function fit(line: string, width: number): string {

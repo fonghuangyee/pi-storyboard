@@ -1,0 +1,56 @@
+{
+  "description": "Synthetic structural reproduction of the four assistant responses after ok proceed in incident 01a11e5e-3df5-7180-9d24-1a976a258c67. All IDs, paths, commands, outputs, and signatures are invented. Not a native TUI replay or a copy of private transcript data.",
+  "leafId": "result-d4",
+  "entries": [
+    { "type": "message", "id": "user", "parentId": null, "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "user", "content": "Proceed with the fixture.", "timestamp": 0 } },
+    { "type": "message", "id": "assistant-a", "parentId": "user", "timestamp": "2026-01-01T00:00:00Z", "message": {
+      "role": "assistant", "api": "fixture", "provider": "fixture", "model": "fixture", "timestamp": 0, "stopReason": "toolUse",
+      "usage": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 } },
+      "content": [
+        { "type": "toolCall", "id": "call-a1", "name": "read", "arguments": { "path": "fixture/a.ts", "offset": null, "limit": null } },
+        { "type": "toolCall", "id": "call-a2", "name": "read", "arguments": { "path": "fixture/b.ts", "offset": null, "limit": null } },
+        { "type": "toolCall", "id": "call-a3", "name": "bash", "arguments": { "command": "fixture-command", "timeout": null } },
+        { "type": "toolCall", "id": "call-a4", "name": "web_enable", "arguments": {} }
+      ]
+    } },
+    { "type": "message", "id": "result-a1", "parentId": "assistant-a", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-a1", "toolName": "read", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "result-a2", "parentId": "result-a1", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-a2", "toolName": "read", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "result-a3", "parentId": "result-a2", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-a3", "toolName": "bash", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "result-a4", "parentId": "result-a3", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-a4", "toolName": "web_enable", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "assistant-b", "parentId": "result-a4", "timestamp": "2026-01-01T00:00:00Z", "message": {
+      "role": "assistant", "api": "fixture", "provider": "fixture", "model": "fixture", "timestamp": 0, "stopReason": "toolUse",
+      "usage": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 } },
+      "content": [
+        { "type": "toolCall", "id": "call-b1", "name": "fetch_content", "arguments": { "urls": ["https://example.invalid/fixture"], "mode": "readable" } },
+        { "type": "toolCall", "id": "call-b2", "name": "bash", "arguments": { "command": "fixture-command", "timeout": null } }
+      ]
+    } },
+    { "type": "custom", "id": "state-b", "parentId": "assistant-b", "timestamp": "2026-01-01T00:00:00Z", "customType": "web-search-results", "data": {} },
+    { "type": "message", "id": "result-b1", "parentId": "state-b", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-b1", "toolName": "fetch_content", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "result-b2", "parentId": "result-b1", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-b2", "toolName": "bash", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "assistant-c", "parentId": "result-b2", "timestamp": "2026-01-01T00:00:00Z", "message": {
+      "role": "assistant", "api": "fixture", "provider": "fixture", "model": "fixture", "timestamp": 0, "stopReason": "toolUse",
+      "usage": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 } },
+      "content": [
+        { "type": "thinking", "thinking": "", "thinkingSignature": "synthetic-opaque-signature" },
+        { "type": "toolCall", "id": "call-c1", "name": "bash", "arguments": { "command": "fixture-command", "timeout": null } }
+      ]
+    } },
+    { "type": "message", "id": "result-c1", "parentId": "assistant-c", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-c1", "toolName": "bash", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "assistant-d", "parentId": "result-c1", "timestamp": "2026-01-01T00:00:00Z", "message": {
+      "role": "assistant", "api": "fixture", "provider": "fixture", "model": "fixture", "timestamp": 0, "stopReason": "toolUse",
+      "usage": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0, "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0 } },
+      "content": [
+        { "type": "toolCall", "id": "call-d1", "name": "read", "arguments": { "path": "fixture/c.ts", "offset": null, "limit": null } },
+        { "type": "toolCall", "id": "call-d2", "name": "read", "arguments": { "path": "fixture/d.ts", "offset": null, "limit": null } },
+        { "type": "toolCall", "id": "call-d3", "name": "get_search_content", "arguments": { "responseId": "fixture", "urlIndex": 0, "offset": 0, "limit": 100 } },
+        { "type": "toolCall", "id": "call-d4", "name": "fetch_content", "arguments": { "url": "https://example.invalid/fixture", "mode": "readable" } }
+      ]
+    } },
+    { "type": "custom", "id": "state-d", "parentId": "assistant-d", "timestamp": "2026-01-01T00:00:00Z", "customType": "web-search-results", "data": {} },
+    { "type": "message", "id": "result-d1", "parentId": "state-d", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-d1", "toolName": "read", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "result-d2", "parentId": "result-d1", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-d2", "toolName": "read", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "result-d3", "parentId": "result-d2", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-d3", "toolName": "get_search_content", "content": [], "isError": false, "timestamp": 0 } },
+    { "type": "message", "id": "result-d4", "parentId": "result-d3", "timestamp": "2026-01-01T00:00:00Z", "message": { "role": "toolResult", "toolCallId": "call-d4", "toolName": "fetch_content", "content": [], "isError": false, "timestamp": 0 } }
+  ]
+}

@@ -517,6 +517,8 @@ type StoryboardPreviewItem =
 type StoryboardPreviewContent = {
   /** Native thinking content used as the visual turn-block header. */
   title?: string;
+  /** Source-empty reasoning fixture; no provider signature is retained. */
+  emptyThinking?: boolean;
   state: "complete" | "running" | "failed" | "note";
   groups: readonly GroupSnapshot[];
   /** Optional exact source-order sample following the native header. */
@@ -703,6 +705,31 @@ const STORYBOARD_SCENES: readonly StoryboardPreviewScene[] = [
     ],
   },
   {
+    state: "complete",
+    emptyThinking: true,
+    detail: "signed empty thinking · inert presentation root",
+    groups: [{ kind: "read", rows: [{ toolName: "read", args: { path: "fixture/signed-empty.ts" }, result: { content: [], isError: false }, isPartial: false, expanded: false }] }],
+  },
+  {
+    state: "complete",
+    detail: "leading commentary · full-width narrative before the UI root",
+    groups: [],
+    items: [
+      { type: "commentary", text: "Leading commentary stays complete before the tools." },
+      { type: "group", group: { kind: "read", rows: [{ toolName: "read", args: { path: "fixture/commentary.ts" }, result: { content: [], isError: false }, isPartial: false, expanded: false }] } },
+    ],
+  },
+  {
+    state: "running",
+    detail: "running tool-only response · no invented result",
+    groups: [{ kind: "edit", rows: [{ toolName: "edit", args: { path: "fixture/running.ts" }, isPartial: true, expanded: false }] }],
+  },
+  {
+    state: "failed",
+    detail: "failed tool-only response · root retains assistant lifecycle color",
+    groups: [{ kind: "command", rows: [{ toolName: "bash", args: { command: "fixture-failing-command" }, result: { content: [], isError: true }, errorSummary: "Command exited with code 1", isPartial: false, expanded: false }] }],
+  },
+  {
     title: "Locating registerTool definitions",
     state: "complete",
     detail: "visible-thinking root",
@@ -818,7 +845,9 @@ class TurnStoryboardSample implements Component {
         expectedToolCallIds: allTools.map((tool) => tool.toolCallId),
         stopReason: scene.state === "running" ? "pending" : scene.state === "failed" ? "error" : "toolUse",
         isStreaming: scene.state === "running",
-        hasThinking: scene.title !== undefined,
+        hasThinking: orderedChildren.some((child) => child.type === "assistant" && child.content.type === "thinking" && child.content.renderedLines.some((line) => line.trim().length > 0)),
+        thinkingPresence: scene.title !== undefined || items.some((item) => item.type === "thinking" && item.text.trim().length > 0)
+          ? "visible" : scene.emptyThinking ? "empty" : "absent",
         hasText: items.some((item) => item.type === "commentary"),
         hasFinalAnswer: false,
         hasUnknownText: false,
@@ -1195,7 +1224,7 @@ function createDefinitions(): PreviewDefinition[] {
     },
     {
       name: "Transcript replay",
-      description: "Session tail using real Pi assistant/tool components",
+      description: "Native session tail and synthetic no-thinking incident",
       create: ({ tui, theme, cwd }) => new TranscriptReplay(tui, cwd, theme),
     },
   ];

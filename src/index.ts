@@ -12,7 +12,6 @@ import {
   type PresentationSettingsScope,
 } from "./presentation-settings-store.ts";
 import { renderToolGroup } from "./renderer.ts";
-import { TuiPreview } from "./tui-preview.ts";
 import { buildSessionProjection, type SessionProjection } from "./session-projection.ts";
 
 /**
@@ -65,20 +64,6 @@ export default function (pi: ExtensionAPI): void {
       } catch (error) {
         ctx.ui.notify(`Could not save storyboard settings: ${String(error)}`, "error");
       }
-    },
-  });
-
-  pi.registerCommand("storyboard-preview", {
-    description: "Preview Pi storyboards and available pi-tui components",
-    handler: async (_args, ctx) => {
-      if (ctx.mode !== "tui") {
-        ctx.ui.notify("/storyboard-preview is only available in interactive TUI mode", "warning");
-        return;
-      }
-
-      await ctx.ui.custom<void>((tui, theme, _keybindings, done) =>
-        new TuiPreview(tui, theme, () => done(undefined), ctx.cwd),
-      );
     },
   });
 

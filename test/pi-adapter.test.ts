@@ -1072,7 +1072,7 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("keeps an edit compact through partial args, preview invalidation, and settlement", () => {
+  it("keeps an edit compact through partial args, render updates, and settlement", () => {
     const owner = storyboardAssistant(["", " thinking while editing"], ["edit-running"]);
     const thinking = {
       render: vi.fn(() => [" thinking while editing"]),
@@ -1118,9 +1118,9 @@ describe("Container adapter", () => {
       path: "src/storyboard-renderer.ts",
       edits: [{ oldText: "old", newText: "new" }],
     };
-    const previewOutput = value.render(80).join("\\n");
-    expect(previewOutput).toContain("● src/storyboard-renderer.ts");
-    expect(previewOutput).not.toContain("FULL-WIDTH GREEN");
+    const updatedOutput = value.render(80).join("\\n");
+    expect(updatedOutput).toContain("● src/storyboard-renderer.ts");
+    expect(updatedOutput).not.toContain("FULL-WIDTH GREEN");
 
     editFields.result = result();
     editFields.isPartial = false;
@@ -1565,7 +1565,7 @@ describe("Container adapter", () => {
   });
 
   it("chooses a useful diagnostic instead of a trailing structural line", () => {
-    const validationFailure = tool("edit", { path: "test/tui-preview.test.ts" }, {
+    const validationFailure = tool("edit", { path: "test/pi-adapter.test.ts" }, {
       content: [{
         type: "text",
         text: [
@@ -1574,7 +1574,7 @@ describe("Container adapter", () => {
           "",
           "Received arguments:",
           "{",
-          '  "path": "test/tui-preview.test.ts",',
+          '  "path": "test/pi-adapter.test.ts",',
           '  "offset": 60,',
           '  "limit": 16',
           "}",

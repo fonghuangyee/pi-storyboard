@@ -7,11 +7,11 @@
 ### Documentation is part of the implementation
 
 - `docs/ARCHITECTURE.md` is the authoritative explanation of the implemented architecture, behavior, safety rules, compatibility assumptions, and verification requirements.
-- Update `docs/ARCHITECTURE.md` in the same change whenever behavior, architecture, ownership rules, fallback behavior, lifecycle handling, dependencies, supported Pi versions, preview fixtures, tests, packaging, or implemented future work changes.
+- Update `docs/ARCHITECTURE.md` in the same change whenever behavior, architecture, ownership rules, fallback behavior, lifecycle handling, dependencies, supported Pi versions, test fixtures, tests, packaging, or implemented future work changes.
 - Keep examples, module descriptions, acceptance criteria, and test matrices aligned with the code.
 - Treat stale documentation as a defect, not as a follow-up task.
 - Dedicated planning documents in `docs/` are allowed for unimplemented proposals. They must not replace or contradict implementation truth; when a plan ships, fold the final behavior, acceptance criteria, and compatibility details into `docs/ARCHITECTURE.md` and update or retire the plan.
-- Keep `README.md` reserved for concise Pi extension marketplace usage: what the extension does, installation, user-facing preview/features, compatibility, and links to development documentation. Do not move internal design history or maintainer procedures into it.
+- Keep `README.md` reserved for concise Pi extension marketplace usage: what the extension does, installation, user-facing features, compatibility, and links to development documentation. Do not move internal design history or maintainer procedures into it.
 
 ### Architecture boundaries
 
@@ -30,7 +30,7 @@
 - Inspect `git status` and existing diffs before editing; preserve unrelated user work.
 - Prefer focused edits. Do not reformat or rewrite unrelated source.
 - Add regression tests for behavior changes, especially native fallback and width/ownership edge cases.
-- Update preview fixtures when the visible contract changes.
+- Update tests and fixtures when the visible contract changes.
 
 ### Required verification
 

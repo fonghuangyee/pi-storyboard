@@ -835,8 +835,8 @@ export function renderStoryboardSceneLayout(
   detailsByToolCallId: ReadonlyMap<string, string> = new Map(),
 ): StoryboardSceneLayout {
   if (scene.actionRuns.length > 0 && !scene.assistant.hasThinking) {
-    // Source-empty scene, preview, legacy and session-aware paths share the
-    // pure root policy. Real thinking retains its established native layout.
+    // Source-empty scene, legacy, and session-aware paths share the pure root
+    // policy. Real thinking retains its established native layout.
     const span = buildWorkSpan([Object.freeze({
       ...scene,
       assistant: Object.freeze({ ...scene.assistant, renderedAssistantLines: nativeAssistantLines }),

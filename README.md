@@ -8,7 +8,6 @@ A presentation-only Pi extension that turns collapsed tool activity into compact
 - Keeps tool calls in assistant source order and shows clear thinking/action branches, with an explicit presentation-only `Thinking...` root when tools have no visible source reasoning.
 - Shows compact running and failed states, one bounded result-text excerpt beneath completed tool rows by default, and one wrapped failure diagnostic; the excerpt may include a short line from file or command output, while full tool output remains available through Pi's native expansion.
 - Renders a validated web-search completion status as wrapped plain-text detail under its exactly matched `web_search` row, or standalone when association is ambiguous; collapsed compaction summaries show a concise pre-compaction token count, while Pi retains the expanded native preview.
-- Includes a `/storyboard-preview` gallery for the grouped-tool and turn-storyboard presentations.
 - Includes `/storyboard-settings [global|project]` for interactive trimming, symbol, and color configuration.
 
 ## Install
@@ -24,16 +23,6 @@ As a Pi package:
 ```bash
 pi install ./path/to/pi-storyboard
 ```
-
-## Preview
-
-In interactive TUI mode, run:
-
-```text
-/storyboard-preview
-```
-
-Use `Turn storyboard` for the fixed storyboard reference or `Transcript replay` for native-component fixtures, including consecutive absent/empty-thinking tool scenes. Press `Tab` to enter the preview, use `↑`/`↓` or PageUp/PageDown to browse, and press `Esc` to close.
 
 ## Settings
 

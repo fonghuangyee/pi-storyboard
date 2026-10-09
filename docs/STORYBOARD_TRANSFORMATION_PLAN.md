@@ -20,7 +20,7 @@ Pi public selected entries + native children
 
 - `thinkingPresence` distinguishes absent, empty, and genuine non-empty source reasoning without retaining signatures or payloads.
 - `synthetic-scene-root` records only its scene and reason; the commentary-suffix node stays distinct.
-- Source-empty scene/work-span/legacy/preview rendering uses the same pure root policy. Render-hidden real reasoning retains Pi's native semantics.
+- Source-empty scene/work-span/legacy/session-aware rendering uses the same pure root policy. Render-hidden real reasoning retains Pi's native semantics.
 - Roots are inert UI; they have no fabricated source content index, tool ID, provider signature, native thinking child, or model/session entry.
 - Exact call IDs, original source order, ownership completeness, hard boundaries, expansion, and renderer failures remain authoritative.
 - Leading commentary stays full-width before the root; incompatible shapes without source-order extraction remain native.
@@ -30,16 +30,16 @@ Pi public selected entries + native children
 
 - Version-pinned schema reference and sanitized structural incident fixture.
 - Pure root reasons, source-empty/whitespace cases, separate scenes, no synthetic continuation anchors, scene/work-span parity, lifecycle colors, and widths 1–200.
-- Fixed synthetic native-component replay of four response shapes and eleven tools, with reversed result completion and invisible custom-state positions.
-- Native replay coverage for empty signed/redacted/whitespace thinking, full-width leading commentary, running-to-failed settlement, native thinking-toggle mouse translation after inert roots, expansion/collapse, projection replacement/invalidation, visible native interruption, and original renderer fallback on compact-render errors.
-- Production-policy preview fixtures for signed-empty, leading-commentary, running-tool-only, and failed-tool-only cases, plus the incident in Transcript replay.
+- Fixed synthetic native-component test fixture for four response shapes and eleven tools, with reversed result completion and invisible custom-state positions.
+- Native integration coverage for empty signed/redacted/whitespace thinking, full-width leading commentary, running-to-failed settlement, native thinking-toggle mouse translation after inert roots, expansion/collapse, projection replacement/invalidation, visible native interruption, and original renderer fallback on compact-render errors.
+- Integration tests exercise the production root policy for signed-empty, leading-commentary, running-tool-only, and failed-tool-only cases.
 - Architecture and concise marketplace documentation aligned with implementation.
 
 This does not make the open-ended Pi schema or private TUI seam universally compatible. Schema validation cannot prove branch selection, source/native correspondence, call ownership, or safe rendering. Unknown/incompatible shapes still fail open rather than being forced into a storyboard.
 
 ## Remaining manual release gate
 
-The automated native replay uses installed development Pi `0.85.1`. The transcript does not record the user's producer package version, extension settings, or private component shapes. No verification of that exact live environment is claimed.
+The automated native integration tests use installed development Pi `0.85.1`. The transcript does not record the user's producer package version, extension settings, or private component shapes. No verification of that exact live environment is claimed.
 
 Before release, record interactive checks for:
 

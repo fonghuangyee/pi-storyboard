@@ -148,4 +148,4 @@ The sanitized [fixture](../test/fixtures/no-thinking-transcript.json) reproduces
 
 ## 7. Maintenance
 
-Update this reference and the schema together whenever a new upstream snapshot is reviewed. Record an immutable commit, compare against the installed runtime, review all discriminated unions and nested types, validate representative records, and expand regression/replay matrices before changing eligibility. Never fetch the schema at runtime or declare compatibility from a successful JSON Schema check alone.
+Update this reference and the schema together whenever a new upstream snapshot is reviewed. Record an immutable commit, compare against the installed runtime, review all discriminated unions and nested types, validate representative records, and expand regression and native integration matrices before changing eligibility. Never fetch the schema at runtime or declare compatibility from a successful JSON Schema check alone.

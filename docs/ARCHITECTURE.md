@@ -1,6 +1,6 @@
 # pi-storyboard development documentation
 
-> **Authoritative project document.** This file is the source of truth for how the extension works, what it is allowed to do, and how it must be verified. Update it in the same change as any behavioral, architectural, compatibility, dependency, preview, or workflow change. `README.md` is intentionally reserved for Pi extension marketplace users.
+> **Authoritative project document.** This file is the source of truth for how the extension works, what it is allowed to do, and how it must be verified. Update it in the same change as any behavioral, architectural, compatibility, dependency, test-fixture, or workflow change. `README.md` is intentionally reserved for Pi extension marketplace users.
 >
 > This document consolidates the former `PLAN.md`, `STORYBOARD_PLAN.md`, `STORYBOARD_GROUPING_OPTIMIZATION_PLAN.md`, and `TRANSCRIPT_ANALYSIS.md` documents. It describes the implemented design unless a section is explicitly marked as future work.
 
@@ -290,7 +290,7 @@ Empty or absent source thinking is semantically retained, while its native conte
 - real reasoning hidden by Pi keeps its native label and mouse toggle; rendered-empty real reasoning is not relabeled as absent/empty and receives no invented replacement thought;
 - each leading tool-only scene has its own root, including consecutive same-kind scenes; a synthetic root never authorizes continuation or cross-response coalescing;
 - a settled empty/absent-thinking scene may still continue beneath the immediately preceding genuine visible-source-thinking root only when all existing continuation checks pass;
-- scene, work-span, preview, and legacy source-empty render paths share the pure root policy; the renderer never creates source-empty roots by guessing from blank native lines;
+- scene, work-span, and legacy source-empty render paths share the pure root policy; the renderer never creates source-empty roots by guessing from blank native lines;
 - validated leading commentary stays complete and full-width before its root; commentary without source-order extraction remains native;
 - the commentary-suffix placeholder is a distinct same-response presentation node. In work spans, an action chapter orphaned by a diagnostic or preceding later native thinking can use an `unanchored-actions` UI root, without moving or fabricating the native content;
 - no-tool messages, native fallback, and expanded scenes do not gain synthetic decoration.
@@ -561,9 +561,7 @@ pi-storyboard/
 │   ├── pi-adapter.ts         # all private Pi/TUI inspection and patching
 │   ├── presentation-settings.ts       # pure defaults, validation, and snapshots
 │   ├── presentation-settings-store.ts # Pi settings read/write boundary
-│   ├── presentation-settings-ui.ts    # interactive settings page
-│   ├── transcript-replay.ts  # fixed native-component tail + synthetic no-thinking incident replay
-│   └── tui-preview.ts        # interactive preview gallery, including settings fixtures
+│   └── presentation-settings-ui.ts    # interactive settings page
 └── test/
     ├── architecture.test.ts
     ├── grouping.test.ts
@@ -573,11 +571,11 @@ pi-storyboard/
     ├── session-projection.test.ts
     ├── work-span.test.ts
     ├── pi-adapter.test.ts
-    ├── transcript-replay.test.ts
+    ├── no-thinking-transcript.test.ts
     ├── transcript-schema.test.ts # schema integrity and sanitized incident ownership
-    ├── fixtures/no-thinking-transcript.json # synthetic structural evidence, not live replay
-    ├── presentation-settings.test.ts
-    └── tui-preview.test.ts
+    ├── fixtures/no-thinking-transcript.json # synthetic structural evidence, not a live transcript
+    ├── support/no-thinking-transcript.ts # native-component integration-test fixture
+    └── presentation-settings.test.ts
 ```
 
 ### 6.1 Extension entry point
@@ -585,7 +583,6 @@ pi-storyboard/
 `src/index.ts`:
 
 - exports the default Pi extension factory;
-- registers `/storyboard-preview`, which is available only in interactive TUI mode;
 - registers `/storyboard-settings [global|project]`, which is available only in interactive TUI mode;
 - listens to public lifecycle notifications only to invalidate the ephemeral session projection;
 - installs a fresh guarded patch on `session_start` in TUI mode;
@@ -745,9 +742,8 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, validated context-edit boundaries, compaction, boundaries, and text phases.
 - `work-span.test.ts`: empty-thinking continuation, adjacent same-kind cross-scene visual grouping, explicit source-empty roots and reasons, no synthetic continuation anchors, scene/work-span parity, rendered-hidden real reasoning, lifecycle colors, widths 1–200, commentary suffix, source order, and no-placeholder cases.
 - `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, bounded successful-result and failure summaries for all tool kinds, settings threading, expansion/status restoration, native thinking-marker restoration, validated terminal-diagnostic storyboard breakouts, exact active-path web-search row-detail association, ambiguous/unmatched standalone status, narrow wrapped details, compaction caption, unknown-diagnostic native fallback, mouse translation, isolated incompatible-scene fallback, fallback, owner counting, and wrapper composition.
-- `transcript-replay.test.ts`: native Pi components in the fixed diagnostic replay plus the four-response synthetic no-thinking incident; exactly four independent roots and eleven tools, out-of-order completion, signed/redacted/whitespace-empty thinking, leading full-width commentary, running-to-failed settlement, native thinking-toggle mouse translation after inert roots, narrow resize, expansion/collapse, projection replacement/invalidation, visible-native interruption, and complete native renderer-error fallback.
-- `transcript-schema.test.ts`: development-schema local reference integrity and discriminator inventory, separate persisted/live assistant profiles, and the synthetic four-response no-thinking fixture's exact ownership, no mutation, visible-custom interruption, and latest-schema/current-projector compatibility separation. These are structural/characterization tests, not a general JSON Schema validator; visual roots are covered separately by work-span, adapter, replay, and preview tests.
-- `tui-preview.test.ts`: current preview gallery, settings defaults/custom fixture, and public `pi-tui` component coverage.
+- `no-thinking-transcript.test.ts`: native Pi components for the four-response synthetic no-thinking incident; exactly four independent roots and eleven tools, out-of-order completion, signed/redacted/whitespace-empty thinking, leading full-width commentary, running-to-failed settlement, native thinking-toggle mouse translation after inert roots, narrow resize, expansion/collapse, projection replacement/invalidation, visible-native interruption, and complete native renderer-error fallback.
+- `transcript-schema.test.ts`: development-schema local reference integrity and discriminator inventory, separate persisted/live assistant profiles, and the synthetic four-response no-thinking fixture's exact ownership, no mutation, visible-custom interruption, and latest-schema/current-projector compatibility separation. These are structural/characterization tests, not a general JSON Schema validator; visual roots are covered separately by work-span, adapter, and no-thinking integration tests.
 - `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from the projection/rendering path, including the pure display sanitizer; the explicit settings-store write boundary remains isolated.
 
 ### 9.3 Required semantic matrix
@@ -800,7 +796,7 @@ spawn(
 exec(
 ```
 
-It also rejects unnecessary harness lifecycle coupling. Public session/message notifications used solely for projection invalidation and the static preview command are explicitly allowed. This is an intent guard, not a security sandbox.
+It also rejects unnecessary harness lifecycle coupling. Public session/message notifications are used solely for projection invalidation. This is an intent guard, not a security sandbox.
 
 ## 10. Dependencies, packaging, and compatibility
 
@@ -868,7 +864,7 @@ The investigated session `01a11e5e-3df5-7180-9d24-1a976a258c67` contains legitim
 
 [TRANSCRIPT_SCHEMA.md](TRANSCRIPT_SCHEMA.md) records the incident evidence, all known persisted-entry/message definitions, and schema drift. `schema/pi-session.schema.json` is a development-only JSON Schema translation of upstream commit `6fb2e7815167e6b19006fc526d1a5d0f5f998787`, compared with the installed `0.85.1` baseline at `d981de1229ef899957bbe968bc8dcda02a21f477`. The latest reference includes system messages, usage entries, context replacements, compaction checkpoints, and nested tool metadata that are not all in the installed baseline declarations. Schema recognition is not runtime eligibility or a new supported-version claim. Unknown discriminator envelopes preserve data but remain native boundaries; malformed known records cannot match those unknown alternatives. JSON Schema cannot prove tree selection, exact ownership, private component compatibility, or safe layout.
 
-The sanitized `test/fixtures/no-thinking-transcript.json` reproduces four response shapes and intervening custom-state positions with invented data; it is not a real session copy or a native-component replay. Maintainer schema material, docs, and tests remain outside the unchanged marketplace file list. The schema reference introduces no runtime schema loading, dependency, session-file parsing, or network retrieval. The explicit-root presentation change is implemented separately in the pure projection/renderer and covered by native-component replay. The complete schema and all 166 inspected incident records plus 18 synthetic fixture entries were separately checked with a Draft 2020-12 validator and date-time format checking during this investigation; the repository tests guard reference structure and projection semantics without adding that validator as a project dependency.
+The sanitized `test/fixtures/no-thinking-transcript.json` reproduces four response shapes and intervening custom-state positions with invented data; it is not a real session copy or native-component recording. Maintainer schema material, docs, and tests remain outside the unchanged marketplace file list. The schema reference introduces no runtime schema loading, dependency, session-file parsing, or network retrieval. The explicit-root presentation change is implemented separately in the pure projection/renderer and covered by native-component integration tests. The complete schema and all 166 inspected incident records plus 18 synthetic fixture entries were separately checked with a Draft 2020-12 validator and date-time format checking during this investigation; the repository tests guard reference structure and projection semantics without adding that validator as a project dependency.
 
 Reference material reviewed includes:
 
@@ -895,7 +891,7 @@ Important version rule: a session file's version number is not a complete featur
 
 ### Explicit-root implementation and remaining interactive verification
 
-The no-thinking root proposal is implemented in Sections 3.6 and 4.6. [STORYBOARD_TRANSFORMATION_PLAN.md](STORYBOARD_TRANSFORMATION_PLAN.md) is retired as a design proposal and records implementation/verification status. `createNoThinkingTranscriptReplay()` constructs four fixed synthetic native assistant/tool scenes plus public entry data with eleven exactly matched tools, reversed result completion order, and two invisible custom-state entries. It reads no session or test fixture at runtime, executes no tool, and inspects no private component fields. The preview's Transcript replay appends these scenes to the existing tail; Turn storyboard also includes signed-empty, leading-commentary, running-tool-only, and failed-tool-only references using production root policy. Preview construction now derives source-thinking presence from all its native thinking items, not only its optional title.
+The no-thinking root proposal is implemented in Sections 3.6 and 4.6. [STORYBOARD_TRANSFORMATION_PLAN.md](STORYBOARD_TRANSFORMATION_PLAN.md) is retired as a design proposal and records implementation/verification status. The test-only `createNoThinkingTranscriptFixture()` constructs four fixed synthetic native assistant/tool scenes plus public entry data with eleven exactly matched tools, reversed result completion order, and two invisible custom-state entries. It reads no session at runtime, executes no tool, and inspects no private component fields. Integration tests exercise signed-empty, leading-commentary, running-tool-only, and failed-tool-only cases through the production renderer and guarded adapter.
 
 Automated checks cover the native seam on the installed `0.85.1` development runtime, including root conservation, native expansion/collapse, real-thinking mouse toggling after synthetic roots, resizing, running settlement, projection replacement/invalidation, and render errors. These are not proof of the user's actual live runtime/settings or full interactive recovery. Before release, manually verify live streaming, themes, reload/resume/fork/tree/new-session/compaction, and coexistence with another transcript patcher. No new Pi-version compatibility claim is made.
 
@@ -912,7 +908,7 @@ If Pi adds a public transcript grouping/composition hook, replace the private `C
 Before changing code:
 
 - read `AGENTS.md` and this document;
-- identify whether the change affects the user-visible contract, ownership, native fallback, lifecycle, compatibility, package metadata, preview, or tests;
+- identify whether the change affects the user-visible contract, ownership, native fallback, lifecycle, compatibility, package metadata, test fixtures, or tests;
 - preserve any unrelated worktree changes.
 
 While changing code:

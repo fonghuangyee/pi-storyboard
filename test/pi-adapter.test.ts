@@ -809,6 +809,97 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
+  it("coalesces consecutive settled tool-only turns under one inert root", () => {
+    const firstOwner = storyboardAssistant([], ["read-1"], { thinking: false });
+    const firstTool = tool("read", { path: "first.ts" }, result());
+    assignToolCallId(firstTool, "read-1");
+    const secondOwner = storyboardAssistant([], ["read-2"], { thinking: false });
+    const secondTool = tool("read", { path: "second.ts" }, result());
+    assignToolCallId(secondTool, "read-2");
+    const thirdOwner = storyboardAssistant([], ["bash-1"], { thinking: false });
+    const thirdTool = tool("bash", { command: "npm test" }, result());
+    assignToolCallId(thirdTool, "bash-1");
+    const turns = ["read-1", "read-2", "bash-1"].map((callId, index) => ({
+      entryId: `assistant-${index}`,
+      toolCallIds: [callId],
+      resultEntryIds: [`result-${index}`],
+      hasVisibleThinking: false,
+      hasCommentary: false,
+      hasFinalAnswer: false,
+      hasUnknownText: false,
+      valid: true,
+      boundaryBefore: false,
+      boundaryAfter: false,
+    }));
+    const renderGroup = vi.fn((group: { kind: string; rows: readonly ToolRowSnapshot[] }) => [
+      "",
+      ` ${group.kind} ${group.rows.length}`,
+    ]);
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({ leafId: "result-2", turns }),
+      renderGroup,
+    });
+
+    const output = container(
+      firstOwner, firstTool,
+      secondOwner, secondTool,
+      thirdOwner, thirdTool,
+    ).render(80).join("\n");
+    expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(1);
+    expect(output).toContain("├─ read 2");
+    expect(output).toContain("╰─ command 1");
+    expect(renderGroup.mock.calls.map(([group]) => group.rows.map((row) => row.toolName))).toEqual([
+      ["read", "read"], ["bash"],
+    ]);
+    handle?.uninstall();
+  });
+
+  it("does not coalesce tool-only turns across an active-path boundary", () => {
+    const firstOwner = storyboardAssistant([], ["read-1"], { thinking: false });
+    const firstTool = tool("read", { path: "first.ts" }, result());
+    assignToolCallId(firstTool, "read-1");
+    const secondOwner = storyboardAssistant([], ["read-2"], { thinking: false });
+    const secondTool = tool("read", { path: "second.ts" }, result());
+    assignToolCallId(secondTool, "read-2");
+    const turns: SessionProjection["turns"] = [
+      {
+        entryId: "assistant-1",
+        toolCallIds: ["read-1"],
+        resultEntryIds: ["result-1"],
+        hasVisibleThinking: false,
+        hasCommentary: false,
+        hasFinalAnswer: false,
+        hasUnknownText: false,
+        valid: true,
+        boundaryBefore: false,
+        boundaryAfter: true,
+      },
+      {
+        entryId: "assistant-2",
+        toolCallIds: ["read-2"],
+        resultEntryIds: ["result-2"],
+        hasVisibleThinking: false,
+        hasCommentary: false,
+        hasFinalAnswer: false,
+        hasUnknownText: false,
+        valid: true,
+        boundaryBefore: true,
+        boundaryAfter: false,
+      },
+    ];
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSessionProjection: () => ({ leafId: "result-2", turns }),
+      renderGroup: (group: { rows: readonly ToolRowSnapshot[] }) => ["", ` Read ${group.rows.length} file`],
+    });
+
+    const output = container(firstOwner, firstTool, secondOwner, secondTool).render(80).join("\n");
+    expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(2);
+    expect(output.match(/Read 1 file/gu)).toHaveLength(2);
+    handle?.uninstall();
+  });
+
   it("keeps same-kind actions separate across visible-thinking turns", () => {
     const firstOwner = storyboardAssistant(["first thinking"], ["read-1"]);
     const firstTool = tool("read", { path: "first.ts" }, result());

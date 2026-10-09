@@ -5,7 +5,7 @@ A presentation-only Pi extension that turns eligible collapsed tool activity int
 ## Features
 
 - Groups compatible `read`, `grep`/`find`, `ls`, `write`, `edit`, `bash`/`powershell`, custom, MCP, and subagent rows.
-- Preserves assistant source order and native thinking/commentary. Eligible tool scenes with absent or empty source thinking get a fixed `Thinking...` presentation label—not generated reasoning.
+- Preserves assistant source order and native thinking/commentary. Eligible tool scenes with absent or empty source thinking get a fixed `Thinking...` presentation label—not generated reasoning; consecutive settled tool-only responses can share one label when active-path ownership and boundaries are proven.
 - Shows compact running and failed states, a wrapped failure diagnostic, and one sanitized, bounded successful-result excerpt by default. Excerpts may contain file or command output; disable them in settings if preferred. Full details remain available through Pi's native expansion.
 - Displays recognized web-search status as plain text only when its exact tool association is proven; otherwise it stays standalone. Collapsed compaction summaries show a concise token count, with Pi's native preview available when expanded.
 - Offers configurable trimming, metadata visibility, result-summary visibility, symbols, and colors.

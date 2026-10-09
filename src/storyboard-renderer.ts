@@ -866,8 +866,8 @@ function renderWorkChapter(
   if (items.length === 0) return;
   const terminalIndex = items.length - 1;
   const spanHasActions = span.chapters.some((candidate) => candidate.items.some((item) => item.type === "action"));
-  // A multi-scene work span is only produced by the validated empty-thinking
-  // continuation. Its scenes remain separate ownership units, but adjacent
+  // Multi-scene work spans come only from the validated active-path
+  // continuations. Scenes remain separate ownership units, but adjacent
   // same-kind actions may share one visual compact group.
   const canMergeContinuationActions = span.scenes.length > 1;
 

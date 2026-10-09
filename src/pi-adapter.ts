@@ -27,6 +27,7 @@ import {
 } from "./grouping.ts";
 import {
   buildEmptyThinkingContinuation,
+  buildToolOnlyContinuation,
   buildStoryboard,
   buildWorkSpan,
   type AssistantSceneSnapshot,
@@ -1207,6 +1208,16 @@ function canContinueEmptyThinking(
   return !previousTurn.boundaryAfter && !nextTurn.boundaryBefore;
 }
 
+function canContinueToolOnly(
+  previous: SessionSceneInfo,
+  next: SessionSceneInfo,
+  session: SessionProjection,
+): boolean {
+  return !previous.segment.assistant.hasThinking &&
+    !next.segment.assistant.hasThinking &&
+    canContinueEmptyThinking(previous, next, session);
+}
+
 type SessionSceneIndex = {
   readonly sceneInfo: ReadonlyMap<number, SessionSceneInfo>;
   readonly hasToolScene: boolean;
@@ -1331,12 +1342,12 @@ function indexAttachedWebSearchStatuses(
 }
 
 /**
- * Plan ordinary one-turn storyboards plus the narrow visual continuation for
- * directly adjacent settled turns whose later thinking is empty/absent. The
- * session projection proves active-path ownership and hard boundaries; it does
- * not create or imply a durable agent-run identity. Scenes that cannot form a
- * safe span are omitted so their direct children can remain native without
- * disabling independent plans.
+ * Plan ordinary one-turn storyboards plus two narrow visual continuations:
+ * settled tool-only responses, or later empty-thinking responses under an
+ * earlier visible-thinking root. The session projection proves active-path
+ * ownership and hard boundaries; it does not create or imply a durable agent-run
+ * identity. Unsafe candidates remain native without disabling independent
+ * plans.
  */
 function planSessionWorkSpans(
   segments: ReturnType<typeof buildStoryboard>["segments"],
@@ -1357,17 +1368,24 @@ function planSessionWorkSpans(
     const scenes: SessionSceneInfo["segment"][] = [first.segment];
     let end = index;
     let previous = first;
-    // Only a visible-thinking scene can anchor a continuation. Empty scenes
-    // without such an anchor keep their separate presentation-only UI roots.
-    if (
+    const hasVisibleAnchor =
       !first.live &&
       first.segment.assistant.hasThinking &&
       !first.segment.assistant.hasText &&
-      first.segment.actionRuns.length > 0
-    ) {
+      first.segment.actionRuns.length > 0;
+    const startsToolOnlyRun =
+      !first.live &&
+      !first.segment.assistant.hasThinking &&
+      !first.segment.assistant.hasText &&
+      first.segment.actionRuns.length > 0;
+    if (hasVisibleAnchor || startsToolOnlyRun) {
       for (let nextIndex = index + 1; nextIndex < segments.length; nextIndex++) {
         const next = sceneInfo.get(nextIndex);
-        if (next === undefined || !canContinueEmptyThinking(previous, next, session)) break;
+        if (next === undefined) break;
+        const canContinue = hasVisibleAnchor
+          ? canContinueEmptyThinking(previous, next, session)
+          : canContinueToolOnly(previous, next, session);
+        if (!canContinue) break;
         scenes.push(next.segment);
         end = nextIndex;
         previous = next;
@@ -1375,7 +1393,9 @@ function planSessionWorkSpans(
     }
 
     let span = scenes.length > 1
-      ? buildEmptyThinkingContinuation(scenes)
+      ? hasVisibleAnchor
+        ? buildEmptyThinkingContinuation(scenes)
+        : buildToolOnlyContinuation(scenes)
       : buildWorkSpan([first.segment]);
     if (span === undefined && scenes.length > 1) {
       // A later scene may be incompatible without invalidating an otherwise
@@ -1405,7 +1425,8 @@ function planSessionWorkSpans(
  * A validated same-response commentary suffix receives the fixed
  * presentation-only `Thinking...` node before its eligible tool run.
  * Adjacent settled empty-thinking turns may continue under a validated
- * visible-thinking root; older/incomplete shapes still fall back unchanged.
+ * visible-thinking root, or consecutive settled tool-only responses under one
+ * inert root; older/incomplete shapes still fall back unchanged.
  */
 function renderStoryboardIfRequested(
   container: Container,

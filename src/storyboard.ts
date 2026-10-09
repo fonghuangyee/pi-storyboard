@@ -114,7 +114,7 @@ export type StoryboardChapterItem =
       readonly scene: StoryboardScene;
     }
   | {
-      /** An inert UI root, never source reasoning or a continuation anchor. */
+      /** An inert UI root, never source reasoning or an ownership/continuation proof. */
       readonly type: "synthetic-scene-root";
       readonly scene: StoryboardScene;
       readonly reason: "absent-thinking" | "empty-thinking" | "unanchored-actions";
@@ -141,7 +141,7 @@ export type StoryboardWorkSpanPart = StoryboardChapter | StoryboardBreakout;
 
 /**
  * A presentation-only composition. It normally contains one validated turn;
- * the restricted empty-thinking continuation may contain adjacent scenes while
+ * either restricted active-path continuation may contain adjacent scenes while
  * each scene remains its ownership unit.
  */
 export type StoryboardWorkSpan = {
@@ -640,23 +640,25 @@ function makeChapter(items: readonly StoryboardChapterItem[]): StoryboardChapter
 
 /**
  * Build a presentation span for one or more already validated scenes. The
- * normal work-span builder remains a single-turn projection. The optional
- * continuation mode is deliberately narrower: one visible-thinking turn may
- * be followed only by directly adjacent tool turns with no visible thinking.
- * Tool ownership is still retained by each original scene.
+ * normal work-span builder remains a single-turn projection. Continuations
+ * are deliberately narrow: either one visible-thinking turn followed by
+ * tool-only turns, or a sequence of tool-only turns. Tool ownership remains
+ * attached to every original scene.
  */
 function buildWorkSpanInternal(
   scenes: readonly StoryboardScene[],
-  continuation: boolean,
+  continuation: "none" | "visible-thinking" | "tool-only",
 ): StoryboardWorkSpan | undefined {
   if (!Array.isArray(scenes) || scenes.length === 0) return undefined;
-  if (!continuation && scenes.length !== 1) return undefined;
-  if (continuation) {
+  if (continuation === "none" && scenes.length !== 1) return undefined;
+  if (continuation !== "none") {
+    if (scenes.length < 2) return undefined;
     const first = scenes[0];
     if (
       first === undefined ||
       first.type !== "scene" ||
-      !first.assistant.hasThinking ||
+      (continuation === "visible-thinking" && !first.assistant.hasThinking) ||
+      (continuation === "tool-only" && first.assistant.hasThinking) ||
       first.assistant.hasText ||
       first.assistant.hasFinalAnswer ||
       first.assistant.hasUnknownText ||
@@ -702,7 +704,8 @@ function buildWorkSpanInternal(
     if (nodes === undefined) return undefined;
     for (const node of nodes) {
       if (node.type === "thinking") {
-        if (continuation && sceneIndex === 0) firstSceneHasThinking = true;
+        if (continuation === "tool-only") return undefined;
+        if (continuation === "visible-thinking" && sceneIndex === 0) firstSceneHasThinking = true;
         chapterItems.push(Object.freeze({ type: "thinking", scene, content: node.content }));
         hasMeaningfulItem = true;
         hasVisibleThinkingBefore = true;
@@ -722,7 +725,7 @@ function buildWorkSpanInternal(
       // presentation node rather than stretching the earlier rail through the
       // commentary. This is not a message/content item and never crosses turns.
       if (
-        !continuation &&
+        continuation === "none" &&
         previousPartWasCommentary &&
         hasVisibleThinkingBefore &&
         chapterItems.length === 0
@@ -732,7 +735,7 @@ function buildWorkSpanInternal(
           scene,
         }));
       } else if (
-        !continuation &&
+        (continuation === "none" || (continuation === "tool-only" && sceneIndex === 0)) &&
         chapterItems.length === 0 &&
         (!scene.assistant.hasThinking || hasVisibleThinkingBefore || nodes.some((item) => item.type === "thinking"))
       ) {
@@ -777,7 +780,7 @@ function buildWorkSpanInternal(
   }
   flushChapter();
 
-  if (!hasMeaningfulItem || (continuation && !firstSceneHasThinking)) return undefined;
+  if (!hasMeaningfulItem || (continuation === "visible-thinking" && !firstSceneHasThinking)) return undefined;
   return Object.freeze({
     type: "work-span",
     scenes: Object.freeze([...scenes]),
@@ -790,17 +793,29 @@ function buildWorkSpanInternal(
 export function buildWorkSpan(
   scenes: readonly StoryboardScene[],
 ): StoryboardWorkSpan | undefined {
-  return buildWorkSpanInternal(scenes, false);
+  return buildWorkSpanInternal(scenes, "none");
 }
 
 /**
- * Build the restricted visual continuation used for empty-thinking turns.
- * This is not an agent-run projection: the first scene supplies the visible
+ * Build the restricted visual continuation anchored by genuine visible
+ * thinking. This is not an agent-run projection: the first scene supplies the
  * thinking root and every later scene contributes only its observable actions.
  */
 export function buildEmptyThinkingContinuation(
   scenes: readonly StoryboardScene[],
 ): StoryboardWorkSpan | undefined {
   if (!Array.isArray(scenes) || scenes.length < 2) return undefined;
-  return buildWorkSpanInternal(scenes, true);
+  return buildWorkSpanInternal(scenes, "visible-thinking");
+}
+
+/**
+ * Coalesce directly adjacent source-empty tool scenes under one inert UI root.
+ * Eligibility is validated by the adapter against settled active-path turns;
+ * this pure builder preserves each scene's independent ownership.
+ */
+export function buildToolOnlyContinuation(
+  scenes: readonly StoryboardScene[],
+): StoryboardWorkSpan | undefined {
+  if (!Array.isArray(scenes) || scenes.length < 2) return undefined;
+  return buildWorkSpanInternal(scenes, "tool-only");
 }

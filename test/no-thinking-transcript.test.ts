@@ -23,7 +23,7 @@ function fakeTui(): TUI {
 }
 
 describe("no-thinking transcript fixture", () => {
-  it("renders the fixture as four separate roots with conserved source-order tools", () => {
+  it("renders consecutive tool-only responses under one root with conserved source-order tools", () => {
     initTheme("dark", false);
     const fixture = createNoThinkingTranscriptFixture(fakeTui(), process.cwd());
     const projection = buildSessionProjection(fixture)!;
@@ -39,11 +39,10 @@ describe("no-thinking transcript fixture", () => {
     });
     try {
       const output = fixture.transcript.render(120).join("\n");
-      expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(4);
+      expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(1);
       expect(groups).toEqual([
-        ["read", "read"], ["bash"], ["web_enable"],
-        ["fetch_content"], ["bash"], ["bash"],
-        ["read", "read"], ["get_search_content", "fetch_content"],
+        ["read", "read"], ["bash"], ["web_enable", "fetch_content"],
+        ["bash", "bash"], ["read", "read"], ["get_search_content", "fetch_content"],
       ]);
       expect(groups.flat()).toHaveLength(11);
       expect(output).toContain("├─ Read 2 files");
@@ -73,7 +72,7 @@ describe("no-thinking transcript fixture", () => {
       getSessionProjection: () => buildSessionProjection(fixture), renderGroup: renderToolGroup });
     try {
       const output = fixture.transcript.render(120).join("\n");
-      expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(4);
+      expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(1);
       expect(output).not.toContain("synthetic-encrypted-payload");
       expect(JSON.stringify(source)).toBe(original);
     } finally { handle?.uninstall(); }
@@ -100,7 +99,7 @@ describe("no-thinking transcript fixture", () => {
       const root = lines.findIndex((line, index) => index > commentary && line.includes("◉ Thinking..."));
       expect(root).toBeGreaterThan(commentary);
       expect(lines.slice(root).join("\n")).toContain("╰─ Run 1 command");
-      expect(lines.join("\n").match(/◉ Thinking\.\.\./gu)).toHaveLength(4);
+      expect(lines.join("\n").match(/◉ Thinking\.\.\./gu)).toHaveLength(3);
     } finally { handle?.uninstall(); }
   });
 
@@ -122,7 +121,7 @@ describe("no-thinking transcript fixture", () => {
     try {
       const output = interrupted.render(120).join("\n");
       expect(output).toContain("Visible native boundary");
-      expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(3);
+      expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(2);
       // The two calls in the interrupted response are native, not compacted
       // beneath another assistant or silently discarded.
       expect(groups.flat()).toHaveLength(9);
@@ -153,12 +152,12 @@ describe("no-thinking transcript fixture", () => {
     try {
       expect(fixture.transcript.render(120)).toEqual(native);
       fixture.tools.forEach((tool) => tool.setExpanded(false));
-      expect(fixture.transcript.render(120).join("\n").match(/◉ Thinking\.\.\./gu)).toHaveLength(4);
+      expect(fixture.transcript.render(120).join("\n").match(/◉ Thinking\.\.\./gu)).toHaveLength(1);
       projection = { leafId: null, turns: [] };
       expect(fixture.transcript.render(120).join("\n")).not.toContain("◉ Thinking...");
       projection = buildSessionProjection(fixture)!;
       fixture.transcript.invalidate();
-      expect(fixture.transcript.render(120).join("\n").match(/◉ Thinking\.\.\./gu)).toHaveLength(4);
+      expect(fixture.transcript.render(120).join("\n").match(/◉ Thinking\.\.\./gu)).toHaveLength(1);
     } finally {
       handle?.uninstall();
     }
@@ -216,7 +215,7 @@ describe("no-thinking transcript fixture", () => {
       getSessionProjection: () => buildSessionProjection(fixture), renderGroup: renderToolGroup,
     });
     try {
-      expect(fixture.transcript.render(120).join("\n").match(/◉ Thinking\.\.\./gu)).toHaveLength(4);
+      expect(fixture.transcript.render(120).join("\n").match(/◉ Thinking\.\.\./gu)).toHaveLength(2);
       expect(colors[0]).toBe("syntaxKeyword");
       colors.length = 0;
       fixture.assistants[0]!.updateContent(source, false);

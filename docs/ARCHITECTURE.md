@@ -13,8 +13,8 @@ The implementation is complete for the current design:
 - semantic grouping covers built-in, custom, MCP, and subagent tool rows;
 - a validated assistant response and its exact tool rows form one storyboard scene;
 - native thinking, commentary, and tool-call source order is preserved;
-- a narrow active-path continuation can hide directly adjacent empty/absent-thinking roots without merging ownership;
-- eligible absent/empty-thinking tool scenes have an explicit presentation-only `Thinking...` root; a same-response commentary-to-tool suffix can also receive the fixed placeholder;
+- narrow active-path continuations can place directly adjacent settled empty/absent-thinking tool responses under one inert root, or continue them beneath an immediately preceding genuine thinking root, without merging ownership;
+- eligible standalone absent/empty-thinking tool scenes have an explicit presentation-only `Thinking...` root; a same-response commentary-to-tool suffix can also receive the fixed placeholder;
 - expanded or ambiguous content falls back to Pi's original renderer;
 - `/storyboard-settings` opens the interactive presentation-settings page directly for global settings and saves only the validated global `pi-storyboard.json` file, including a switch for bounded successful result summaries;
 - the guarded private adapter, settings validation/storage, and pure projection layers are covered by unit tests.
@@ -112,7 +112,7 @@ agent_start
 
 The public session format does not persist a durable agent-run ID. Provider response IDs, stop reasons, timestamps, adjacency, similar thinking, and private harness run IDs are not substitutes. Consequently, the extension does not reconstruct arbitrary historical agent runs and does not aggregate arbitrary assistant responses.
 
-The sole cross-response visual exception is the constrained empty/absent-thinking continuation described in [Section 4](#4-storyboard-projection).
+The only cross-response visual compositions are the constrained active-path continuations described in [Section 4](#4-storyboard-projection). Neither reconstructs an agent run or merges scene ownership.
 
 ### 2.4 Native TUI behavior
 
@@ -288,8 +288,9 @@ Empty or absent source thinking is semantically retained, while its native conte
 - absent, empty, whitespace-only, and empty redacted thinking all receive the fixed UI root; opaque signatures are untouched and never extracted into presentation state;
 - `hasThinking` records non-empty **source** reasoning, independently of Pi's native thinking toggle; optional `thinkingPresence: "absent" | "empty" | "visible"` metadata distinguishes empty from absent blocks without retaining their payload;
 - real reasoning hidden by Pi keeps its native label and mouse toggle; rendered-empty real reasoning is not relabeled as absent/empty and receives no invented replacement thought;
-- each leading tool-only scene has its own root, including consecutive same-kind scenes; a synthetic root never authorizes continuation or cross-response coalescing;
-- a settled empty/absent-thinking scene may still continue beneath the immediately preceding genuine visible-source-thinking root only when all existing continuation checks pass;
+- a standalone leading tool-only scene has an inert root; in session-aware mode, directly adjacent settled tool-only responses with empty/absent source thinking may share the first scene's root when every active-path and boundary check passes; without that proof, roots remain separate;
+- a settled empty/absent-thinking scene may also continue beneath the immediately preceding genuine visible-source-thinking root when all existing continuation checks pass;
+- a synthetic root is never evidence of shared ownership or agent-run identity; each continuation is authorized independently by exact active-path turn matching, adjacency, and boundary checks;
 - scene, work-span, and legacy source-empty render paths share the pure root policy; the renderer never creates source-empty roots by guessing from blank native lines;
 - validated leading commentary stays complete and full-width before its root; commentary without source-order extraction remains native;
 - the commentary-suffix placeholder is a distinct same-response presentation node. In work spans, an action chapter orphaned by a diagnostic or preceding later native thinking can use an `unanchored-actions` UI root, without moving or fabricating the native content;
@@ -415,21 +416,16 @@ becomes:
 
 A visible thinking block between two calls breaks action runs but does not create a new assistant-message ownership unit.
 
-### 4.4 Active-path continuation
+### 4.4 Active-path continuations
 
-`buildEmptyThinkingContinuation()` is the only multi-scene work-span builder. It accepts a first scene with visible thinking, actions, no text, and no final/unknown phase, followed only by scenes with settled actions and no visible thinking or text. Each scene retains its own assistant and tool ownership.
+The pure projection exposes two explicit multi-scene builders:
 
-The adapter additionally requires:
+- `buildEmptyThinkingContinuation()` accepts a first scene with visible thinking, actions, and no text, followed only by scenes with actions and no visible thinking or text. Later action chapters continue beneath the genuine first thinking node.
+- `buildToolOnlyContinuation()` accepts at least two scenes with actions and no visible thinking or text. Their first scene supplies one inert source-empty UI root; this is visual de-duplication, not a recovered thought or inferred run.
 
-- both scenes are settled and uniquely matched to `SessionProjection.turns`;
-- projected turns are consecutive;
-- the first scene has no text/commentary and the later scene has no text/thinking;
-- the previous projected turn has no `boundaryAfter` and the next has no `boundaryBefore`;
-- direct component order is adjacent;
-- no expanded, incompatible, native, visible custom, summary, compaction, branch, or unresolved streaming boundary occurs;
-- consecutive empty-thinking scenes may continue, and adjacent same-kind action runs may be visually coalesced across those scene boundaries; each original scene and its exact tool ownership remain separate.
+Both preserve every original `StoryboardScene`, assistant response, and exact tool ownership. The adapter additionally requires every included scene to be settled and uniquely matched to the active-path `SessionProjection.turns`; projected turns must be consecutive, direct component order must be adjacent, the previous turn must have no `boundaryAfter`, and the next must have no `boundaryBefore`. Tool-only continuation additionally requires empty/absent source thinking on every scene. The anchored form requires no text/commentary on the first scene and no text/thinking on later scenes. Neither form crosses expanded, incompatible, native, visible custom, summary, compaction, branch, or unresolved streaming boundaries. Adjacent same-kind action runs may be visually coalesced across validated scene boundaries while retaining scene ownership.
 
-This removes an empty visual root, not an ownership boundary:
+The anchored form removes an empty visual root beneath genuine thinking:
 
 ```text
 ◉ Applying the validated fix
@@ -437,7 +433,15 @@ This removes an empty visual root, not an ownership boundary:
 ╰─ Run 1 command
 ```
 
-If any check fails, the scenes stay separate or the affected region is native. Synthetic roots are never source thinking and cannot satisfy the anchor checks; consecutive tool-only responses therefore remain separate rooted scenes.
+The tool-only form reduces repetitive placeholders without claiming a shared thought:
+
+```text
+◉ Thinking...
+├─ Read 2 files
+╰─ Run 2 commands
+```
+
+If any check fails, scenes stay separate or the affected region is native. A synthetic root alone never authorizes a continuation; session and component evidence must independently prove each included turn.
 
 ### 4.5 Session projection
 
@@ -487,10 +491,10 @@ Within a validated scene/work span:
 - visible thinking starts or continues a chapter;
 - validated commentary flushes the chapter and renders as a full-width native breakout;
 - eligible action after a same-response commentary breakout receives the distinct suffix placeholder when a visible thinking root already exists; otherwise a source-empty action chapter receives its explicit scene root;
-- the pure builder emits `synthetic-scene-root` with only its scene and a reason (`absent-thinking`, `empty-thinking`, or `unanchored-actions`); it invents no native child, source-content index, call ID, provider signature, or mouse target;
+- the pure builder emits `synthetic-scene-root` with only its scene and a reason (`absent-thinking`, `empty-thinking`, or `unanchored-actions`); a validated tool-only continuation reuses the first scene's one inert root for the whole visual span. It invents no native child, source-content index, call ID, provider signature, or mouse target;
 - synthetic roots use assistant lifecycle colors (active thinking while running, settled thinking otherwise), never red solely because a tool failed; they produce no native assistant region and are inert to mouse input;
 - final/unknown text and unrecognized visible native content remain native; recognized Pi terminal diagnostics (`Response was truncated before completion.` and compatible validated terminal Text shapes) are storyboard breakouts and no longer force the whole assistant/tool scene native; the diagnostic remains source ordered and mouse-addressable;
-- action runs merge within their original validated scene; a validated empty/absent-thinking continuation may additionally coalesce adjacent same-kind runs for presentation without merging scene ownership.
+- action runs merge within their original validated scene; either validated active-path continuation may additionally coalesce adjacent same-kind runs for presentation without merging scene ownership.
 
 The renderer never turns commentary into a synthetic title and never moves it after tools.
 
@@ -631,7 +635,7 @@ A patched container render follows this flow:
 5. Reconstruct native assistant child regions from Pi's own `contentContainer` and mouse layout.
 6. Rebuild the final storyboard from validated snapshots.
 7. In session-aware mode, uniquely match settled scenes to the active-path projection; scenes absent from that projection (including pre-compaction transcript children) remain native.
-8. Build ordinary work spans or the restricted empty-thinking continuation.
+8. Build ordinary work spans or one of the two restricted active-path continuations.
 9. Render compact groups, recognized diagnostic breakouts, compact status/compaction boundaries, and native fallback children in source order; render a web-search status as detail under its exact `web_search` row only when the active-path entry chain proves the custom-message parent is that call's tool result; otherwise render it as standalone plain status; render a compaction component natively only while explicitly expanded;
 10. Rebuild the container's mouse layout with storyboard proxies and zero-height grouped members.
 11. Return the projected output.
@@ -750,9 +754,9 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, and native fallback.
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, and placeholder styling.
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, validated context-edit boundaries, compaction, boundaries, and text phases.
-- `work-span.test.ts`: empty-thinking continuation, adjacent same-kind cross-scene visual grouping, explicit source-empty roots and reasons, no synthetic continuation anchors, scene/work-span parity, rendered-hidden real reasoning, lifecycle colors, widths 1–200, commentary suffix, source order, and no-placeholder cases.
+- `work-span.test.ts`: visible-thinking-anchored and tool-only continuations, adjacent same-kind cross-scene visual grouping, explicit source-empty roots and reasons, continuation boundaries, scene/work-span parity, rendered-hidden real reasoning, lifecycle colors, widths 1–200, commentary suffix, source order, and no-placeholder cases.
 - `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, bounded successful-result and failure summaries for all tool kinds, settings threading, expansion/status restoration, native thinking-marker restoration, validated terminal-diagnostic storyboard breakouts, exact active-path web-search row-detail association, ambiguous/unmatched standalone status, narrow wrapped details, compaction caption, unknown-diagnostic native fallback, mouse translation, isolated incompatible-scene fallback, fallback, owner counting, and wrapper composition.
-- `no-thinking-transcript.test.ts`: native Pi components for the four-response synthetic no-thinking incident; exactly four independent roots and eleven tools, out-of-order completion, signed/redacted/whitespace-empty thinking, leading full-width commentary, running-to-failed settlement, native thinking-toggle mouse translation after inert roots, narrow resize, expansion/collapse, projection replacement/invalidation, visible-native interruption, and complete native renderer-error fallback.
+- `no-thinking-transcript.test.ts`: native Pi components for the four-response synthetic no-thinking incident; one shared root for the four validated consecutive tool-only responses and all eleven source-ordered tools, out-of-order completion, signed/redacted/whitespace-empty thinking, leading full-width commentary, running-to-failed settlement, native thinking-toggle mouse translation after inert roots, narrow resize, expansion/collapse, projection replacement/invalidation, visible-native interruption, and complete native renderer-error fallback.
 - `transcript-schema.test.ts`: development-schema local reference integrity and discriminator inventory, separate persisted/live assistant profiles, and the synthetic four-response no-thinking fixture's exact ownership, no mutation, visible-custom interruption, and latest-schema/current-projector compatibility separation. These are structural/characterization tests, not a general JSON Schema validator; visual roots are covered separately by work-span, adapter, and no-thinking integration tests.
 - `transcript-schema-sync.test.ts`: the checked-in transcript declaration snapshot matches installed Pi packages, and version/type-union changes are reported without auto-acceptance.
 - `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from the projection/rendering path, including the pure display sanitizer; the explicit settings-store write boundary remains isolated.
@@ -776,11 +780,11 @@ At minimum, preserve tests for:
 - the recognized `web-search-content-ready` status rendered without its native message box or custom-type label; exact active-path `web_search` associations render as wrapped plain-text row detail, while ambiguous/unmatched statuses stay standalone;
 - unrecognized visible diagnostic/native children remaining native;
 - thinking-only notes;
-- explicit roots for leading absent/empty/whitespace-only/redacted-thinking tools, one per eligible scene/chapter; synthetic roots must never authorize continuation;
+- explicit inert roots for eligible leading absent/empty/whitespace-only/redacted-thinking tools; validated consecutive tool-only responses may share one root only with exact active-path ownership and boundary proof, never because a synthetic root or adjacency alone implies continuity;
 - real thinking hidden through Pi's native toggle, inert root clicks, and native content mouse coordinates after the added root height;
 - full-width leading commentary before a source-empty root, and native fallback when its source-order extraction is unavailable;
 - same-response commentary-suffix placeholder;
-- adjacent settled empty/absent-thinking continuation;
+- adjacent settled empty/absent-thinking continuation, including multi-response tool-only spans beneath one inert root;
 - visible thinking on every turn staying separate;
 - hard boundaries from user/custom/native/branch/context-edit content;
 - collapsed compaction boundaries rendered as `◉ Compacted from N tokens` without an inline expansion hint, with native compaction rendering only while Pi marks it expanded;
@@ -908,7 +912,7 @@ Automated checks cover the native seam on the installed `0.85.1` development run
 
 ### Not currently shipped: long-span windowing
 
-Historical transcripts can contain very long sequences of tool turns. Arbitrary aggregation is intentionally disabled. A future optional UI window could collapse only settled, successful middle chapters while retaining exact counts, first/latest context, ephemeral state, and native expansion. It must never hide running, failed, aborted, truncated, commentary-adjacent, unknown, or ambiguous content. Do not implement this without updating this document and its acceptance tests first.
+Historical transcripts can contain very long sequences of tool turns. Beyond the two validated active-path continuations in Section 4.4, arbitrary aggregation is intentionally disabled. A future optional UI window could collapse only settled, successful middle chapters while retaining exact counts, first/latest context, ephemeral state, and native expansion. It must never hide running, failed, aborted, truncated, commentary-adjacent, unknown, or ambiguous content. Do not implement this without updating this document and its acceptance tests first.
 
 ### Public API replacement
 
@@ -944,11 +948,11 @@ The implementation remains acceptable only when:
 
 - every validated assistant response keeps its own scene and tool ownership;
 - exact source order and exact call-ID matching are preserved;
-- only the explicit settled empty-thinking continuation can place multiple scenes in one visual span;
+- only the two explicit settled active-path continuation policies can place multiple scenes in one visual span: a visible-thinking anchor followed by tool-only scenes, or consecutive tool-only scenes sharing one inert root;
 - commentary remains complete native Markdown at its original position;
 - the fixed commentary-suffix placeholder remains same-response and presentation-only;
 - every eligible standalone source-empty tool scene/chapter has an explicit inert presentation root before its actions; real thinking hidden through Pi's toggle is not reclassified as absent/empty;
-- empty/absent thinking does not create fake model content, and synthetic roots never satisfy continuation anchor checks;
+- empty/absent thinking does not create fake model content; an inert root is not a continuation anchor, and tool-only spans require independent active-path ownership/boundary proof;
 - expanded, ambiguous, incompatible, or unsafe scene/tool cases render through Pi natively; an ambiguous recognized web-search association remains a standalone plain-text status;
 - compact rows expose at most one configurable sanitized line from a settled successful text result, never write arguments/content, edit text/diffs, image data, or full errors;
 - all output respects terminal width and strips unsafe display controls; path/command/tool-argument `none` trimming preserves complete target values by wrapping, while metadata, bounded error diagnostics, and bounded web-search status details remain complete in every mode;

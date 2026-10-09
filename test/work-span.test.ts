@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   buildEmptyThinkingContinuation,
+  buildToolOnlyContinuation,
   buildWorkSpan,
   buildStoryboard,
   type AssistantSceneSnapshot,
@@ -157,6 +158,48 @@ describe("work-span projection", () => {
     expect(output).not.toContain("read 1");
     expect(output).toContain("╰─ command 1");
     expect(output).not.toContain("Thinking...");
+  });
+
+  it("coalesces adjacent tool-only scenes under one inert source-empty root", () => {
+    const first = scene("a", "a", "read");
+    const second = scene("b", "b", "read", "");
+    const third = scene("c", "c", "command");
+    const span = buildToolOnlyContinuation([first, second, third]);
+
+    expect(span?.scenes).toEqual([first, second, third]);
+    expect(span?.chapters[0]?.items.map((item) => item.type)).toEqual([
+      "synthetic-scene-root",
+      "action",
+      "action",
+      "action",
+    ]);
+    const items = span!.chapters[0]!.items;
+    expect(items[0]).toMatchObject({ type: "synthetic-scene-root", reason: "absent-thinking", scene: first });
+    expect(items[1]).toMatchObject({ type: "action", scene: first, run: { kind: "read", rows: [{ toolCallId: "a" }] } });
+    expect(items[2]).toMatchObject({ type: "action", scene: second, run: { kind: "read", rows: [{ toolCallId: "b" }] } });
+    expect(items[3]).toMatchObject({ type: "action", scene: third, run: { kind: "command", rows: [{ toolCallId: "c" }] } });
+    const layout = renderStoryboardWorkSpanLayout(
+      span!,
+      80,
+      theme,
+      (group) => ["", ` ${group.kind} ${group.rows.length}`],
+    );
+    const output = layout.lines.join("\\n");
+    expect(output.match(/◉/gu)).toHaveLength(1);
+    expect(output).toContain("├─ read 2");
+    expect(output).toContain("╰─ command 1");
+    expect(output.match(/Thinking\.\.\./gu)).toHaveLength(1);
+  });
+
+  it("rejects tool-only continuation with fewer than two scenes, thinking, or text", () => {
+    const empty = scene("empty", "empty", "read");
+    const visible = scene("visible", "visible", "read", "thought");
+    const commentary = scene("commentary", "commentary", "read", undefined, "status");
+
+    expect(buildToolOnlyContinuation([empty])).toBeUndefined();
+    expect(buildToolOnlyContinuation([empty, visible])).toBeUndefined();
+    expect(buildToolOnlyContinuation([visible, empty])).toBeUndefined();
+    expect(buildToolOnlyContinuation([empty, commentary])).toBeUndefined();
   });
 
   it("rejects a continuation across visible text or a missing anchor", () => {

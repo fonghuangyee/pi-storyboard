@@ -32,6 +32,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "check": "npm run typecheck && npm test",
+    "transcript:schema": "node scripts/sync-transcript-schema.mjs",
+    "transcript:schema:update": "node scripts/sync-transcript-schema.mjs --update",
     "package:check": "npm pack --dry-run"
   }
 }

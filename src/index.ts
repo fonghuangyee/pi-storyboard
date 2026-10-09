@@ -6,10 +6,9 @@ import {
 } from "./presentation-settings.ts";
 import {
   createPresentationSettingsManager,
-  editablePresentationSettings,
+  readGlobalPresentationSettings,
   readPresentationSettings,
   writePresentationSettings,
-  type PresentationSettingsScope,
 } from "./presentation-settings-store.ts";
 import { renderToolGroup } from "./renderer.ts";
 import { buildSessionProjection, type SessionProjection } from "./session-projection.ts";
@@ -28,35 +27,18 @@ export default function (pi: ExtensionAPI): void {
       }
 
       const requestedScope = args.trim();
-      let scope: PresentationSettingsScope | undefined =
-        requestedScope === "global" || requestedScope === "project" ? requestedScope : undefined;
-      if (requestedScope !== "" && scope === undefined) {
-        ctx.ui.notify("Usage: /storyboard-settings [global|project]", "warning");
+      if (requestedScope !== "" && requestedScope !== "global") {
+        ctx.ui.notify("Usage: /storyboard-settings [global] (project settings are not supported)", "warning");
         return;
       }
-      if (scope === "project" && !ctx.isProjectTrusted()) {
-        ctx.ui.notify("Project settings are unavailable until this project is trusted", "warning");
-        return;
-      }
-
-      if (scope === undefined) {
-        const choices = ctx.isProjectTrusted() ? ["global", "project"] : ["global"];
-        const selected = await ctx.ui.select(
-          "Save storyboard settings to:",
-          choices.map((choice) => choice === "global" ? "Global settings" : "Project settings"),
-        );
-        if (selected === undefined) return;
-        scope = selected === "Project settings" ? "project" : "global";
-      }
+      const scope = "global";
 
       try {
-        const manager = createPresentationSettingsManager(ctx);
-        const source = readPresentationSettings(ctx.cwd, manager);
-        const initial = editablePresentationSettings(source, scope);
+        const initial = readGlobalPresentationSettings(ctx.cwd);
         // Load the optional settings UI only for the user-initiated command so
         // an older Pi without SettingsList cannot disable storyboard rendering.
         const { openPresentationSettings } = await import("./presentation-settings-ui.ts");
-        const result = await openPresentationSettings(ctx, initial, scope);
+        const result = await openPresentationSettings(ctx, initial);
         if (result === null) return;
         writePresentationSettings(ctx.cwd, scope, result);
         ctx.ui.notify("Storyboard settings saved; reloading Pi extensions...", "info");

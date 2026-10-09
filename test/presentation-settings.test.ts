@@ -9,6 +9,7 @@ import {
   resolvePresentationSettings,
 } from "../src/presentation-settings.ts";
 import {
+  readGlobalPresentationSettings,
   readPresentationSettings,
   writePresentationSettings,
 } from "../src/presentation-settings-store.ts";
@@ -125,6 +126,17 @@ describe("presentation settings", () => {
     expect(settings.symbols.toolDots.read).toBe("R");
     expect(settings.symbols.toolDots.search).toBe("S");
     expect(settings.colors.structure).toBe("accent");
+  });
+
+  it("reads global settings without depending on project settings", () => {
+    const { cwd, agentDir } = tempPaths();
+    mkdirSync(join(cwd, ".pi"), { recursive: true });
+    writeFileSync(join(agentDir, "pi-storyboard.json"), JSON.stringify({
+      trimming: { fileNames: "none" },
+    }));
+    writeFileSync(join(cwd, ".pi", "pi-storyboard.json"), "not valid JSON");
+
+    expect(readGlobalPresentationSettings(cwd, agentDir).trimming.fileNames).toBe("none");
   });
 
   it("reads and writes dedicated files without changing Pi settings", () => {

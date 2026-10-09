@@ -9,6 +9,7 @@ Pi publishes TypeScript definitions and prose, not one universal closed JSON Sch
 | Profile | Evidence | Meaning |
 |---|---|---|
 | Project baseline | `v0.85.1`, commit `d981de1229ef899957bbe968bc8dcda02a21f477`; installed declarations | Existing development/test target; unchanged by this investigation |
+| Declaration sync baseline | `schema/pi-transcript-types.json`; installed `pi-coding-agent`, `pi-ai`, and `pi-agent-core` `0.85.1` declarations | Exact tracked public type declarations; not a complete persisted or live transcript schema |
 | Upstream reference | `main` resolved to `6fb2e7815167e6b19006fc526d1a5d0f5f998787` | Schema reference only; not a promise that the private adapter supports this runtime |
 | Incident | Session `01a11e5e-3df5-7180-9d24-1a976a258c67`, header version `3` | Observed data; producer package version is not recorded in the header |
 
@@ -146,6 +147,16 @@ These source patterns explain the screenshot's former action roots. The original
 
 The sanitized [fixture](../test/fixtures/no-thinking-transcript.json) reproduces the four response shapes and the intervening custom-state positions with invented IDs, arguments, output, and signatures. No raw source code, commands, provider payloads, replay signatures, or user-project output is checked in.
 
-## 7. Maintenance
+## 7. Release-to-release declaration review
 
-Update this reference and the schema together whenever a new upstream snapshot is reviewed. Record an immutable commit, compare against the installed runtime, review all discriminated unions and nested types, validate representative records, and expand regression and native integration matrices before changing eligibility. Never fetch the schema at runtime or declare compatibility from a successful JSON Schema check alone.
+Pi does not currently publish a complete universal JSON Schema for persisted sessions. The canonical public material is distributed TypeScript declarations and documentation across `pi-coding-agent`, `pi-ai`, and `pi-agent-core`. `scripts/sync-transcript-schema.mjs` snapshots selected transcript-related declarations from the locally installed packages and compares them with `schema/pi-transcript-types.json`; it makes no network requests and does not run inside the extension.
+
+When reviewing a new Pi release:
+
+1. Update the pinned development package versions and lockfile using the normal dependency workflow.
+2. Run `npm run transcript:schema`. Package-version changes and added, removed, or changed tracked declarations are printed in one diff-style report; the command exits nonzero while the reviewed baseline is stale.
+3. Review changes to the session-format version constant, entry/message unions, required and optional fields, content block order/types, stop reasons, nested metadata, and extension-added message roles. Separately inspect session projection semantics and the private TUI adapter—the type snapshot cannot prove active-path behavior, component shape, ownership, or safe rendering.
+4. Update `schema/pi-session.schema.json`, this document, compatibility decisions, and regression/native tests by hand as needed. Do not infer storyboard eligibility from a newly recognized type.
+5. Only after review, run `npm run transcript:schema:update` to refresh the declaration baseline. Review that generated diff and commit it with the corresponding schema/docs/tests.
+
+The helper tracks published `.d.ts` declarations, not source implementation changes or every Pi type. A version-only change is still reported, but is not itself evidence of a transcript break. If Pi later publishes an official schema, review its scope/versioning before adopting it; do not assume it covers provider extensions, SDK events, active-path projection, or private TUI components. Never load a schema or fetch upstream data at extension runtime, and never declare compatibility from a successful schema check alone.

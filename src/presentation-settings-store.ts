@@ -86,6 +86,12 @@ export function createPresentationSettingsManager(ctx: Pick<ExtensionContext, "c
   });
 }
 
+/** Read and validate only the dedicated global storyboard settings file. */
+export function readGlobalPresentationSettings(cwd: string, agentDir?: string): PresentationSettings {
+  const globalRaw = settingsRecord(readSettingsFile(settingsFilePath(cwd, "global", agentDir)));
+  return normalizePresentationNamespace(globalRaw);
+}
+
 /** Read and validate the dedicated global/project storyboard settings files. */
 export function readPresentationSettings(
   cwd: string,

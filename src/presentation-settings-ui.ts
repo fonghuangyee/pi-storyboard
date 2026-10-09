@@ -19,7 +19,6 @@ import {
   type PresentationSettings,
   type PresentationSettingsDraft,
 } from "./presentation-settings.ts";
-import type { PresentationSettingsScope } from "./presentation-settings-store.ts";
 
 const SYMBOL_FIELDS = [
   ["toolDot", "Default tool dot", "Fallback dot used for tool kinds without an override."],
@@ -73,10 +72,6 @@ function draftAsSettings(draft: PresentationSettingsDraft): PresentationSettings
   });
 }
 
-function displayScope(scope: PresentationSettingsScope): string {
-  return scope === "project" ? "project settings" : "global settings";
-}
-
 class TextSetting implements Component {
   private readonly input: Input;
 
@@ -124,7 +119,6 @@ class TextSetting implements Component {
 export async function openPresentationSettings(
   ctx: { ui: { custom<T>(factory: (tui: TUI, theme: Theme, keybindings: unknown, done: (result: T) => void) => Component): Promise<T> } },
   initial: PresentationSettings,
-  scope: PresentationSettingsScope,
 ): Promise<PresentationSettings | null> {
   return ctx.ui.custom<PresentationSettings | null>((tui, theme, _keybindings, done) => {
     let draft = clonePresentationSettings(initial);
@@ -235,7 +229,7 @@ export async function openPresentationSettings(
       {
         id: "save-reload",
         label: "Save and reload",
-        description: `Write the dedicated settings file for ${displayScope(scope)} and reload the extension.`,
+        description: "Write the dedicated global settings file and reload the extension.",
         currentValue: "save",
         values: ["save"],
       },
@@ -316,7 +310,7 @@ export async function openPresentationSettings(
 
     const container = new Container();
     container.addChild(new Text(
-      theme.fg("accent", theme.bold(`Pi Storyboard Settings · ${displayScope(scope)}`)),
+      theme.fg("accent", theme.bold("Pi Storyboard Settings · global settings")),
       1,
       0,
     ));

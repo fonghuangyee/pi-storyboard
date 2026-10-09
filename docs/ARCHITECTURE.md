@@ -16,7 +16,7 @@ The implementation is complete for the current design:
 - a narrow active-path continuation can hide directly adjacent empty/absent-thinking roots without merging ownership;
 - eligible absent/empty-thinking tool scenes have an explicit presentation-only `Thinking...` root; a same-response commentary-to-tool suffix can also receive the fixed placeholder;
 - expanded or ambiguous content falls back to Pi's original renderer;
-- `/storyboard-settings [global|project]` opens the interactive presentation-settings page and saves only the validated dedicated `pi-storyboard.json` file, including a switch for bounded successful result summaries;
+- `/storyboard-settings` opens the interactive presentation-settings page directly for global settings and saves only the validated global `pi-storyboard.json` file, including a switch for bounded successful result summaries;
 - the guarded private adapter, settings validation/storage, and pure projection layers are covered by unit tests.
 
 Remaining release work is interactive verification against live streaming, expansion, theme changes, session replacement, and coexistence with other transcript-patching extensions. Optional long-span UI windowing is deliberately not shipped.
@@ -299,9 +299,9 @@ A continuous thinking block longer than four paragraphs shows the first paragrap
 
 ### 3.7 Presentation settings
 
-`/storyboard-settings` is an interactive TUI command. With no argument it asks whether to edit global or trusted project settings; `/storyboard-settings global` and `/storyboard-settings project` select a scope directly. The page exposes independent file/path, command, and generic-tool-argument trimming modes, a `showToolMetadata` switch for optional timing and argument metadata, a `showToolResultSummary` switch for bounded successful-result excerpts, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
+`/storyboard-settings` is an interactive TUI command that opens the global settings page directly; it does not show a scope-selection prompt. `/storyboard-settings global` is also accepted, while a `project` argument is rejected. The page exposes independent file/path, command, and generic-tool-argument trimming modes, a `showToolMetadata` switch for optional timing and argument metadata, a `showToolResultSummary` switch for bounded successful-result excerpts, the default and per-kind tool dots, thinking/rail/branch symbols, status/thinking/structure color tokens, reset-to-defaults, and Save and reload.
 
-The command buffers edits until Save. Saving atomically replaces the selected dedicated settings file, `~/.pi/agent/pi-storyboard.json` for global scope or `.pi/pi-storyboard.json` for project scope. Pi's unrelated `settings.json` files are never changed. The project scope is unavailable when `ctx.isProjectTrusted()` is false. A successful save runs Pi's reload flow so the new immutable snapshot is active immediately; cancelling writes nothing. Non-TUI modes show a warning and perform no I/O.
+The command buffers edits until Save. Saving atomically replaces only `~/.pi/agent/pi-storyboard.json`; project settings are not editable through this command. Pi's unrelated `settings.json` files are never changed. Existing trusted-project `pi-storyboard.json` values can still participate in effective runtime settings and continue to override global values as documented below, but this command neither edits nor creates them. A successful save runs Pi's reload flow so the new immutable snapshot is active immediately; cancelling writes nothing. Non-TUI modes show a warning and perform no I/O.
 
 Settings are read from `~/.pi/agent/pi-storyboard.json` and, for trusted projects, `.pi/pi-storyboard.json`. Project values override global values; an invalid project field falls back to the corresponding validated global field so one bad project value cannot erase unrelated global customization. Invalid global values fall back independently to built-in defaults. Symbols cannot contain terminal controls or line breaks, and colors are allowlisted Pi theme tokens. The editor accepts short text input for symbols and cycles through the allowlisted color names. Theme ANSI strings are still generated at render time.
 
@@ -540,6 +540,9 @@ The compact renderer is a summary, not a result viewer. Native expansion is the 
 pi-storyboard/
 ├── package.json
 ├── package-lock.json
+├── scripts/
+│   ├── sync-transcript-schema.mjs   # offline diff of installed Pi transcript declarations
+│   └── sync-transcript-schema.d.mts # type surface used by maintainer tests
 ├── tsconfig.json
 ├── README.md                 # marketplace-facing usage only
 ├── AGENTS.md                 # contributor/agent workflow rules
@@ -549,7 +552,8 @@ pi-storyboard/
 │   ├── TRANSCRIPT_SCHEMA.md # pinned schema reference and no-thinking incident evidence
 │   └── STORYBOARD_TRANSFORMATION_PLAN.md # retired plan / implementation and verification record
 ├── schema/
-│   └── pi-session.schema.json # development-only upstream persisted-record reference
+│   ├── pi-session.schema.json       # reviewed development-only persisted-record reference
+│   └── pi-transcript-types.json      # installed Pi declaration baseline for sync checks
 ├── src/
 │   ├── index.ts              # extension command, lifecycle, projection cache
 │   ├── grouping.ts           # pure semantic grouping state machine
@@ -573,9 +577,11 @@ pi-storyboard/
     ├── pi-adapter.test.ts
     ├── no-thinking-transcript.test.ts
     ├── transcript-schema.test.ts # schema integrity and sanitized incident ownership
+    ├── transcript-schema-sync.test.ts # installed declaration snapshot and drift detection
     ├── fixtures/no-thinking-transcript.json # synthetic structural evidence, not a live transcript
     ├── support/no-thinking-transcript.ts # native-component integration-test fixture
-    └── presentation-settings.test.ts
+    ├── presentation-settings.test.ts
+    └── settings-command.test.ts # global-only command flow and no scope prompt
 ```
 
 ### 6.1 Extension entry point
@@ -583,7 +589,7 @@ pi-storyboard/
 `src/index.ts`:
 
 - exports the default Pi extension factory;
-- registers `/storyboard-settings [global|project]`, which is available only in interactive TUI mode;
+- registers `/storyboard-settings`, which opens global settings directly, is available only in interactive TUI mode, and rejects the unsupported `project` argument;
 - listens to public lifecycle notifications only to invalidate the ephemeral session projection;
 - installs a fresh guarded patch on `session_start` in TUI mode;
 - reads a fresh validated presentation-settings snapshot at the same lifecycle boundary;
@@ -649,7 +655,7 @@ Branches and summaries are presentation-only mouse sinks. Native expansion and t
 
 ### 6.5 Presentation-settings boundary
 
-`src/presentation-settings.ts` has no Pi imports. It owns the settings schema, defaults, layered field validation, immutable snapshots, theme-token allowlist, and symbol safety checks. `src/presentation-settings-store.ts` is the only filesystem boundary: it uses Pi's public `SettingsManager` for trust detection and reads the dedicated global/project files with the validated precedence rules, then performs an atomic user-requested replacement of only the selected `pi-storyboard.json` file. It never writes Pi's `settings.json`, session data, or unrelated files. The public settings factory is feature-detected through a namespace import; if it is unavailable, lifecycle loading keeps built-in defaults and the renderer remains installed. The interactive settings UI is dynamically imported only when its command is invoked.
+`src/presentation-settings.ts` has no Pi imports. It owns the settings schema, defaults, layered field validation, immutable snapshots, theme-token allowlist, and symbol safety checks. `src/presentation-settings-store.ts` is the only filesystem boundary: it uses Pi's public `SettingsManager` for trust detection and reads the dedicated global/project files with the validated precedence rules for lifecycle settings; the command separately reads only the global file. The command/UI currently select only global scope, so the interactive save target is `~/.pi/agent/pi-storyboard.json`; project settings may still be read as runtime overrides, but this command does not edit them. The store never writes Pi's `settings.json`, session data, or unrelated files. The public settings factory is feature-detected through a namespace import; if it is unavailable, lifecycle loading keeps built-in defaults and the renderer remains installed. The interactive settings UI is dynamically imported only when its command is invoked.
 
 `src/presentation-settings-ui.ts` owns only the TUI editor. It edits a mutable draft, exposes text submenus for symbols and cycling lists for color tokens, and returns a validated snapshot to the command. It does not change the active renderer directly; `/reload` creates the new lifecycle snapshot. Renderer and storyboard code receive settings as data and never use them for ownership or fallback decisions.
 
@@ -710,6 +716,8 @@ The extension must never:
 - make network calls or LLM calls;
 - perform filesystem writes outside the explicit user-initiated settings save boundary, subprocess work, timers, or background work.
 
+These invariants govern the installed extension. The maintainer-only `scripts/sync-transcript-schema.mjs` is not loaded by Pi: it reads declarations from the already-installed local packages, performs no network or subprocess work, and writes only the development snapshot when invoked with `--update`.
+
 Allowed state is limited to immutable extension-owned snapshots, minimal ephemeral active-path IDs/boundary flags needed for presentation validation, sanitized web-search status text capped at 512 code points for exact visible-message matching and display, and (when enabled) one sanitized successful-result text line capped at 512 code points per settled tool row. Disabling `showToolResultSummary` prevents extraction and retention of these lines. All state is session-local, discarded on invalidation/shutdown, and never sent back to Pi's model or session.
 
 Display values remain model/tool-controlled and may contain sensitive arguments or result text. The renderer sanitizes terminal controls and bounds result/failure summaries, but it does not claim to redact them. Complete results and write content are intentionally excluded from collapsed summaries; the configurable single-line successful-result excerpt is the documented exception.
@@ -725,10 +733,11 @@ npm install
 npm run typecheck
 npm test
 npm run check
+npm run transcript:schema
 npm run package:check
 ```
 
-`npm run check` is the normal pre-commit validation. `npm run package:check` must be inspected to ensure the marketplace package contains the intended files and does not accidentally include development-only material.
+`npm run check` is the normal pre-commit validation and includes the installed declaration snapshot regression test. `npm run transcript:schema` prints a declaration-level drift report and exits nonzero when installed Pi package versions or tracked transcript types differ from `schema/pi-transcript-types.json`. After reviewing a deliberate Pi version update, `npm run transcript:schema:update` explicitly refreshes that development-only snapshot; it does not regenerate or approve `schema/pi-session.schema.json`. `npm run package:check` must be inspected to ensure the marketplace package contains the intended files and does not accidentally include development-only material.
 
 Pi loads the extension directly from TypeScript through Jiti; there is no required production build step.
 
@@ -737,6 +746,7 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 - `grouping.test.ts`: semantic adjacency, singleton groups, invisible assistant boundaries, and native segments.
 - `renderer.test.ts`: labels, argument and successful-result summaries, sanitization, errors, optional-detail visibility, timing, safe edit/write behavior, independent `none`/`middle`/`end` modes, wrapping, truncation, and widths 1–200;
 - `presentation-settings.test.ts`: defaults, validation, trust-aware precedence, immutability, dedicated-file paths, and atomic settings writes without Pi settings mutation.
+- `settings-command.test.ts`: the command opens global settings without a scope prompt, saves only the global file, and rejects the unsupported project argument.
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, and native fallback.
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, and placeholder styling.
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, validated context-edit boundaries, compaction, boundaries, and text phases.
@@ -744,6 +754,7 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 - `pi-adapter.test.ts`: private-shape validation, no mutation, one render per child, compact running edits, bounded successful-result and failure summaries for all tool kinds, settings threading, expansion/status restoration, native thinking-marker restoration, validated terminal-diagnostic storyboard breakouts, exact active-path web-search row-detail association, ambiguous/unmatched standalone status, narrow wrapped details, compaction caption, unknown-diagnostic native fallback, mouse translation, isolated incompatible-scene fallback, fallback, owner counting, and wrapper composition.
 - `no-thinking-transcript.test.ts`: native Pi components for the four-response synthetic no-thinking incident; exactly four independent roots and eleven tools, out-of-order completion, signed/redacted/whitespace-empty thinking, leading full-width commentary, running-to-failed settlement, native thinking-toggle mouse translation after inert roots, narrow resize, expansion/collapse, projection replacement/invalidation, visible-native interruption, and complete native renderer-error fallback.
 - `transcript-schema.test.ts`: development-schema local reference integrity and discriminator inventory, separate persisted/live assistant profiles, and the synthetic four-response no-thinking fixture's exact ownership, no mutation, visible-custom interruption, and latest-schema/current-projector compatibility separation. These are structural/characterization tests, not a general JSON Schema validator; visual roots are covered separately by work-span, adapter, and no-thinking integration tests.
+- `transcript-schema-sync.test.ts`: the checked-in transcript declaration snapshot matches installed Pi packages, and version/type-union changes are reported without auto-acceptance.
 - `architecture.test.ts`: prohibited model/mutation/process APIs remain absent from the projection/rendering path, including the pure display sanitizer; the explicit settings-store write boundary remains isolated.
 
 ### 9.3 Required semantic matrix
@@ -864,7 +875,7 @@ The investigated session `01a11e5e-3df5-7180-9d24-1a976a258c67` contains legitim
 
 [TRANSCRIPT_SCHEMA.md](TRANSCRIPT_SCHEMA.md) records the incident evidence, all known persisted-entry/message definitions, and schema drift. `schema/pi-session.schema.json` is a development-only JSON Schema translation of upstream commit `6fb2e7815167e6b19006fc526d1a5d0f5f998787`, compared with the installed `0.85.1` baseline at `d981de1229ef899957bbe968bc8dcda02a21f477`. The latest reference includes system messages, usage entries, context replacements, compaction checkpoints, and nested tool metadata that are not all in the installed baseline declarations. Schema recognition is not runtime eligibility or a new supported-version claim. Unknown discriminator envelopes preserve data but remain native boundaries; malformed known records cannot match those unknown alternatives. JSON Schema cannot prove tree selection, exact ownership, private component compatibility, or safe layout.
 
-The sanitized `test/fixtures/no-thinking-transcript.json` reproduces four response shapes and intervening custom-state positions with invented data; it is not a real session copy or native-component recording. Maintainer schema material, docs, and tests remain outside the unchanged marketplace file list. The schema reference introduces no runtime schema loading, dependency, session-file parsing, or network retrieval. The explicit-root presentation change is implemented separately in the pure projection/renderer and covered by native-component integration tests. The complete schema and all 166 inspected incident records plus 18 synthetic fixture entries were separately checked with a Draft 2020-12 validator and date-time format checking during this investigation; the repository tests guard reference structure and projection semantics without adding that validator as a project dependency.
+The sanitized `test/fixtures/no-thinking-transcript.json` reproduces four response shapes and intervening custom-state positions with invented data; it is not a real session copy or native-component recording. Maintainer schema material, docs, and tests remain outside the unchanged marketplace file list. The schema reference introduces no runtime schema loading, dependency, session-file parsing, or network retrieval. Pi does not publish a complete universal JSON Schema; `schema/pi-transcript-types.json` records selected transcript-related public TypeScript declarations from the installed `0.85.1` `pi-coding-agent`, `pi-ai`, and `pi-agent-core` packages. The offline `npm run transcript:schema` helper compares these declarations and package versions with that reviewed baseline; after updating the pinned development packages, it reports changed/added/removed declarations. Refreshing the snapshot is explicit and does not automatically alter the hand-reviewed JSON Schema or claim runtime compatibility. Active-path semantics, provider payloads, and private TUI component shapes remain outside this declaration snapshot and require separate review. The explicit-root presentation change is implemented separately in the pure projection/renderer and covered by native-component integration tests. The complete schema and all 166 inspected incident records plus 18 synthetic fixture entries were separately checked with a Draft 2020-12 validator and date-time format checking during this investigation; the repository tests guard reference structure and projection semantics without adding that validator as a project dependency.
 
 Reference material reviewed includes:
 

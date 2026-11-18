@@ -1,10 +1,12 @@
 import {
   AssistantMessageComponent,
   CustomMessageComponent,
+  SkillInvocationMessageComponent,
   ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
 import {
   Container,
+  Text,
   stripTerminalSequences,
   visibleWidth,
   type Component,
@@ -57,6 +59,7 @@ import {
   DEFAULT_PRESENTATION_SETTINGS,
   type PresentationSettings,
 } from "./presentation-settings.ts";
+import { sanitizeMultilineDisplay } from "./safe-display.ts";
 
 export const PATCH_MARKER = Symbol.for("pi-storyboard.container.v1");
 
@@ -248,6 +251,97 @@ function inspectStoryboardCustomStatus(value: unknown):
     customType: "web-search-content-ready",
     content: Array.from(content).slice(0, 512).join(""),
   });
+}
+
+function inspectSkillInvocation(value: unknown): Extract<StoryboardBoundarySnapshot, { kind: "skill" }> | undefined {
+  if (!(value instanceof SkillInvocationMessageComponent) || !isRecord(value)) return undefined;
+  const fields = value as Record<string, unknown>;
+  const skill = fields.skillBlock;
+  if (
+    Object.getPrototypeOf(value) !== SkillInvocationMessageComponent.prototype ||
+    !hasOwn(fields, "expanded") || fields.expanded !== false ||
+    !hasOwn(fields, "skillBlock") || !isRecord(skill) ||
+    typeof skill.name !== "string" || typeof skill.location !== "string" || typeof skill.content !== "string" ||
+    typeof value.setExpanded !== "function" || typeof value.render !== "function"
+  ) return undefined;
+  const name = sanitizeDisplay(skill.name);
+  if (name.length === 0) return undefined;
+  return Object.freeze({ row: value, kind: "skill", name });
+}
+
+function boundaryMouseTarget(
+  boundary: StoryboardBoundarySnapshot,
+  component: Component,
+  leadingBlank: number,
+): Component {
+  if (boundary.kind === "general") return GROUP_MOUSE_SINK;
+  if (boundary.kind !== "skill" || !(component instanceof SkillInvocationMessageComponent)) return component;
+  return {
+    render: () => [],
+    invalidate: () => undefined,
+    handleMouse: (event) => {
+      if (event.type !== "click" || event.button !== "left" || event.y < leadingBlank) return undefined;
+      // Use Pi's public presentation toggle only in response to the user's click.
+      component.setExpanded(true);
+      return { handled: true };
+    },
+  };
+}
+
+function inspectGeneralBoundary(
+  value: Component,
+  allowText: boolean,
+): Extract<StoryboardBoundarySnapshot, { kind: "general" }> | undefined {
+  if (!isRecord(value) || typeof value.render !== "function") return undefined;
+  const fields = value as Record<string, unknown>;
+  if (value instanceof CustomMessageComponent) {
+    // Preserve custom rendering and Markdown transforms, including display redaction.
+    if (
+      Object.getPrototypeOf(value) !== CustomMessageComponent.prototype ||
+      !hasOwn(fields, "message") || !hasOwn(fields, "_expanded") ||
+      !hasOwn(fields, "customRenderer") || !hasOwn(fields, "customComponent") ||
+      fields._expanded !== false ||
+      fields.customRenderer !== undefined ||
+      fields.customComponent !== undefined ||
+      !Array.isArray(fields.markdownTransformers) || fields.markdownTransformers.length > 0
+    ) return undefined;
+    const message = fields.message;
+    if (
+      !isRecord(message) || message.role !== "custom" || message.display !== true ||
+      typeof message.customType !== "string" || message.customType.trim().length === 0
+    ) return undefined;
+    let content: string;
+    if (typeof message.content === "string") {
+      content = message.content;
+    } else if (
+      Array.isArray(message.content) &&
+      message.content.every((block) => isRecord(block) && block.type === "text" && typeof block.text === "string")
+    ) {
+      content = message.content.map((block: { text: string }) => block.text).join("\n");
+    } else {
+      return undefined;
+    }
+    return Object.freeze({
+      row: value,
+      kind: "general",
+      title: sanitizeDisplay(message.customType) || "Message",
+      content: sanitizeMultilineDisplay(content),
+    });
+  }
+  // Only direct plain Text rows in a recognized transcript are safe to reframe.
+  if (
+    allowText && Object.getPrototypeOf(value) === Text.prototype && hasOwn(fields, "text") &&
+    typeof fields.text === "string" && fields.text.trim().length > 0 &&
+    typeof fields.handleMouse !== "function" && typeof fields.handleInput !== "function"
+  ) {
+    return Object.freeze({
+      row: value,
+      kind: "general",
+      title: "Status",
+      content: sanitizeMultilineDisplay(fields.text),
+    });
+  }
+  return undefined;
 }
 
 function isPiSessionInfoStatus(value: unknown): boolean {
@@ -1055,6 +1149,7 @@ function makeStoryboardChild(
   metadata: Map<AssistantMessageComponent, AssistantMetadata>,
   snapshots: Map<AssistantMessageComponent, AssistantSceneSnapshot>,
   candidates: Map<ToolExecutionComponent, CandidateClassification>,
+  contentBoundaries: ReadonlyMap<Component, StoryboardBoundarySnapshot>,
 ): StoryboardChild {
   if (isAssistant(child)) {
     const snapshot = snapshots.get(child);
@@ -1098,6 +1193,8 @@ function makeStoryboardChild(
     });
     return { type: "boundary", boundary };
   }
+  const content = contentBoundaries.get(child);
+  if (content !== undefined) return { type: "boundary", boundary: content };
   return { type: "native", row: child };
 }
 
@@ -1463,15 +1560,26 @@ function renderStoryboardIfRequested(
     return compaction?.expanded === false;
   });
   const hasStoryboardCustomStatus = children.some((child) => inspectStoryboardCustomStatus(child) !== undefined);
-  const storyboardRequested = hasCollapsedCompaction || hasStoryboardCustomStatus || [...metadata.values()].some(
-    (assistant) => assistant.expectedToolCallIds.length > 0 || assistant.hasThinking,
-  );
   // Pi's global expansion state also applies to no-tool assistant rows. Do not
   // leave storyboard-only thinking markers on those rows while any native tool
   // row (or the latest Pi status pair) says that native expansion is active.
   const nativeExpansionActive =
     expansionStatus?.toolOutputExpanded === true ||
     children.some((child) => toolExpandedState(child) === true);
+  const contentBoundaries = new Map<Component, StoryboardBoundarySnapshot>();
+  const hasTranscriptChildren = children.some((child) =>
+    isAssistant(child) || child instanceof ToolExecutionComponent || child instanceof CustomMessageComponent ||
+    child instanceof SkillInvocationMessageComponent || inspectCompactionSummary(child) !== undefined,
+  );
+  if (!nativeExpansionActive) {
+    for (const child of children) {
+      if (inspectStoryboardCustomStatus(child) !== undefined) continue;
+      const boundary = inspectSkillInvocation(child) ?? inspectGeneralBoundary(child, hasTranscriptChildren);
+      if (boundary !== undefined) contentBoundaries.set(child, boundary);
+    }
+  }
+  const storyboardRequested = hasCollapsedCompaction || hasStoryboardCustomStatus || contentBoundaries.size > 0 ||
+    [...metadata.values()].some((assistant) => assistant.expectedToolCallIds.length > 0 || assistant.hasThinking);
   const thinkingDecorationOwners = new Set<AssistantMessageComponent>(
     nativeExpansionActive
       ? []
@@ -1492,7 +1600,7 @@ function renderStoryboardIfRequested(
   for (const [assistant, assistantMetadata] of metadata) {
     preSnapshots.set(assistant, withAssistantLines(assistantMetadata, []));
   }
-  const preChildren = children.map((child) => makeStoryboardChild(child, metadata, preSnapshots, candidates));
+  const preChildren = children.map((child) => makeStoryboardChild(child, metadata, preSnapshots, candidates, contentBoundaries));
   const preProjection = buildStoryboard(preChildren);
   // Read the active-path snapshot before choosing the assistant render width.
   // After compaction, older direct transcript children may not have a matching
@@ -1529,7 +1637,7 @@ function renderStoryboardIfRequested(
   for (const child of children) {
     if (child instanceof ToolExecutionComponent) continue;
     const compaction = inspectCompactionSummary(child);
-    if (compaction?.expanded === false || inspectStoryboardCustomStatus(child) !== undefined) continue;
+    if (compaction?.expanded === false || inspectStoryboardCustomStatus(child) !== undefined || contentBoundaries.has(child)) continue;
     if (!child || typeof child.render !== "function") return { requested: true };
     const assistantMetadata = isAssistant(child) ? metadata.get(child) : undefined;
     const renderWidth = assistantMetadata !== undefined && sceneOwners.has(child)
@@ -1563,6 +1671,7 @@ function renderStoryboardIfRequested(
     metadata,
     assistantSnapshots,
     candidates,
+    contentBoundaries,
   ));
   const projection = buildStoryboard(storyboardChildren);
   const finalSceneOwners = new Set<unknown>();
@@ -1804,7 +1913,10 @@ function renderStoryboardIfRequested(
         if (leadingBlank > 0) rendered.push("");
         const lines = renderBoundary(segment.boundary);
         rendered.push(...lines);
-        const mouse = { component, height: leadingBlank + lines.length };
+        const mouse = {
+          component: boundaryMouseTarget(segment.boundary, component, leadingBlank),
+          height: leadingBlank + lines.length,
+        };
         nativeMouse.set(component, mouse);
         visualMouseChildren?.push(mouse);
         projectedChildCursor = segmentEnd;
@@ -1928,7 +2040,10 @@ function renderStoryboardIfRequested(
       }
       const lines = renderBoundary(segment.boundary);
       rendered.push(...lines);
-      mouseChildren.push({ component, height: leadingBlank + lines.length });
+      mouseChildren.push({
+        component: boundaryMouseTarget(segment.boundary, component, leadingBlank),
+        height: leadingBlank + lines.length,
+      });
       continue;
     }
     if (segment.type === "scene") {

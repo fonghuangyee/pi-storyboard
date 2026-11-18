@@ -1,5 +1,6 @@
 import { Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { GroupSnapshot, ThemeLike } from "./renderer.ts";
+import { sanitizeDisplay, sanitizeMultilineDisplay } from "./safe-display.ts";
 import {
   DEFAULT_PRESENTATION_SETTINGS,
   type PresentationSettings,
@@ -44,12 +45,34 @@ export function renderStoryboardBoundary(
 ): string[] {
   const safeWidth = Math.max(1, Math.floor(width));
   const layout = layoutForWidth(safeWidth, settings);
+  if (boundary.kind === "skill") {
+    const skillPrefix = `${layout.indent}${theme.fg(settings.colors.status.note, settings.symbols.skillInvocation)} `;
+    return wrapBoundaryText(skillPrefix, theme.fg("text", `Skill · ${sanitizeDisplay(boundary.name)}`), safeWidth);
+  }
   const root = `${layout.indent}${theme.fg(settings.colors.thinking.settled, settings.symbols.thinkingRoot)}`;
   const prefix = layout.assistantPrefixWidth === 0
     ? ""
     : `${padPrefix(root, layout.assistantPrefixWidth)} `;
   if (boundary.kind === "custom-status") {
     return wrapBoundaryText(prefix, theme.fg("text", boundary.content), safeWidth);
+  }
+  if (boundary.kind === "general") {
+    const heading = wrapBoundaryText(prefix, theme.fg("text", sanitizeDisplay(boundary.title)), safeWidth);
+    const rail = `${layout.indent}${settings.symbols.rail} `;
+    const last = `${layout.indent}${settings.symbols.lastBranch} `;
+    const proposedGutterWidth = Math.max(visibleWidth(rail), visibleWidth(last));
+    const gutterWidth = proposedGutterWidth < safeWidth ? proposedGutterWidth : 0;
+    const body = wrapTextWithAnsi(
+      sanitizeMultilineDisplay(boundary.content),
+      Math.max(1, safeWidth - gutterWidth),
+    );
+    return [
+      ...heading,
+      ...body.map((line, index) => {
+        const marker = gutterWidth === 0 ? "" : padPrefix(index === body.length - 1 ? last : rail, gutterWidth);
+        return fit(`${theme.fg(settings.colors.structure, marker)}${theme.fg("text", line)}`, safeWidth);
+      }),
+    ];
   }
   const text = theme.fg("text", `Compacted from ${boundary.tokensBefore.toLocaleString()} tokens`);
   return wrapBoundaryText(prefix, text, safeWidth);

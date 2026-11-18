@@ -82,6 +82,40 @@ function sceneFrom(result: ReturnType<typeof buildStoryboard>, index = 0) {
 }
 
 describe("buildStoryboard", () => {
+  it("keeps skill invocation independent from assistant tool ownership", () => {
+    const boundary = { kind: "skill" as const, row: "skill", name: "as-spring-sync" };
+    const owner = assistantChild(assistant(["r1"]));
+    const row = toolChild(tool("r1", "read"));
+    expect(buildStoryboard([owner, { type: "boundary", boundary }, row]).segments).toEqual([
+      { type: "native", children: [owner] },
+      { type: "boundary", boundary },
+      { type: "native", children: [row] },
+    ]);
+    const invalid = { type: "boundary", boundary: { ...boundary, name: "" } } as StoryboardChild;
+    expect(buildStoryboard([invalid]).segments).toEqual([{ type: "native", children: [invalid] }]);
+  });
+
+  it("keeps general content as an independent hard boundary, never tool ownership evidence", () => {
+    const boundary = { row: "notice", kind: "general" as const, title: "Notice", content: "Full\n\ncontent" };
+    const owner = assistantChild(assistant(["r1"]));
+    const row = toolChild(tool("r1", "read"));
+    const result = buildStoryboard([owner, { type: "boundary", boundary }, row]);
+    expect(result.segments).toEqual([
+      { type: "native", children: [owner] },
+      { type: "boundary", boundary },
+      { type: "native", children: [row] },
+    ]);
+  });
+
+  it.each([
+    { title: "", content: "content" },
+    { title: "  ", content: "content" },
+    { title: "Notice", content: 42 },
+  ])("fails open for malformed general content %j", (fields) => {
+    const child = { type: "boundary", boundary: { row: "notice", kind: "general", ...fields } } as StoryboardChild;
+    expect(buildStoryboard([child]).segments).toEqual([{ type: "native", children: [child] }]);
+  });
+
   it.each([
     { hasThinking: true, thinkingPresence: "empty" },
     { hasThinking: false, thinkingPresence: "visible" },

@@ -2,9 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AssistantMessageComponent,
   CustomMessageComponent,
+  initTheme,
+  SkillInvocationMessageComponent,
   ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { Container, Text, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
   classifyToolRowForTesting,
   installToolGroupingPatch,
@@ -225,6 +227,217 @@ describe("Container adapter", () => {
       }
     }
     original = Container.prototype.render;
+  });
+
+  it.each([false, true])("renders skill invocations with a dedicated marker and preserves expansion (session-aware=%s)", (sessionAware) => {
+    initTheme("dark", false);
+    const skill = new SkillInvocationMessageComponent({
+      name: "as-spring-sync", location: "/skills/as-spring-sync/SKILL.md",
+      content: "Full skill instructions stay available through expansion.", userMessage: undefined,
+    });
+    skill.setExpanded(true);
+    const expandedNative = container(skill).render(80);
+    skill.setExpanded(false);
+    const nativeRender = vi.spyOn(skill, "render");
+    const toggle = vi.spyOn(skill, "setExpanded");
+    const renderGroup = vi.fn(renderToolGroup);
+    const following = { render: () => ["following"], handleMouse: vi.fn(() => ({ handled: true })) };
+    const value = container({ render: () => ["before"] }, skill, following);
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme, renderGroup,
+      ...(sessionAware ? { getSessionProjection: () => ({ leafId: null, turns: [] }) } : {}),
+    });
+    try {
+      const lines = value.render(80);
+      const skillLine = lines.findIndex((line) => line.includes("Skill ·"));
+      expect(lines[skillLine]).toBe(" ✦ Skill · as-spring-sync");
+      expect(lines.join("\n")).not.toMatch(/\[skill\]|Full skill instructions|\/skills\//u);
+      expect(nativeRender).not.toHaveBeenCalled();
+      expect(renderGroup).not.toHaveBeenCalled();
+      const click = (y: number): void => {
+        value.handleMouse?.({
+          type: "click", button: "left", x: 2, y, screenX: 2, screenY: y,
+          width: 80, height: lines.length, shift: false, alt: false, ctrl: false,
+        });
+      };
+      click(lines.indexOf("following"));
+      expect(following.handleMouse).toHaveBeenCalledOnce();
+      click(skillLine - 1);
+      expect(toggle).not.toHaveBeenCalled();
+      click(skillLine);
+      expect(toggle).toHaveBeenCalledWith(true);
+      expect(container(skill).render(80)).toEqual(expandedNative);
+      skill.setExpanded(false);
+      expect(value.render(80)).toContain(" ✦ Skill · as-spring-sync");
+      for (const width of [1, 2, 8, 20, 80, 200]) {
+        expect(container(skill).render(width).every((line) => visibleWidth(line) <= width)).toBe(true);
+      }
+    } finally {
+      handle?.uninstall();
+    }
+  });
+
+  it("keeps malformed and expanded skill components native", () => {
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: renderToolGroup });
+    try {
+      for (const overrides of [
+        { expanded: true },
+        { expanded: undefined },
+        { skillBlock: undefined },
+        { skillBlock: { name: "\u001b[31m", location: "/skill", content: "text" } },
+        { skillBlock: { name: "skill", location: "/skill", content: 42 } },
+        { setExpanded: undefined },
+      ]) {
+        const skill = Object.create(SkillInvocationMessageComponent.prototype) as SkillInvocationMessageComponent;
+        Object.assign(skill, {
+          expanded: false, skillBlock: { name: "skill", location: "/skill", content: "instructions" },
+          render: vi.fn(() => ["native skill"]),
+        }, overrides);
+        expect(container(skill).render(80)).toEqual(["native skill"]);
+      }
+    } finally {
+      handle?.uninstall();
+    }
+  });
+
+  it("renders a real default custom message as complete general content without its native box", () => {
+    initTheme("dark", false);
+    const message = Object.freeze({
+      role: "custom" as const, customType: "deployment-notice", display: true, timestamp: 0,
+      content: Object.freeze([
+        Object.freeze({ type: "text" as const, text: "First paragraph.\n\n    indented" }),
+        Object.freeze({ type: "text" as const, text: `${"complete ".repeat(100)}FINAL TAIL` }),
+      ]),
+      details: Object.freeze({ providerPayload: "DO NOT DISPLAY" }),
+    });
+    const notice = new CustomMessageComponent(message as never);
+    const nativeRender = vi.spyOn(notice, "render");
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: renderToolGroup });
+    try {
+      const lines = container(notice).render(60);
+      const output = lines.join("\n");
+      expect(output).toContain("◉ deployment-notice");
+      expect(output).toContain("First paragraph.");
+      expect(output).toContain("    indented");
+      expect(output).toContain("FINAL TAIL");
+      expect(output.match(/complete/gu)).toHaveLength(100);
+      expect(output).not.toContain("[deployment-notice]");
+      expect(output).not.toContain("DO NOT DISPLAY");
+      expect(lines.every((line) => visibleWidth(line) <= 60)).toBe(true);
+      expect(nativeRender).not.toHaveBeenCalled();
+      expect(message.content[0]?.text).toBe("First paragraph.\n\n    indented");
+    } finally {
+      handle?.uninstall();
+    }
+  });
+
+  it("reframes plain transcript Text but leaves unrelated containers and following mouse targets alone", () => {
+    const owner = storyboardAssistant(["thinking"], []);
+    const notice = new Text("First status\n\nLast status", 1, 0);
+    const nativeRender = vi.spyOn(notice, "render");
+    const following = { render: () => ["following"], handleMouse: vi.fn(() => ({ handled: true })) };
+    const value = container(owner, notice, following);
+    const unrelated = new Text("Editor or menu label", 1, 0);
+    const expectedUnrelated = container(unrelated).render(80);
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: renderToolGroup });
+    try {
+      const lines = value.render(80);
+      expect(lines.join("\n")).toContain("◉ Status");
+      expect(lines.join("\n")).toContain("╰─ Last status");
+      expect(nativeRender).not.toHaveBeenCalled();
+      expect(container(unrelated).render(80)).toEqual(expectedUnrelated);
+      const y = lines.indexOf("following");
+      value.handleMouse?.({
+        type: "click", button: "left", x: 0, y, screenX: 0, screenY: y,
+        width: 80, height: lines.length, shift: false, alt: false, ctrl: false,
+      });
+      expect(following.handleMouse).toHaveBeenCalledOnce();
+    } finally {
+      handle?.uninstall();
+    }
+  });
+
+  it("keeps opaque, expanded, multimedia, and malformed custom messages native", () => {
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: renderToolGroup });
+    try {
+      for (const overrides of [
+        { _expanded: true },
+        { customRenderer: () => undefined },
+        { markdownTransformers: [() => "redacted"] },
+        { customComponent: new Text("interactive detail", 0, 0) },
+        { message: { role: "custom", customType: "image", display: true, content: [{ type: "image", data: "SECRET" }] } },
+        { message: { role: "custom", customType: "bad", display: true, content: [{ type: "text", text: 42 }] } },
+      ]) {
+        const notice = Object.create(CustomMessageComponent.prototype) as CustomMessageComponent;
+        Object.assign(notice, {
+          _expanded: false, customRenderer: undefined, customComponent: undefined, markdownTransformers: [],
+          message: { role: "custom", customType: "notice", display: true, content: "content" },
+          render: vi.fn(() => ["native preserved"]),
+        }, overrides);
+        expect(container(notice).render(80)).toEqual(["native preserved"]);
+      }
+    } finally {
+      handle?.uninstall();
+    }
+  });
+
+  it("fails open for general-view renderer errors, missing projections, and global expansion", () => {
+    for (const mode of ["theme-error", "missing-projection", "expanded"] as const) {
+      const notice = Object.create(CustomMessageComponent.prototype) as CustomMessageComponent;
+      Object.assign(notice, {
+        _expanded: false, customRenderer: undefined, customComponent: undefined, markdownTransformers: [],
+        message: { role: "custom", customType: "notice", display: true, content: "Readable text" },
+        render: vi.fn(() => ["native notice"]),
+      });
+      const handle = installToolGroupingPatch({
+        getTheme: () => { if (mode === "theme-error") throw new Error("theme unavailable"); return theme; },
+        renderGroup: renderToolGroup,
+        ...(mode === "missing-projection" ? { getSessionProjection: () => undefined } : {}),
+      });
+      try {
+        const value = mode === "expanded" ? container(notice, tool("read", {}, result(), true)) : container(notice);
+        expect(value.render(80)).toEqual(mode === "expanded" ? ["native notice", "native read"] : ["native notice"]);
+        expect(notice.render).toHaveBeenCalledOnce();
+      } finally {
+        handle?.uninstall();
+      }
+    }
+  });
+
+  it("keeps general content independent between session-proven scenes", () => {
+    initTheme("dark", false);
+    const first = storyboardAssistant(["first thinking"], ["first"]);
+    const second = storyboardAssistant(["second thinking"], ["second"]);
+    const firstTool = tool("read", { path: "first.ts" }, result());
+    const secondTool = tool("read", { path: "second.ts" }, result());
+    assignToolCallId(firstTool, "first");
+    assignToolCallId(secondTool, "second");
+    const notice = new CustomMessageComponent({
+      role: "custom", customType: "independent-notice", content: "Boundary content", display: true, timestamp: 0,
+    });
+    const session = buildSessionProjection({ leafId: "br", entries: [
+      sessionMessage("a", (first as unknown as Record<string, unknown>).lastMessage as Record<string, unknown>),
+      sessionResult("ar", "first", "a"),
+      { type: "custom_message", id: "notice", parentId: "ar", timestamp: "now",
+        customType: "independent-notice", content: "Boundary content", display: true } as never,
+      sessionMessage("b", (second as unknown as Record<string, unknown>).lastMessage as Record<string, unknown>, "notice"),
+      sessionResult("br", "second", "b"),
+    ] });
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme, renderGroup: renderToolGroup, getSessionProjection: () => session,
+    });
+    try {
+      const value = container(first, firstTool, notice, second, secondTool);
+      const output = value.render(80).join("\n");
+      expect(output).toContain("◉ independent-notice");
+      expect(output.indexOf("first.ts")).toBeLessThan(output.indexOf("Boundary content"));
+      expect(output.indexOf("Boundary content")).toBeLessThan(output.indexOf("second thinking"));
+      expect(output.match(/Read 1 file/gu)).toHaveLength(2);
+      expect(firstTool.render).not.toHaveBeenCalled();
+      expect(secondTool.render).not.toHaveBeenCalled();
+    } finally {
+      handle?.uninstall();
+    }
   });
 
   it("renders one assistant response and its tools as a closed story block", () => {

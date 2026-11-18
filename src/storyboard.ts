@@ -63,6 +63,12 @@ export type StoryboardToolSnapshot = {
 
 export type StoryboardBoundarySnapshot =
   | {
+      /** A skill invocation is a user-side boundary, never an assistant tool call. */
+      readonly row: unknown;
+      readonly kind: "skill";
+      readonly name: string;
+    }
+  | {
       /** The original collapsed boundary component used for interaction mapping. */
       readonly row: unknown;
       readonly kind: "compaction";
@@ -73,6 +79,13 @@ export type StoryboardBoundarySnapshot =
       readonly row: unknown;
       readonly kind: "custom-status";
       readonly customType: "web-search-content-ready";
+      readonly content: string;
+    }
+  | {
+      /** Readable unsupported content; always independent of scene ownership. */
+      readonly row: unknown;
+      readonly kind: "general";
+      readonly title: string;
       readonly content: string;
     };
 
@@ -283,6 +296,13 @@ function isBoundarySnapshot(value: unknown): value is StoryboardBoundarySnapshot
     return typeof value.tokensBefore === "number" &&
       Number.isSafeInteger(value.tokensBefore) &&
       value.tokensBefore >= 0;
+  }
+  if (value.kind === "skill") {
+    return typeof value.name === "string" && value.name.trim().length > 0;
+  }
+  if (value.kind === "general") {
+    return typeof value.title === "string" && value.title.trim().length > 0 &&
+      typeof value.content === "string";
   }
   return value.kind === "custom-status" &&
     value.customType === "web-search-content-ready" &&

@@ -59,7 +59,7 @@ describe("no-thinking transcript fixture", () => {
     }
   });
 
-  it.each(["between scenes", "after tools"])("preserves native cache-warming notices %s with Pi's real session snapshot", (position) => {
+  it.each(["between scenes", "after tools"])("storyboards cache-warming notices %s with Pi's real session snapshot", (position) => {
     initTheme("dark", false);
     const fixture = createNoThinkingTranscriptFixture(fakeTui(), process.cwd());
     const manager = SessionManager.inMemory(process.cwd());
@@ -101,6 +101,7 @@ describe("no-thinking transcript fixture", () => {
       const output = transcript.render(120).join("\n");
       expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(position === "between scenes" ? 2 : 1);
       expect(output.match(/Cache warmed: \$0\.01/gu)).toHaveLength(1);
+      expect(output).toContain("◉ Status\n ╰─ Cache warmed: $0.01");
       expect(groups.flat()).toEqual(fixture.messages.flatMap((message) =>
         message.content.flatMap((block) => block.type === "toolCall" ? [block.name] : [])));
       if (position === "between scenes") {

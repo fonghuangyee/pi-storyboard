@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
   renderNativeThinkingMarkersLayout,
+  renderStoryboardBoundary,
   renderStoryboardScene,
   sceneMarkerColor,
   thinkingMarkerColor,
@@ -51,6 +52,59 @@ function scene(): Extract<ReturnType<typeof buildStoryboard>["segments"][number]
   if (result?.type !== "scene") throw new Error("expected scene");
   return result;
 }
+
+describe("skill invocation storyboard", () => {
+  it("uses its own configurable marker without changing thinking or tool symbols", () => {
+    const settings = normalizePresentationSettings({ symbols: { skillInvocation: "◆", thinkingRoot: "T", toolDot: "X" } });
+    const boundary = { kind: "skill" as const, row: {}, name: "as-spring-sync\u001b[2J" };
+    expect(renderStoryboardBoundary(boundary, 80, theme, settings)).toEqual([" ◆ Skill · as-spring-sync"]);
+    for (let width = 1; width <= 200; width++) {
+      const lines = renderStoryboardBoundary({ ...boundary, name: "a".repeat(100) }, width, theme, settings);
+      expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+      expect(lines.join("").match(/a/gu)).toHaveLength(100);
+    }
+  });
+});
+
+describe("general storyboard content", () => {
+  it("preserves paragraphs, indentation, and the full tail beyond summary limits", () => {
+    const content = `First paragraph.\n\n    indented\n${"complete ".repeat(100)}FINAL TAIL`;
+    const lines = renderStoryboardBoundary({
+      kind: "general", row: {}, title: "deployment-notice", content,
+    }, 80, theme);
+    expect(lines[0]).toBe(" ◉ deployment-notice");
+    expect(lines[1]).toBe(" │  First paragraph.");
+    expect(lines[2]).toBe(" │  ");
+    expect(lines[3]).toBe(" │      indented");
+    expect(lines.at(-1)).toContain("╰─");
+    expect(lines.at(-1)).toContain("FINAL TAIL");
+    expect(lines.join("\n").match(/complete/gu)).toHaveLength(100);
+  });
+
+  it("strips terminal commands across line breaks without flattening paragraphs", () => {
+    const lines = renderStoryboardBoundary({
+      kind: "general", row: {}, title: "notice\u001b[2J",
+      content: "first\n\u001b]52;c;HIDDEN\nSECRET\u0007second\r\n\tthird\u0000\u009b2J",
+    }, 80, theme);
+    const output = lines.join("\n");
+    expect(output).toContain("first\n");
+    expect(output).toContain("second\n");
+    expect(output).toContain("    third");
+    expect(output).not.toMatch(/HIDDEN|SECRET|\u001b|\u0000|\u009b/u);
+  });
+
+  it("keeps every content character while wrapping at widths 1–200", () => {
+    const content = "abcdefghijklmnopqrstuvwxyz".repeat(5);
+    const settings = normalizePresentationSettings({ symbols: { rail: "┃", lastBranch: "END>" } });
+    for (let width = 1; width <= 200; width++) {
+      const lines = renderStoryboardBoundary({
+        kind: "general", row: {}, title: "Title", content,
+      }, width, theme, settings);
+      expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+      expect(lines.join("").replace(/[^a-z]/gu, "")).toBe(`itle${content}`);
+    }
+  });
+});
 
 describe("turn storyboard renderer", () => {
   it("maps story-block state to marker colors", () => {

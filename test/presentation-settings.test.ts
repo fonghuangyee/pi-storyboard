@@ -31,6 +31,18 @@ describe("presentation settings", () => {
     expect(Object.isFrozen(settings.colors.status)).toBe(true);
     expect(settings.showToolMetadata).toBe(true);
     expect(settings.showToolResultSummary).toBe(true);
+    expect(settings.symbols.skillInvocation).toBe("✦");
+  });
+
+  it("validates the skill marker independently of tool dots and preserves layered settings", () => {
+    const global = { symbols: { skillInvocation: "◆", toolDot: "T" } };
+    expect(normalizePresentationSettings(global).symbols).toMatchObject({ skillInvocation: "◆", toolDot: "T" });
+    for (const invalid of ["", "\n", "\u001b[31m", "123456789"]) {
+      const settings = resolvePresentationSettings(global, { symbols: { skillInvocation: invalid } }, true);
+      expect(settings.symbols.skillInvocation).toBe("◆");
+      expect(settings.symbols.toolDot).toBe("T");
+    }
+    expect(resolvePresentationSettings(global, { symbols: { skillInvocation: "S" } }, true).symbols.skillInvocation).toBe("S");
   });
 
   it("migrates the previous boolean trimming schema", () => {

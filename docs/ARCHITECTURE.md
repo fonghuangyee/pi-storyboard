@@ -540,7 +540,7 @@ Within a validated scene/work span:
 - final/unknown text and unrecognized visible native content remain native; recognized Pi terminal diagnostics (`Response was truncated before completion.` and compatible validated terminal Text shapes) are storyboard breakouts and no longer force the whole assistant/tool scene native; the diagnostic remains source ordered and mouse-addressable;
 - action runs merge within their original validated scene; either validated active-path continuation may additionally coalesce adjacent same-kind runs for presentation without merging scene ownership.
 
-The renderer never turns commentary into a synthetic title and never moves it after tools.
+The renderer never turns commentary into a synthetic title and never moves it after tools. A leading commentary or diagnostic breakout reuses the work span's existing initial spacer (native, including invisible terminal sequences, or synthesized when absent), rather than adding a second blank row. Later section spacing and native content remain unchanged; mouse regions use the resulting rendered positions.
 
 ## 5. Tool grouping implementation
 
@@ -800,7 +800,7 @@ Pi loads the extension directly from TypeScript through Jiti; there is no requir
 - `storyboard.test.ts`: scene ownership, exact IDs, source order, action runs, phases, state precedence, independent general-content and skill-invocation boundaries, malformed general/skill snapshots, and native fallback.
 - `storyboard-renderer.test.ts`: markers, rails, closure, commentary layout, thinking cap, configured symbols/colors, state colors, width budgets, placeholder styling, single skill-loaded master rows using the standard root marker, accent-colored skill marker/text with unchanged non-skill boundary colors, full-name wrapping at widths 1–200, complete-text general content beyond summary limits, paragraph/indentation preservation, multiline terminal-sequence sanitization, and character conservation at widths 1–200 with customized gutters.
 - `session-projection.test.ts`: active path, exact result ownership, transparent metadata, validated usage envelopes and context-edit boundaries, malformed usage fallback, interrupted ownership, compaction, boundaries, and text phases.
-- `work-span.test.ts`: visible-thinking-anchored and tool-only continuations, adjacent same-kind cross-scene visual grouping, explicit source-empty roots and reasons, continuation boundaries, scene/work-span parity, rendered-hidden real reasoning, lifecycle colors, widths 1–200, commentary suffix, source order, and no-placeholder cases.
+- `work-span.test.ts`: visible-thinking-anchored and tool-only continuations, adjacent same-kind cross-scene visual grouping, explicit source-empty roots and reasons, continuation boundaries, scene/work-span parity, rendered-hidden real reasoning, lifecycle colors, widths 1–200, commentary suffix, initial commentary spacer reuse with native/absent/ANSI-only spacer rows and corrected mouse-region offsets, source order, and no-placeholder cases.
 - `pi-adapter.test.ts`: real skill components in legacy and session-aware paths, no native collapsed skill box, exact single-master skill-loaded output, user click expansion/native expanded parity/re-collapse, leading-separator clicks, following mouse coordinates after skill rows, malformed/expanded skill native fallback, real default custom-message general rendering without its native box, full-text retention without hidden details, plain transcript Text versus unrelated UI containers, correct following mouse targets, general boundaries between session-proven scenes, opaque/expanded/multimedia/malformed and Markdown-transformed custom-message native fallback, private-shape validation, no mutation, one render per child, compact running edits, bounded successful-result and failure summaries for all tool kinds, settings threading, expansion/status restoration, native thinking-marker restoration, validated terminal-diagnostic storyboard breakouts, exact active-path web-search row-detail association, ambiguous/unmatched standalone status, narrow wrapped details, compaction caption, unknown-diagnostic native fallback, mouse translation, isolated incompatible-scene fallback, fallback, owner counting, and wrapper composition.
 - `no-thinking-transcript.test.ts`: real Pi `SessionManager.buildContextEntries()`/`appendUsage()` cache-warming integration with complete-text general notices between scenes or after tools, conserved source-order calls, narrow widths and expanded native parity; native Pi components for the four-response synthetic no-thinking incident; one shared root for the four validated consecutive tool-only responses and all eleven source-ordered tools, out-of-order completion, signed/redacted/whitespace-empty thinking, leading full-width commentary, running-to-failed settlement, native thinking-toggle mouse translation after inert roots, narrow resize, expansion/collapse, projection replacement/invalidation, visible-native interruption, and complete native renderer-error fallback.
 - `transcript-schema.test.ts`: development-schema local reference integrity and discriminator inventory, separate persisted/live assistant profiles, and the synthetic four-response no-thinking fixture's exact ownership, no mutation, visible-custom interruption, and usage-boundary recognition without changing fixture ownership. These are structural/characterization tests, not a general JSON Schema validator; visual roots are covered separately by work-span, adapter, and no-thinking integration tests.
@@ -895,7 +895,19 @@ The package manifest intentionally publishes:
 "files": ["src", "README.md", "LICENSE"]
 ```
 
-The authoritative development document and `AGENTS.md` are repository maintainer material, not marketplace package content.
+The authoritative development document and `AGENTS.md` are repository maintainer material, not marketplace package content. The README links to the repository-hosted architecture document so the link also works from npm. Package metadata links to the GitHub repository, README, and issue tracker. The existing `pi-package` keyword makes a published npm release eligible for the Pi gallery; it is not proof of publication or immediate indexing.
+
+### First npm release
+
+The initial prepared version is `0.1.0`. Preparation does not publish, commit, tag, or push. The README labels npm installation as available only after the first release. Before publishing:
+
+1. Complete the pending interactive verification described below and review the release diff, including the initial-commentary spacing fix.
+2. Run `npm run check` and `npm run package:check`; inspect the tarball inventory for only `src`, README, LICENSE, and npm's required manifest.
+3. Authenticate with `npm login`, confirm `npm whoami`, and confirm the target version has not already been published. A registry 404 is not a guarantee that npm will grant the package name.
+4. With explicit release authorization, run `npm publish --access public`. The `prepublishOnly` lifecycle reruns checks and the package dry run; it does not run during consumer installation.
+5. Verify `npm view pi-storyboard version` and test `pi install npm:pi-storyboard` in a separate Pi setup without loading the local checkout too. Check the Pi gallery separately; indexing is not guaranteed to be immediate.
+
+No credentials or npm configuration are stored in the repository. Authentication, interactive verification, and actual publication remain separate release steps; passing the automated checks alone does not complete them.
 
 When changing a reviewed dependency or claiming a new Pi version:
 

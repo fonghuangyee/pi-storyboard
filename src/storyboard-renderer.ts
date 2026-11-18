@@ -1005,7 +1005,7 @@ export function renderStoryboardWorkSpanLayout(
       continue;
     }
 
-    if (lines.length > 0) lines.push("");
+    if (partIndex > 0) lines.push("");
     const start = lines.length;
     for (const line of part.content.renderedLines) {
       if (visibleWidth(line) > safeWidth) throw new Error("storyboard breakout exceeds terminal width");

@@ -12,17 +12,19 @@ A presentation-only Pi extension that turns eligible collapsed tool activity int
 
 ## Install
 
-For a local checkout:
+From npm (after the first release is published):
 
 ```bash
-pi -e ./src/index.ts
+pi install npm:pi-storyboard
 ```
 
-As a Pi package:
+Or install a local checkout:
 
 ```bash
 pi install ./path/to/pi-storyboard
 ```
+
+To try a checkout without installing: `pi -e ./src/index.ts`.
 
 ## Settings
 
@@ -36,4 +38,4 @@ Automated compatibility checks target Pi **1.5.2**; live interactive release ver
 
 Pi core packages are optional peer dependencies and are not bundled. The extension feature-detects the native transcript components and falls back to Pi's renderer when required shapes are unavailable. Expanded tool mode always restores Pi's complete native rendering. Expanded skills also use Pi's native view; clicking a collapsed skill block or using Pi's configured expansion action preserves access to the full instructions. Opaque, interactive, custom-rendered, Markdown-transformed, multimedia, and incompatible content also stays native; this extension does not guarantee zero native previews. The input editor, footer, menus, dialogs, and Pi's built-in settings are unchanged.
 
-For the implementation contract, safety rules, compatibility notes, and maintainer workflow, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+For the implementation contract, safety rules, compatibility notes, and maintainer workflow, see [development documentation](https://github.com/fonghuangyee/pi-storyboard/blob/main/docs/ARCHITECTURE.md).

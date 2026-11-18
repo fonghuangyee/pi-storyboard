@@ -272,6 +272,18 @@ describe("work-span projection", () => {
     expect(layout.lines.every((line) => visibleWidth(line) <= 40)).toBe(true);
   });
 
+  it.each([{ nativeLeading: [] }, { nativeLeading: [""] }, { nativeLeading: ["\u001b[0m"] }])("reuses the initial spacer before leading commentary: $nativeLeading", ({ nativeLeading }) => {
+    const source = scene("b", "b", "edit", undefined, "Applying the fix");
+    const span = buildWorkSpan([{
+      ...source,
+      assistant: { ...source.assistant, renderedAssistantLines: [...nativeLeading, " Applying the fix"] },
+    }])!;
+    const layout = renderStoryboardWorkSpanLayout(span, 80, theme, () => ["", " edit 1"]);
+    expect(layout.lines.slice(0, 3)).toEqual([nativeLeading[0] ?? "", " Applying the fix", ""]);
+    expect(layout.lines[3]?.trimEnd()).toBe(" ◉ Thinking...");
+    expect(layout.assistantRegions[0]).toMatchObject({ start: 1, height: 1, sourceStart: 0 });
+  });
+
   it("starts tools after leading commentary with a source-empty UI root", () => {
     const second = scene("b", "b", "edit", undefined, "Applying the fix");
     const span = buildWorkSpan([second]);

@@ -4,6 +4,14 @@
   "description": "Render validated Pi assistant turns as source-ordered storyboards with grouped tool actions and native fallbacks.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fonghuangyee/pi-storyboard.git"
+  },
+  "homepage": "https://github.com/fonghuangyee/pi-storyboard#readme",
+  "bugs": {
+    "url": "https://github.com/fonghuangyee/pi-storyboard/issues"
+  },
   "sideEffects": false,
   "keywords": ["pi-package", "pi-extension", "tui", "tool-calls"],
   "files": ["src", "README.md", "LICENSE"],
@@ -34,6 +42,7 @@
     "check": "npm run typecheck && npm test",
     "transcript:schema": "node scripts/sync-transcript-schema.mjs",
     "transcript:schema:update": "node scripts/sync-transcript-schema.mjs --update",
-    "package:check": "npm pack --dry-run"
+    "package:check": "npm pack --dry-run",
+    "prepublishOnly": "npm run check && npm run package:check"
   }
 }

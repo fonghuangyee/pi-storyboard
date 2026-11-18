@@ -45,13 +45,13 @@ export function renderStoryboardBoundary(
 ): string[] {
   const safeWidth = Math.max(1, Math.floor(width));
   const layout = layoutForWidth(safeWidth, settings);
-  const rootColor = boundary.kind === "skill" ? "accent" : settings.colors.thinking.settled;
+  const rootColor = boundary.kind === "skill" ? settings.colors.skillInvocation : settings.colors.thinking.settled;
   const root = `${layout.indent}${theme.fg(rootColor, settings.symbols.thinkingRoot)}`;
   const prefix = layout.assistantPrefixWidth === 0
     ? ""
     : `${padPrefix(root, layout.assistantPrefixWidth)} `;
   if (boundary.kind === "skill") {
-    return wrapBoundaryText(prefix, theme.fg("accent", `Skill loaded: ${sanitizeDisplay(boundary.name)}`), safeWidth);
+    return wrapBoundaryText(prefix, theme.fg(settings.colors.skillInvocation, `Skill loaded: ${sanitizeDisplay(boundary.name)}`), safeWidth);
   }
   if (boundary.kind === "custom-status") {
     return wrapBoundaryText(prefix, theme.fg("text", boundary.content), safeWidth);

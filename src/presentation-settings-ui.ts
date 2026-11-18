@@ -40,6 +40,7 @@ type ColorField =
   | "note"
   | "active"
   | "settled"
+  | "skillInvocation"
   | "structure";
 
 function valueForSymbol(draft: PresentationSettingsDraft, field: SymbolField): string {
@@ -51,14 +52,14 @@ function setSymbol(draft: PresentationSettingsDraft, field: SymbolField, value: 
 }
 
 function colorFor(draft: PresentationSettingsDraft, field: ColorField): string {
-  if (field === "structure") return draft.colors.structure;
+  if (field === "structure" || field === "skillInvocation") return draft.colors[field];
   if (field === "active" || field === "settled") return draft.colors.thinking[field];
   return draft.colors.status[field];
 }
 
 function setColor(draft: PresentationSettingsDraft, field: ColorField, value: string): void {
-  if (field === "structure") {
-    draft.colors.structure = value as PresentationSettingsDraft["colors"]["structure"];
+  if (field === "structure" || field === "skillInvocation") {
+    draft.colors[field] = value as PresentationSettingsDraft["colors"][typeof field];
   } else if (field === "active" || field === "settled") {
     draft.colors.thinking[field] = value as PresentationSettingsDraft["colors"]["thinking"][typeof field];
   } else {
@@ -218,6 +219,7 @@ export async function openPresentationSettings(
       colorItem("color-status-note", "Note status color", "Neutral storyboard note markers.", "note"),
       colorItem("color-thinking-active", "Active thinking color", "Thinking markers for running scenes.", "active"),
       colorItem("color-thinking-settled", "Settled thinking color", "Thinking markers for settled scenes.", "settled"),
+      colorItem("color-skillInvocation", "Skill invocation color", "Collapsed skill marker and label.", "skillInvocation"),
       colorItem("color-structure", "Structure color", "Vertical rails and branch markers.", "structure"),
       {
         id: "reset-defaults",

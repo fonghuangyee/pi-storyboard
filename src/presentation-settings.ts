@@ -101,6 +101,7 @@ export type PresentationSettings = Readonly<{
       active: StoryboardColorName;
       settled: StoryboardColorName;
     }>;
+    skillInvocation: StoryboardColorName;
     structure: StoryboardColorName;
   }>;
 }>;
@@ -135,6 +136,7 @@ export type PresentationSettingsDraft = {
       active: StoryboardColorName;
       settled: StoryboardColorName;
     };
+    skillInvocation: StoryboardColorName;
     structure: StoryboardColorName;
   };
 };
@@ -179,6 +181,7 @@ const DEFAULT_MUTABLE_SETTINGS: PresentationSettingsDraft = {
       active: "syntaxKeyword",
       settled: "success",
     },
+    skillInvocation: "warning",
     structure: "muted",
   },
 };
@@ -348,6 +351,7 @@ export function normalizePresentationSettings(
         active: readColor(thinking, "active", fallback.colors.thinking.active),
         settled: readColor(thinking, "settled", fallback.colors.thinking.settled),
       },
+      skillInvocation: readColor(colors, "skillInvocation", fallback.colors.skillInvocation),
       structure: readColor(colors, "structure", fallback.colors.structure),
     },
   };

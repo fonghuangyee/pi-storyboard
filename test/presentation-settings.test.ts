@@ -33,6 +33,15 @@ describe("presentation settings", () => {
     expect(settings.showToolResultSummary).toBe(true);
   });
 
+  it("validates skill colors with trusted precedence and independent fallbacks", () => {
+    const global = { colors: { skillInvocation: "mdHeading" } };
+    expect(normalizePresentationSettings(undefined).colors.skillInvocation).toBe("warning");
+    expect(normalizePresentationSettings({ colors: { skillInvocation: "#ffaa00" } }).colors.skillInvocation).toBe("warning");
+    expect(resolvePresentationSettings(global, { colors: { skillInvocation: "accent" } }, true).colors.skillInvocation).toBe("accent");
+    expect(resolvePresentationSettings(global, { colors: { skillInvocation: "invalid" } }, true).colors.skillInvocation).toBe("mdHeading");
+    expect(resolvePresentationSettings(global, { colors: { skillInvocation: "accent" } }, false).colors.skillInvocation).toBe("mdHeading");
+  });
+
   it("ignores the retired skill symbol setting without affecting standard markers", () => {
     const global = { symbols: { skillInvocation: "◆", toolDot: "T", thinkingRoot: "M" } };
     const settings = resolvePresentationSettings(global, { symbols: { skillInvocation: "S" } }, true);
@@ -158,6 +167,7 @@ describe("presentation settings", () => {
     writeFileSync(globalPath, JSON.stringify({
       trimming: { fileNames: "none" },
       symbols: { toolDot: "G" },
+      colors: { skillInvocation: "mdHeading" },
     }));
     writeFileSync(projectPath, JSON.stringify({
       trimming: { commands: "none" },
@@ -173,6 +183,7 @@ describe("presentation settings", () => {
     expect(source.effective.trimming).toEqual({ fileNames: "none", commands: "none", tools: "middle" });
     expect(source.effective.symbols).toMatchObject({ toolDot: "G", thinkingRoot: "P" });
     expect(source.effective.showToolResultSummary).toBe(false);
+    expect(source.effective.colors.skillInvocation).toBe("mdHeading");
 
     writePresentationSettings(cwd, "project", source.effective, agentDir);
 

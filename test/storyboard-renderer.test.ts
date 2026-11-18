@@ -54,18 +54,25 @@ function scene(): Extract<ReturnType<typeof buildStoryboard>["segments"][number]
 }
 
 describe("skill invocation storyboard", () => {
-  it("uses theme accent for skill markers, not execution or note-state colors", () => {
+  it("uses theme warning for skill markers, independently of execution or note-state colors", () => {
     const colors: Array<[string, string]> = [];
     const recordingTheme: ThemeLike = {
       fg: (color, text) => { colors.push([color, text]); return text; },
     };
-    const settings = normalizePresentationSettings({ colors: { status: { note: "warning" }, structure: "dim" } });
+    const settings = normalizePresentationSettings({ colors: { status: { note: "accent" }, structure: "dim" } });
     const boundary = { kind: "skill" as const, row: {}, name: "as-spring-sync" };
     renderStoryboardBoundary(boundary, 80, recordingTheme, settings);
     expect(colors).toEqual([
-      ["accent", "◉"], ["accent", "Skill loaded: as-spring-sync"],
+      ["warning", "◉"], ["warning", "Skill loaded: as-spring-sync"],
     ]);
-    expect(colors.some(([color]) => ["warning", "success", "error", "syntaxKeyword"].includes(color))).toBe(false);
+    expect(colors.some(([color]) => ["accent", "success", "error", "syntaxKeyword"].includes(color))).toBe(false);
+
+    colors.length = 0;
+    renderStoryboardBoundary(boundary, 80, recordingTheme,
+      normalizePresentationSettings({ colors: { skillInvocation: "mdHeading" } }));
+    expect(colors).toEqual([
+      ["mdHeading", "◉"], ["mdHeading", "Skill loaded: as-spring-sync"],
+    ]);
 
     colors.length = 0;
     renderStoryboardBoundary({ kind: "compaction", row: {}, tokensBefore: 100 }, 80, recordingTheme, settings);

@@ -82,7 +82,6 @@ export type PresentationSettings = Readonly<{
   symbols: Readonly<{
     toolDot: string;
     toolDots: Readonly<Record<GroupKind, string>>;
-    skillInvocation: string;
     thinkingRoot: string;
     thinkingStep: string;
     thinkingPlaceholder: string;
@@ -117,7 +116,6 @@ export type PresentationSettingsDraft = {
   symbols: {
     toolDot: string;
     toolDots: Record<GroupKind, string>;
-    skillInvocation: string;
     thinkingRoot: string;
     thinkingStep: string;
     thinkingPlaceholder: string;
@@ -162,7 +160,6 @@ const DEFAULT_MUTABLE_SETTINGS: PresentationSettingsDraft = {
   symbols: {
     toolDot: "●",
     toolDots: { ...DEFAULT_TOOL_DOTS },
-    skillInvocation: "✦",
     thinkingRoot: "◉",
     thinkingStep: "○",
     thinkingPlaceholder: "Thinking...",
@@ -328,7 +325,6 @@ export function normalizePresentationSettings(
     symbols: {
       toolDot,
       toolDots: { ...fallback.symbols.toolDots },
-      skillInvocation: readSymbol(symbols, "skillInvocation", fallback.symbols.skillInvocation, 8),
       thinkingRoot: readSymbol(symbols, "thinkingRoot", fallback.symbols.thinkingRoot, 8),
       thinkingStep: readSymbol(symbols, "thinkingStep", fallback.symbols.thinkingStep, 8),
       thinkingPlaceholder: readPlaceholder(

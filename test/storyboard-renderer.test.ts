@@ -54,14 +54,32 @@ function scene(): Extract<ReturnType<typeof buildStoryboard>["segments"][number]
 }
 
 describe("skill invocation storyboard", () => {
-  it("uses its own configurable marker without changing thinking or tool symbols", () => {
-    const settings = normalizePresentationSettings({ symbols: { skillInvocation: "◆", thinkingRoot: "T", toolDot: "X" } });
+  it("uses theme accent for skill markers, not execution or note-state colors", () => {
+    const colors: Array<[string, string]> = [];
+    const recordingTheme: ThemeLike = {
+      fg: (color, text) => { colors.push([color, text]); return text; },
+    };
+    const settings = normalizePresentationSettings({ colors: { status: { note: "warning" }, structure: "dim" } });
+    const boundary = { kind: "skill" as const, row: {}, name: "as-spring-sync" };
+    renderStoryboardBoundary(boundary, 80, recordingTheme, settings);
+    expect(colors).toEqual([
+      ["accent", "◉"], ["accent", "Skill loaded: as-spring-sync"],
+    ]);
+    expect(colors.some(([color]) => ["warning", "success", "error", "syntaxKeyword"].includes(color))).toBe(false);
+
+    colors.length = 0;
+    renderStoryboardBoundary({ kind: "compaction", row: {}, tokensBefore: 100 }, 80, recordingTheme, settings);
+    expect(colors).toContainEqual(["success", "◉"]);
+  });
+
+  it("reuses the standard master marker and preserves full names at widths 1–200", () => {
+    const settings = normalizePresentationSettings({ symbols: { thinkingRoot: "T", toolDot: "X" } });
     const boundary = { kind: "skill" as const, row: {}, name: "as-spring-sync\u001b[2J" };
-    expect(renderStoryboardBoundary(boundary, 80, theme, settings)).toEqual([" ◆ Skill · as-spring-sync"]);
+    expect(renderStoryboardBoundary(boundary, 80, theme, settings)).toEqual([" T Skill loaded: as-spring-sync"]);
     for (let width = 1; width <= 200; width++) {
-      const lines = renderStoryboardBoundary({ ...boundary, name: "a".repeat(100) }, width, theme, settings);
+      const lines = renderStoryboardBoundary({ ...boundary, name: "z".repeat(100) }, width, theme, settings);
       expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
-      expect(lines.join("").match(/a/gu)).toHaveLength(100);
+      expect(lines.join("").match(/z/gu)).toHaveLength(100);
     }
   });
 });

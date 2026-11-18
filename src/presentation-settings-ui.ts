@@ -22,7 +22,6 @@ import {
 
 const SYMBOL_FIELDS = [
   ["toolDot", "Default tool dot", "Fallback dot used for tool kinds without an override."],
-  ["skillInvocation", "Skill invocation", "Marker for a collapsed skill invocation, separate from tool dots."],
   ["thinkingRoot", "Thinking root", "Marker for the first thinking block in a storyboard."],
   ["thinkingStep", "Thinking step", "Marker for later thinking paragraphs and chapters."],
   ["thinkingPlaceholder", "Thinking placeholder", "Presentation-only label for tool-only turns."],

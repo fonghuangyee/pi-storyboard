@@ -249,8 +249,9 @@ describe("Container adapter", () => {
     });
     try {
       const lines = value.render(80);
-      const skillLine = lines.findIndex((line) => line.includes("Skill ·"));
-      expect(lines[skillLine]).toBe(" ✦ Skill · as-spring-sync");
+      const skillLine = lines.findIndex((line) => line.includes("as-spring-sync"));
+      expect(lines[skillLine]).toBe(" ◉ Skill loaded: as-spring-sync");
+      expect(lines.filter((line) => line.includes("as-spring-sync"))).toHaveLength(1);
       expect(lines.join("\n")).not.toMatch(/\[skill\]|Full skill instructions|\/skills\//u);
       expect(nativeRender).not.toHaveBeenCalled();
       expect(renderGroup).not.toHaveBeenCalled();
@@ -268,7 +269,7 @@ describe("Container adapter", () => {
       expect(toggle).toHaveBeenCalledWith(true);
       expect(container(skill).render(80)).toEqual(expandedNative);
       skill.setExpanded(false);
-      expect(value.render(80)).toContain(" ✦ Skill · as-spring-sync");
+      expect(value.render(80)).toContain(" ◉ Skill loaded: as-spring-sync");
       for (const width of [1, 2, 8, 20, 80, 200]) {
         expect(container(skill).render(width).every((line) => visibleWidth(line) <= width)).toBe(true);
       }

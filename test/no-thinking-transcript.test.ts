@@ -1,4 +1,4 @@
-import { initTheme } from "@earendil-works/pi-coding-agent";
+import { initTheme, SessionManager } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
 import { Container, Text, type TUI, visibleWidth } from "@earendil-works/pi-tui";
 import { installToolGroupingPatch } from "../src/pi-adapter.ts";
@@ -57,6 +57,63 @@ describe("no-thinking transcript fixture", () => {
     } finally {
       handle?.uninstall();
     }
+  });
+
+  it.each(["between scenes", "after tools"])("preserves native cache-warming notices %s with Pi's real session snapshot", (position) => {
+    initTheme("dark", false);
+    const fixture = createNoThinkingTranscriptFixture(fakeTui(), process.cwd());
+    const manager = SessionManager.inMemory(process.cwd());
+    const transcript = new Container();
+    const notice = new Text("Cache warmed: $0.01", 1, 0);
+    const appendUsage = (): void => {
+      manager.appendUsage("cache_warm", "fixture", "fixture", fixture.messages[0]!.usage);
+    };
+    for (const entry of fixture.entries) {
+      if (entry.type === "message") {
+        const message = entry.message;
+        if (message.role === "user" || message.role === "assistant" || message.role === "toolResult") {
+          manager.appendMessage(message);
+        }
+      }
+      if (position === "between scenes" && entry.id === "incident-result-call-a1") appendUsage();
+    }
+    if (position === "after tools") appendUsage();
+    for (const child of fixture.transcript.children) {
+      transcript.addChild(child);
+      if (position === "between scenes" && child === fixture.tools[3]) transcript.addChild(notice);
+    }
+    if (position === "after tools") transcript.addChild(notice);
+    const entries = manager.buildContextEntries();
+    const original = JSON.stringify(entries);
+    const projection = buildSessionProjection({ entries, leafId: entries.at(-1)!.id });
+    expect(projection?.turns.every((turn) => turn.valid)).toBe(true);
+    fixture.tools.forEach((tool) => tool.setExpanded(true));
+    const expandedNative = transcript.render(120);
+    fixture.tools.forEach((tool) => tool.setExpanded(false));
+    const groups: string[][] = [];
+    const handle = installToolGroupingPatch({ getTheme: () => theme,
+      getSessionProjection: () => projection,
+      renderGroup: (group, width, groupTheme) => {
+        groups.push(group.rows.map((row) => row.toolName));
+        return renderToolGroup(group, width, groupTheme);
+      } });
+    try {
+      const output = transcript.render(120).join("\n");
+      expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(position === "between scenes" ? 2 : 1);
+      expect(output.match(/Cache warmed: \$0\.01/gu)).toHaveLength(1);
+      expect(groups.flat()).toEqual(fixture.messages.flatMap((message) =>
+        message.content.flatMap((block) => block.type === "toolCall" ? [block.name] : [])));
+      if (position === "between scenes") {
+        expect(output.indexOf("Cache warmed:")).toBeGreaterThan(output.indexOf("web_enable"));
+        expect(output.indexOf("Cache warmed:")).toBeLessThan(output.indexOf("fetch_content"));
+      }
+      for (const width of [1, 2, 20, 80, 120, 200]) {
+        expect(transcript.render(width).every((line) => visibleWidth(line) <= width)).toBe(true);
+      }
+      fixture.tools.forEach((tool) => tool.setExpanded(true));
+      expect(transcript.render(120)).toEqual(expandedNative);
+      expect(JSON.stringify(entries)).toBe(original);
+    } finally { handle?.uninstall(); }
   });
 
   it.each(["", " \t\n"])("keeps signed/redacted source-empty reasoning %j as UI only", (thinking) => {

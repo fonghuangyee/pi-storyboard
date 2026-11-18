@@ -8,8 +8,9 @@ Pi publishes TypeScript definitions and prose, not one universal closed JSON Sch
 
 | Profile | Evidence | Meaning |
 |---|---|---|
-| Project baseline | `v0.85.1`, commit `d981de1229ef899957bbe968bc8dcda02a21f477`; installed declarations | Existing development/test target; unchanged by this investigation |
-| Declaration sync baseline | `schema/pi-transcript-types.json`; installed `pi-coding-agent`, `pi-ai`, and `pi-agent-core` `0.85.1` declarations | Exact tracked public type declarations; not a complete persisted or live transcript schema |
+| Project baseline | `v1.5.2`, tag commit `b4afdddf44e059c67ccf5097e5317d913521b470`; installed declarations | Automated development/test target; live interactive release checks remain pending |
+| Historical baseline | `v0.85.1`, commit `d981de1229ef899957bbe968bc8dcda02a21f477` | Original comparison point for the incident/schema investigation |
+| Declaration sync baseline | `schema/pi-transcript-types.json`; installed `pi-coding-agent`, `pi-ai`, and `pi-agent-core` `1.5.2` declarations | Exact tracked public type declarations; not a complete persisted or live transcript schema |
 | Upstream reference | `main` resolved to `6fb2e7815167e6b19006fc526d1a5d0f5f998787` | Schema reference only; not a promise that the private adapter supports this runtime |
 | Incident | Session `01a11e5e-3df5-7180-9d24-1a976a258c67`, header version `3` | Observed data; producer package version is not recorded in the header |
 
@@ -25,9 +26,9 @@ Pinned upstream sources:
 
 Human-facing references (moving URLs, not version pins): [session format](https://pi.dev/docs/latest/session-format), [message types](https://pi.dev/docs/latest/message-types), [JSON events](https://pi.dev/docs/latest/json), [SDK](https://pi.dev/docs/latest/sdk).
 
-### Important drift
+### Reviewed 1.5.2 drift
 
-The installed `0.85.1` declarations do **not** include all features described by current documentation or seen in this session:
+The upgrade from `0.85.1` to `1.5.2` adds declarations for:
 
 - `SystemMessage` and its prompt/tool patches;
 - persisted `usage` and `context_edit` entries;
@@ -35,7 +36,9 @@ The installed `0.85.1` declarations do **not** include all features described by
 - assistant `thinkingLevel` and `durationMs`;
 - result `nestedCalls` and `durationMs`.
 
-The baseline result type also exposes `addedToolNames`, absent from the reviewed latest result definition. Additional properties intentionally remain allowed, so historical fields are not discarded. The live projector already recognizes system messages as boundaries and the exact context-edit deletion shape as a boundary; that is narrower than the full upstream schema. `usage` is currently unknown to that projector and fails open. Schema recognition must not silently enlarge runtime eligibility.
+The historical result type also exposes `addedToolNames`, absent from `1.5.2`. Additional properties intentionally remain allowed, so historical fields are not discarded. The `1.5.2` review also adds explicit optional `ToolCall.argumentsError` and `Usage.cost.totalFromProvider` fields to the hand-reviewed schema; JSON-only typing changes do not change its object envelopes. The schema retains its original source pin plus this additive review pin rather than pretending it was fully regenerated.
+
+The live projector recognizes system messages, exact context-edit deletions, and validated `usage` accounting envelopes as hard boundaries; this remains narrower than the full schema. Usage kinds are arbitrary strings. Envelope keys and field types are checked, including an object payload, but usage counters/costs are not interpreted or retained. Malformed or extended envelopes fail open. A usage entry cannot bridge incomplete tool ownership or combine scenes; native cache-warming notices remain native while independently matched completed scenes stay eligible. Tests exercise real `SessionManager.appendUsage()`/`buildContextEntries()` with native components, source order, widths and expansion. Schema recognition must not silently enlarge runtime eligibility.
 
 A session's `version: 3` identifies the storage/migration generation, **not** the exact producer API, provider, private TUI shape, or feature set.
 
@@ -79,7 +82,7 @@ All entries below include the entry base; `?` means optional in JSON. `details`/
 | `message` | `message: AgentMessage` | Classify nested role; assistant/result ownership is separately proven |
 | `thinking_level_change` | `thinkingLevel: string` | Known non-visible state only |
 | `model_change` | `provider`, `modelId` | Known non-visible state only |
-| `usage` | `kind`, `provider`, `model`, `usage`, `note?` | Latest upstream accounting entry; currently native/fail-open compatibility boundary |
+| `usage` | `kind`, `provider`, `model`, `usage`, `note?` | Validated envelope is a hard boundary; native notice preserved, payload not retained |
 | `compaction` | `summary`, `firstKeptEntryId`, `tokensBefore`, `details?`, `usage?`, `fromHook?`, `systemMessage?` | Hard boundary; concise caption or native expansion |
 | `branch_summary` | `fromId`, `summary`, `details?`, `usage?`, `fromHook?` | Hard boundary |
 | `custom` | `customType`, `data?` | Not model context; may still be visibly rendered by another extension |
@@ -103,7 +106,7 @@ Known roles: `system`, `user`, `assistant`, `toolResult`, `bashExecution`, `cust
 - Direct shell (`bashExecution`): command/output/exitCode when defined/cancelled/truncated/timestamp and optional path/context flag. This is **not** an LLM tool result.
 - Summary roles contain their summary and source/token metadata; they are boundaries, not assistant responses.
 
-The schema explicitly defines all fields, including `Usage.cost`, diagnostics, deferred handles, nested calls, tool declarations, and content-edit replacement envelopes. It preserves unrecognized additional properties. JSON cannot represent TypeScript `undefined`; optional properties and fields such as undefined shell exit code or cleared labels are omitted, not set to `null` unless the upstream type permits null.
+The schema explicitly defines fields including `Usage.cost` (with optional `totalFromProvider`), tool-call `argumentsError`, diagnostics, deferred handles, nested calls, tool declarations, and content-edit replacement envelopes. It preserves unrecognized additional properties. JSON cannot represent TypeScript `undefined`; optional properties and fields such as undefined shell exit code or cleared labels are omitted, not set to `null` unless the upstream type permits null.
 
 Thinking is allowed to be absent, empty, whitespace-only, redacted, or visible. Empty thinking can carry opaque replay data. Signatures remain immutable and opaque; only a validated `TextSignatureV1` phase is reduced to a presentation enum. `phase` is optional upstream, so a schema-valid text block can still be ineligible for storyboard.
 

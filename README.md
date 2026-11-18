@@ -32,6 +32,8 @@ Configure independent file/path, command, and custom-tool-argument trimming (`no
 
 ## Compatibility
 
+Automated compatibility checks target Pi **1.5.2**; live interactive release verification remains pending. Cache-warming notices stay native without disabling independently matched storyboards.
+
 Pi core packages are optional peer dependencies and are not bundled. The extension feature-detects the native transcript components and falls back to Pi's renderer when required shapes are unavailable. Expanded tool mode always restores Pi's complete native rendering.
 
 For the implementation contract, safety rules, compatibility notes, and maintainer workflow, see [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).

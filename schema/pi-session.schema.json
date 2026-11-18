@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://pi-storyboard.local/schema/pi-session.schema.json",
   "title": "Pi persisted session record — reviewed upstream snapshot",
-  "$comment": "Development-only schema, not runtime eligibility. See docs/TRANSCRIPT_SCHEMA.md. Upstream commit 6fb2e7815167e6b19006fc526d1a5d0f5f998787; baseline v0.85.1 d981de1229ef899957bbe968bc8dcda02a21f477. Apply to each parsed JSONL record, not a JSON array. Unknown discriminators remain native boundaries; additional properties are preserved, never permission to storyboard.",
+  "$comment": "Development-only schema, not runtime eligibility. See docs/TRANSCRIPT_SCHEMA.md. Upstream commit 6fb2e7815167e6b19006fc526d1a5d0f5f998787; historical baseline v0.85.1 d981de1229ef899957bbe968bc8dcda02a21f477. Additive v1.5.2 fields reviewed at b4afdddf44e059c67ccf5097e5317d913521b470. Apply to each parsed JSONL record, not a JSON array. Unknown discriminators remain native boundaries; additional properties are preserved, never permission to storyboard.",
   "oneOf": [
     { "$ref": "#/$defs/SessionHeader" },
     { "$ref": "#/$defs/SessionEntry" }
@@ -22,7 +22,7 @@
     },
     "ToolCall": {
       "type": "object", "required": ["type", "id", "name", "arguments"],
-      "properties": { "type": { "const": "toolCall" }, "id": { "type": "string" }, "name": { "type": "string" }, "arguments": { "type": "object" }, "thoughtSignature": { "type": "string" }, "namespace": { "type": "string" } }
+      "properties": { "type": { "const": "toolCall" }, "id": { "type": "string" }, "name": { "type": "string" }, "arguments": { "type": "object" }, "thoughtSignature": { "type": "string" }, "namespace": { "type": "string" }, "argumentsError": { "type": "string" } }
     },
     "TextSignatureV1": {
       "$comment": "Decoded metadata only; textSignature itself remains a string. A missing phase is valid upstream but unknown for storyboard.",
@@ -36,7 +36,7 @@
       "type": "object", "required": ["input", "output", "cacheRead", "cacheWrite", "totalTokens", "cost"],
       "properties": {
         "input": { "type": "number" }, "output": { "type": "number" }, "cacheRead": { "type": "number" }, "cacheWrite": { "type": "number" }, "cacheWrite1h": { "type": "number" }, "reasoning": { "type": "number" }, "totalTokens": { "type": "number" },
-        "cost": { "type": "object", "required": ["input", "output", "cacheRead", "cacheWrite", "total"], "properties": { "input": { "type": "number" }, "output": { "type": "number" }, "cacheRead": { "type": "number" }, "cacheWrite": { "type": "number" }, "total": { "type": "number" } } }
+        "cost": { "type": "object", "required": ["input", "output", "cacheRead", "cacheWrite", "total"], "properties": { "input": { "type": "number" }, "output": { "type": "number" }, "cacheRead": { "type": "number" }, "cacheWrite": { "type": "number" }, "total": { "type": "number" }, "totalFromProvider": { "type": "boolean" } } }
       }
     },
     "DiagnosticErrorInfo": {

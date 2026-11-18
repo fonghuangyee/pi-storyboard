@@ -114,6 +114,53 @@ describe("buildSessionProjection", () => {
     expect(projection?.turns[0]?.valid).toBe(true);
   });
 
+  it.each(["cache_warm", "future_accounting_kind"])("keeps %s usage as a hard boundary without retaining its payload", (kind) => {
+    const usage = {
+      type: "usage", id: "usage", parentId: "r1", timestamp: "now",
+      kind, provider: "fixture", model: "fixture", note: "Native notice only",
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+    };
+    const entries = [
+      entry("root", { role: "user", content: "start" }),
+      Object.assign(assistant("a1", ["c1"]), { parentId: "root" }),
+      Object.assign(result("r1", "c1"), { parentId: "a1" }),
+      usage as never,
+      Object.assign(assistant("a2", ["c2"]), { parentId: "usage" }),
+      Object.assign(result("r2", "c2"), { parentId: "a2" }),
+    ];
+    const original = JSON.stringify(entries);
+    const projection = buildSessionProjection({ entries, leafId: "r2" });
+    expect(projection?.turns.map((turn) => ({
+      valid: turn.valid, before: turn.boundaryBefore, after: turn.boundaryAfter,
+    }))).toEqual([
+      { valid: true, before: true, after: true },
+      { valid: true, before: true, after: false },
+    ]);
+    expect(JSON.stringify(projection)).not.toContain("Native notice only");
+    expect(JSON.stringify(entries)).toBe(original);
+
+    // An accounting entry cannot bridge an incomplete owner's result window.
+    const interrupted = [entries[0]!, entries[1]!,
+      { ...usage, parentId: "a1" } as never,
+      Object.assign(result("r1", "c1"), { parentId: "usage" }),
+      Object.assign(assistant("a2", ["c2"]), { parentId: "r1" }), entries[5]!];
+    expect(buildSessionProjection({ entries: interrupted, leafId: "r2" })?.turns.map((turn) => turn.valid))
+      .toEqual([false, true]);
+  });
+
+  it.each([
+    { kind: 123 }, { provider: null }, { model: [] }, { usage: null },
+    { usage: [] }, { note: 123 }, { timestamp: 123 }, { parentId: "" },
+    { message: { role: "assistant" } },
+  ])("fails open for incompatible usage envelopes %j", (invalid) => {
+    expect(buildSessionProjection({ leafId: "usage", entries: [{
+      type: "usage", id: "usage", parentId: null, timestamp: "now",
+      kind: "cache_warm", provider: "fixture", model: "fixture", usage: {},
+      ...invalid,
+    } as never] })).toBeUndefined();
+  });
+
   it("treats a validated context edit as an invisible hard boundary", () => {
     const projection = buildSessionProjection({
       leafId: "r2",

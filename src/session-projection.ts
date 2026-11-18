@@ -69,6 +69,7 @@ const KNOWN_ENTRY_TYPES = new Set([
   "message",
   "thinking_level_change",
   "model_change",
+  "usage",
   "compaction",
   "branch_summary",
   "custom",
@@ -161,6 +162,20 @@ function isContextEditEntry(entry: RecordLike): boolean {
     (entry.parentId === null || isNonEmptyString(entry.parentId)) &&
     isNonEmptyString(entry.targetId) &&
     entry.replacement === null
+  );
+}
+
+function isUsageEntry(entry: RecordLike): boolean {
+  // Validate only the accounting envelope; never interpret or retain its payload.
+  return (
+    Object.keys(entry).every((key) => ["type", "id", "parentId", "timestamp", "kind", "provider", "model", "usage", "note"].includes(key)) &&
+    typeof entry.timestamp === "string" &&
+    (entry.parentId === null || isNonEmptyString(entry.parentId)) &&
+    typeof entry.kind === "string" &&
+    typeof entry.provider === "string" &&
+    typeof entry.model === "string" &&
+    isRecord(entry.usage) &&
+    (entry.note === undefined || typeof entry.note === "string")
   );
 }
 
@@ -309,6 +324,12 @@ export function buildSessionProjection(input: SessionProjectionInput): SessionPr
       turns.push(turn);
       active = turn;
       boundaryPending = false;
+      continue;
+    }
+
+    if (entry.type === "usage") {
+      if (!isUsageEntry(entry)) return undefined;
+      breakBoundary();
       continue;
     }
 

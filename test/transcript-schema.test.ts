@@ -70,6 +70,8 @@ describe("development transcript schema reference", () => {
       "system", "user", "assistant", "toolResult", "bashExecution", "custom", "branchSummary", "compactionSummary",
     ]);
     expect(defs.AssistantMessage!.allOf![1]!.properties!.stopReason!.not!.const).toBe("pending");
+    expect(defs.ToolCall!.properties!.argumentsError).toEqual({ type: "string" });
+    expect(defs.Usage!.properties!.cost!.properties!.totalFromProvider).toEqual({ type: "boolean" });
   });
 });
 
@@ -107,15 +109,16 @@ describe("sanitized no-thinking incident structure (current behavior, not the pr
     expect(projection?.turns.find((turn) => turn.entryId === "assistant-b")?.valid).toBe(false);
   });
 
-  it("keeps latest-schema usage recognition separate from current runtime compatibility", () => {
-    const unsupported = JSON.parse(JSON.stringify(fixture)) as typeof fixture;
-    // The development schema knows usage; the baseline projector deliberately does not.
-    unsupported.entries[0] = {
+  it("recognizes usage envelopes as boundaries without changing fixture ownership", () => {
+    const accounting = JSON.parse(JSON.stringify(fixture)) as typeof fixture;
+    accounting.entries[0] = {
       type: "usage", id: "user", parentId: null, timestamp: "2026-01-01T00:00:00Z",
       kind: "cache_warm", provider: "fixture", model: "fixture",
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     } as unknown as SessionEntry;
-    expect(buildSessionProjection(unsupported)).toBeUndefined();
+    const projection = buildSessionProjection(accounting);
+    expect(projection?.turns).toEqual(buildSessionProjection(fixture)?.turns);
+    expect(projection?.turns[0]?.boundaryBefore).toBe(true);
   });
 });

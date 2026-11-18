@@ -13,7 +13,7 @@ describe("Pi transcript declaration sync helper", () => {
 
   it("reports package, entry-union, and message-shape changes without accepting them", () => {
     const changed = structuredClone(reviewed);
-    changed.packages["@earendil-works/pi-coding-agent"] = "0.86.0";
+    changed.packages["@earendil-works/pi-coding-agent"] = "1.5.3";
     const sessionManager = changed.sources.find((source) => source.id === "coding-agent/session-manager")!;
     sessionManager.declarations.SessionEntry += " | NewTranscriptEntry";
     const aiTypes = changed.sources.find((source) => source.id === "pi-ai/transcript-types")!;
@@ -22,7 +22,7 @@ describe("Pi transcript declaration sync helper", () => {
 
     expect(comparison.changed).toBe(true);
     expect(comparison.packageChanges).toContainEqual({
-      name: "@earendil-works/pi-coding-agent", before: "0.85.1", after: "0.86.0",
+      name: "@earendil-works/pi-coding-agent", before: "1.5.2", after: "1.5.3",
     });
     expect(comparison.sourceChanges.find((source) => source.id === "coding-agent/session-manager")?.declarations)
       .toContainEqual(expect.objectContaining({ name: "SessionEntry", kind: "changed" }));

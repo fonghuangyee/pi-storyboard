@@ -68,6 +68,7 @@ export type PatchHandle = {
 };
 
 export type ToolGroupingPatchOptions = {
+  isEnabled?(): boolean;
   getTheme(): ThemeLike;
   renderGroup: StoryboardGroupRenderer;
   /** Optional live presentation settings snapshot; absent means built-in defaults. */
@@ -2148,7 +2149,9 @@ function renderPatched(
   state: PatchState,
 ): readonly string[] {
   const options = state.options;
-  if (!state.enabled || options === undefined) return invokeOriginal(this, state, width);
+  if (!state.enabled || options === undefined || options.isEnabled?.() === false) {
+    return invokeOriginal(this, state, width);
+  }
 
   try {
     const storyboard = renderStoryboardIfRequested(this, width, options);

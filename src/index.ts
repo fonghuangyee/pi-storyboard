@@ -50,6 +50,16 @@ export default function (pi: ExtensionAPI): void {
   });
 
   let patch: PatchHandle | undefined;
+  let storyboardEnabled = true;
+  const statusKey = "pi-storyboard";
+  pi.registerShortcut("alt+o", {
+    description: "Toggle Storyboard view",
+    handler: async (ctx) => {
+      if (ctx.mode !== "tui" || patch === undefined) return;
+      storyboardEnabled = !storyboardEnabled;
+      ctx.ui.setStatus(statusKey, storyboardEnabled ? undefined : "Storyboard: off");
+    },
+  });
   let presentationSettings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS;
   let invalidateProjection: () => void = () => undefined;
 
@@ -78,6 +88,8 @@ export default function (pi: ExtensionAPI): void {
       // Malformed or unavailable settings must never disable native/storyboard rendering.
     }
     if (ctx.mode !== "tui") return;
+    if (!storyboardEnabled) ctx.ui.setStatus(statusKey, undefined);
+    storyboardEnabled = true;
 
     const sessionManager = ctx.sessionManager;
     let dirty = true;
@@ -108,6 +120,7 @@ export default function (pi: ExtensionAPI): void {
     };
 
     patch = installToolGroupingPatch({
+      isEnabled: () => storyboardEnabled,
       getTheme: () => ctx.ui.theme,
       getSettings: () => presentationSettings,
       renderGroup: (group, width, theme, settings) =>
@@ -116,9 +129,11 @@ export default function (pi: ExtensionAPI): void {
     });
   });
 
-  pi.on("session_shutdown", () => {
+  pi.on("session_shutdown", (_event, ctx) => {
     patch?.uninstall();
     patch = undefined;
+    if (!storyboardEnabled && ctx.mode === "tui") ctx.ui.setStatus(statusKey, undefined);
+    storyboardEnabled = true;
     presentationSettings = DEFAULT_PRESENTATION_SETTINGS;
     invalidateProjection = () => undefined;
   });

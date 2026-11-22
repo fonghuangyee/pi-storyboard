@@ -19,6 +19,7 @@ vi.mock("../src/presentation-settings-ui.ts", () => ({
 }));
 
 import extension from "../src/index.ts";
+import { installToolGroupingPatch } from "../src/pi-adapter.ts";
 
 type SettingsCommand = {
   handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
@@ -30,6 +31,9 @@ describe("storyboard-settings command", () => {
   let select: ReturnType<typeof vi.fn>;
   let notify: ReturnType<typeof vi.fn>;
   let reload: ReturnType<typeof vi.fn>;
+  const setStatus = vi.fn();
+  const registerShortcut = vi.fn<ExtensionAPI["registerShortcut"]>();
+  const on = vi.fn();
 
   beforeEach(() => {
     vi.resetAllMocks();
@@ -43,13 +47,14 @@ describe("storyboard-settings command", () => {
       mode: "tui",
       cwd: "/project",
       isProjectTrusted: vi.fn(() => true),
-      ui: { select, notify },
+      ui: { select, notify, setStatus },
       reload,
     } as unknown as ExtensionCommandContext;
 
     const pi = {
       registerCommand: (_name: string, registered: SettingsCommand) => { command = registered; },
-      on: vi.fn(),
+      registerShortcut,
+      on,
     };
     extension(pi as unknown as ExtensionAPI);
   });
@@ -66,6 +71,34 @@ describe("storyboard-settings command", () => {
       DEFAULT_PRESENTATION_SETTINGS,
     );
     expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("toggles only the active TUI patch with Option+O and resets for a new session", async () => {
+    const uninstall = vi.fn();
+    vi.mocked(installToolGroupingPatch).mockReturnValue({ uninstall });
+    const [[key, shortcut]] = registerShortcut.mock.calls;
+    expect(key).toBe("alt+o");
+    await shortcut.handler(context);
+    expect(setStatus).not.toHaveBeenCalled();
+
+    const start = on.mock.calls.find(([event]) => event === "session_start")![1];
+    const shutdown = on.mock.calls.find(([event]) => event === "session_shutdown")![1];
+    start({}, context);
+    const [[options]] = vi.mocked(installToolGroupingPatch).mock.calls;
+    expect(options.isEnabled?.()).toBe(true);
+    await shortcut.handler(context);
+    expect(options.isEnabled?.()).toBe(false);
+    expect(setStatus).toHaveBeenLastCalledWith("pi-storyboard", "Storyboard: off");
+    await shortcut.handler(context);
+    expect(options.isEnabled?.()).toBe(true);
+    expect(setStatus).toHaveBeenLastCalledWith("pi-storyboard", undefined);
+
+    await shortcut.handler(context);
+    shutdown({}, context);
+    expect(uninstall).toHaveBeenCalledOnce();
+    expect(setStatus).toHaveBeenLastCalledWith("pi-storyboard", undefined);
+    start({}, context);
+    expect(vi.mocked(installToolGroupingPatch).mock.lastCall?.[0].isEnabled?.()).toBe(true);
   });
 
   it("rejects the unsupported project argument", async () => {

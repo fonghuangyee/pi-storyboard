@@ -1503,6 +1503,32 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
+  it("keeps the same transcript native while Storyboard is off, regardless of native expansion", () => {
+    const note = storyboardAssistant(["reviewing logic"], ["read-1"]);
+    const read = tool("read", { path: "a.ts" }, result());
+    assignToolCallId(read, "read-1");
+    const value = container(note, read);
+    const native = value.render(80);
+    const renderGroup = vi.fn(() => ["", " Read 1 file"]);
+    let enabled = true;
+    const handle = installToolGroupingPatch({ isEnabled: () => enabled, getTheme: () => theme, renderGroup });
+    try {
+      expect(value.render(80)).not.toEqual(native);
+      enabled = false;
+      renderGroup.mockClear();
+      expect(value.render(80)).toEqual(native);
+      Object.assign(read, { expanded: true, render: () => ["native read detail"] });
+      expect(value.render(80)).toContain("native read detail");
+      Object.assign(read, { expanded: false, render: () => ["native read"] });
+      expect(value.render(80)).toEqual(native);
+      expect(renderGroup).not.toHaveBeenCalled();
+      enabled = true;
+      expect(value.render(80)).not.toEqual(native);
+    } finally {
+      handle?.uninstall();
+    }
+  });
+
   it("renders a thinking-only assistant as a quiet content node", () => {
     const note = storyboardAssistant(["reviewing logic"], []);
     const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: () => ["bad"] });

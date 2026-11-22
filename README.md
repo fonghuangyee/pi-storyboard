@@ -26,6 +26,10 @@ pi install ./path/to/pi-storyboard
 
 To try a checkout without installing: `pi -e ./src/index.ts`.
 
+## Keyboard shortcut
+
+Press **Option+O** on macOS (Pi key ID `alt+o`) to switch between Storyboard and Pi’s native view. Storyboard starts on for each session. Pi’s **Ctrl+O** still controls native compact/detail rendering; changing views does not reset it. If your macOS terminal types a character instead, enable **Option as Meta**.
+
 ## Settings
 
 In interactive TUI mode, run `/storyboard-settings` to open the global settings page (`/storyboard-settings global` is also accepted). The command edits only `~/.pi/agent/pi-storyboard.json`; `project` is not a supported command argument. Trusted project settings in `.pi/pi-storyboard.json` can still override global values.

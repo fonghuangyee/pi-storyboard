@@ -34,7 +34,7 @@ Configure independent file/path, command, and custom-tool-argument trimming (`no
 
 ## Compatibility
 
-Automated compatibility checks target Pi **1.5.2**; live interactive release verification remains pending. Plain-text cache-warming notices use the general Storyboard view when safely recognized in the transcript.
+Automated compatibility checks target Pi **1.6.0**; live interactive release verification remains pending. Plain-text cache-warming notices use the general Storyboard view when safely recognized in the transcript.
 
 Pi core packages are optional peer dependencies and are not bundled. The extension feature-detects the native transcript components and falls back to Pi's renderer when required shapes are unavailable. Expanded tool mode always restores Pi's complete native rendering. Expanded skills also use Pi's native view; clicking a collapsed skill block or using Pi's configured expansion action preserves access to the full instructions. Opaque, interactive, custom-rendered, Markdown-transformed, multimedia, and incompatible content also stays native; this extension does not guarantee zero native previews. The input editor, footer, menus, dialogs, and Pi's built-in settings are unchanged.
 

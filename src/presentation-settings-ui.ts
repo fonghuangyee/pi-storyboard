@@ -325,7 +325,7 @@ export async function openPresentationSettings(
     container.addChild(settingsList);
 
     return {
-      render(width: number): string[] {
+      render(width: number): readonly string[] {
         return container.render(width);
       },
       handleInput(data: string): void {

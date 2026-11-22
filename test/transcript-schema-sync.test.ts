@@ -22,7 +22,7 @@ describe("Pi transcript declaration sync helper", () => {
 
     expect(comparison.changed).toBe(true);
     expect(comparison.packageChanges).toContainEqual({
-      name: "@earendil-works/pi-coding-agent", before: "1.5.2", after: "1.5.3",
+      name: "@earendil-works/pi-coding-agent", before: reviewed.packages["@earendil-works/pi-coding-agent"], after: "1.5.3",
     });
     expect(comparison.sourceChanges.find((source) => source.id === "coding-agent/session-manager")?.declarations)
       .toContainEqual(expect.objectContaining({ name: "SessionEntry", kind: "changed" }));

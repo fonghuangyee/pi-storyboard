@@ -366,7 +366,7 @@ function thinkingPlaceholderLines(
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
-): string[] {
+): readonly string[] {
   const passthrough = (text: string): string => text;
   const markdownTheme: MarkdownTheme = {
     heading: passthrough,

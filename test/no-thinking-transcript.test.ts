@@ -261,6 +261,30 @@ describe("no-thinking transcript fixture", () => {
     }
   });
 
+  it("decorates native thinking without changing the cached final-answer lines or OSC markers", () => {
+    initTheme("dark", false);
+    const fixture = createNoThinkingTranscriptFixture(fakeTui(), process.cwd());
+    const assistant = fixture.assistants[0]!;
+    assistant.updateContent({ ...fixture.messages[0]!, stopReason: "stop", content: [
+      { type: "thinking", thinking: "Reviewing the answer" },
+      { type: "text", text: "Final answer", textSignature: JSON.stringify({ v: 1, id: "final", phase: "final_answer" }) },
+    ] });
+    const transcript = new Container();
+    transcript.addChild(assistant);
+    const native = transcript.render(120);
+    const original = [...native];
+    const handle = installToolGroupingPatch({ getTheme: () => theme, renderGroup: renderToolGroup });
+    try {
+      const lines = transcript.render(120);
+      expect(lines.join("\n")).toContain("○");
+      expect(lines.find((line) => line.includes("Final answer"))).toBe(original.find((line) => line.includes("Final answer")));
+      expect(native).toEqual(original);
+    } finally {
+      handle?.uninstall();
+    }
+    expect(transcript.render(120)).toEqual(original);
+  });
+
   it("updates a running no-thinking root on settlement without changing source content", () => {
     initTheme("dark", false);
     const fixture = createNoThinkingTranscriptFixture(fakeTui(), process.cwd());

@@ -8,9 +8,9 @@ Pi publishes TypeScript definitions and prose, not one universal closed JSON Sch
 
 | Profile | Evidence | Meaning |
 |---|---|---|
-| Project baseline | `v1.5.2`, tag commit `b4afdddf44e059c67ccf5097e5317d913521b470`; installed declarations | Automated development/test target; live interactive release checks remain pending |
+| Project baseline | `v1.6.0`; installed declarations | Automated development/test target; live interactive release checks remain pending |
 | Historical baseline | `v0.85.1`, commit `d981de1229ef899957bbe968bc8dcda02a21f477` | Original comparison point for the incident/schema investigation |
-| Declaration sync baseline | `schema/pi-transcript-types.json`; installed `pi-coding-agent`, `pi-ai`, and `pi-agent-core` `1.5.2` declarations | Exact tracked public type declarations; not a complete persisted or live transcript schema |
+| Declaration sync baseline | `schema/pi-transcript-types.json`; installed `pi-coding-agent`, `pi-ai`, and `pi-agent-core` `1.6.0` declarations | Exact tracked public type declarations; not a complete persisted or live transcript schema |
 | Upstream reference | `main` resolved to `6fb2e7815167e6b19006fc526d1a5d0f5f998787` | Schema reference only; not a promise that the private adapter supports this runtime |
 | Incident | Session `01a11e5e-3df5-7180-9d24-1a976a258c67`, header version `3` | Observed data; producer package version is not recorded in the header |
 
@@ -26,7 +26,9 @@ Pinned upstream sources:
 
 Human-facing references (moving URLs, not version pins): [session format](https://pi.dev/docs/latest/session-format), [message types](https://pi.dev/docs/latest/message-types), [JSON events](https://pi.dev/docs/latest/json), [SDK](https://pi.dev/docs/latest/sdk).
 
-### Reviewed 1.5.2 drift
+### Reviewed declaration drift
+
+Pi `1.6.0` changes only the package versions in the tracked declaration snapshot. No persisted-schema changes were needed.
 
 The upgrade from `0.85.1` to `1.5.2` adds declarations for:
 

@@ -76,7 +76,7 @@ export type ToolGroupingPatchOptions = {
   getSessionProjection?(): SessionProjection | undefined;
 };
 
-type ContainerRender = (this: Container, width: number) => string[];
+type ContainerRender = (this: Container, width: number) => readonly string[];
 
 type MouseLayout = {
   width: number;
@@ -91,12 +91,29 @@ type MouseLayout = {
 function setMouseLayout(
   container: Container,
   width: number,
-  children: Array<{ component: Component; height: number }>,
+  children: MouseLayout["children"],
+  lines: readonly string[],
 ): void {
-  (container as unknown as { mouseLayout?: MouseLayout }).mouseLayout = {
-    width,
-    children,
-  };
+  if (hasOwn(container, "childLines")) {
+    let offset = 0;
+    const parts = children.map(({ height }) => {
+      const start = offset;
+      offset += height;
+      return lines.slice(start, offset);
+    });
+    if (offset !== lines.length) throw new Error("storyboard mouse heights do not match rendered lines");
+    // Pi 1.6 uses the same layout for mouse dispatch and native render caching.
+    (container as unknown as Record<string, unknown>).childLines = {
+      width,
+      children: children.map(({ component }) => component),
+      parts,
+      lines,
+    };
+  } else if (hasOwn(container, "mouseLayout")) {
+    (container as unknown as { mouseLayout?: MouseLayout }).mouseLayout = { width, children };
+  } else {
+    throw new Error("unknown Pi mouse layout");
+  }
 }
 
 /** A grouped summary is presentation-only and intentionally has no click action. */
@@ -885,16 +902,21 @@ function inspectAssistantPresentation(
   if (!hasOwn(fields, "contentContainer")) return null;
   const contentContainer = fields.contentContainer;
   if (!isRecord(contentContainer) || !Array.isArray(contentContainer.children)) return undefined;
-  const layout = contentContainer.mouseLayout;
+  const usesChildLines = hasOwn(contentContainer, "childLines");
+  const layout = usesChildLines ? contentContainer.childLines : contentContainer.mouseLayout;
+  const children: unknown[] = contentContainer.children;
   if (
     !isRecord(layout) ||
     layout.width !== width ||
     !Array.isArray(layout.children) ||
-    layout.children.length !== contentContainer.children.length
+    layout.children.length !== children.length
   ) return undefined;
 
-  const children = contentContainer.children as unknown[];
-  const layoutChildren = layout.children as unknown[];
+  const layoutChildren: unknown[] = layout.children;
+  const layoutParts: unknown[] | undefined = Array.isArray(layout.parts) ? layout.parts : undefined;
+  const rawLines = usesChildLines && validRenderedLines(layout.lines) ? layout.lines : undefined;
+  if (usesChildLines && (layoutParts?.length !== children.length ||
+    rawLines?.length !== renderedAssistantLines.length)) return undefined;
   let childCursor = 0;
   let lineCursor = 0;
   const parts: StoryboardAssistantContent[] = [];
@@ -902,14 +924,25 @@ function inspectAssistantPresentation(
   const consumeChild = (): { child: unknown; lines: string[] } | undefined => {
     const child = children[childCursor];
     const layoutEntry = layoutChildren[childCursor];
+    const part = layoutParts?.[childCursor];
     childCursor++;
-    if (!child || !isRecord(layoutEntry) || layoutEntry.component !== child) return undefined;
-    if (typeof layoutEntry.height !== "number" || !Number.isSafeInteger(layoutEntry.height) || layoutEntry.height < 0) {
-      return undefined;
+    if (!child) return undefined;
+    let height: number;
+    if (usesChildLines) {
+      if (layoutEntry !== child || !validRenderedLines(part)) return undefined;
+      // Compare to the native child layout: the assistant may add OSC markers to its returned lines.
+      if (part.some((line, index) => line !== rawLines?.[lineCursor + index])) return undefined;
+      height = part.length;
+    } else {
+      if (!isRecord(layoutEntry) || layoutEntry.component !== child ||
+        typeof layoutEntry.height !== "number" || !Number.isSafeInteger(layoutEntry.height) || layoutEntry.height < 0) {
+        return undefined;
+      }
+      height = layoutEntry.height;
     }
-    const end = lineCursor + layoutEntry.height;
+    const end = lineCursor + height;
     if (end > renderedAssistantLines.length) return undefined;
-    const lines = [...renderedAssistantLines.slice(lineCursor, end)];
+    const lines = renderedAssistantLines.slice(lineCursor, end);
     lineCursor = end;
     return { child, lines };
   };
@@ -1110,7 +1143,7 @@ class StoryboardSceneMouseProxy implements Component {
   }
 }
 
-function validRenderedLines(value: unknown): value is string[] {
+function validRenderedLines(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((line) => typeof line === "string");
 }
 
@@ -1123,7 +1156,7 @@ function nativeThinkingMarkerColor(
     : settings.colors.thinking.settled;
 }
 
-function invokeOriginal(container: Container, state: PatchState, width: number): string[] {
+function invokeOriginal(container: Container, state: PatchState, width: number): readonly string[] {
   return state.original.call(container, width);
 }
 
@@ -1631,7 +1664,7 @@ function renderStoryboardIfRequested(
     }
   }
 
-  const nativeLines = new Map<Component, string[]>();
+  const nativeLines = new Map<Component, readonly string[]>();
   const assistantSnapshots = new Map<AssistantMessageComponent, AssistantSceneSnapshot>();
   const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
   for (const child of children) {
@@ -1705,9 +1738,9 @@ function renderStoryboardIfRequested(
     thinkingDecorations.set(owner, decoration);
   }
 
-  const renderNativeComponent = (component: Component): string[] => {
+  const renderNativeComponent = (component: Component): readonly string[] => {
     const decorated = thinkingDecorations.get(component);
-    if (decorated !== undefined) return [...decorated.lines];
+    if (decorated !== undefined) return decorated.lines;
     const cached = nativeLines.get(component);
     if (cached !== undefined) return cached;
     const lines = component.render(safeWidth);
@@ -1716,7 +1749,7 @@ function renderStoryboardIfRequested(
     return lines;
   };
 
-  const renderNative = (child: StoryboardChild): string[] => {
+  const renderNative = (child: StoryboardChild): readonly string[] => {
     const component = componentForStoryboardChild(child);
     if (component === undefined) throw new Error("native storyboard child is not renderable");
     return renderNativeComponent(component);
@@ -1998,7 +2031,7 @@ function renderStoryboardIfRequested(
     // Rebuild the private container hit-test list in the original direct-child
     // order. A work span has one proxy anchor and zero-height member rows.
     if (visualMouseChildren !== undefined) {
-      setMouseLayout(container, safeWidth, visualMouseChildren);
+      setMouseLayout(container, safeWidth, visualMouseChildren, rendered);
     } else {
       const spanMouseChildren: Array<{ component: Component; height: number }> = [];
       for (const child of children) {
@@ -2024,7 +2057,7 @@ function renderStoryboardIfRequested(
         if (!validRenderedLines(lines)) throw new Error("native child returned invalid lines");
         spanMouseChildren.push({ component, height: lines.length });
       }
-      setMouseLayout(container, safeWidth, spanMouseChildren);
+      setMouseLayout(container, safeWidth, spanMouseChildren, rendered);
     }
     return { requested: true, output: rendered };
   }
@@ -2105,7 +2138,7 @@ function renderStoryboardIfRequested(
     }
   }
 
-  setMouseLayout(container, safeWidth, mouseChildren);
+  setMouseLayout(container, safeWidth, mouseChildren, rendered);
   return { requested: true, output: rendered };
 }
 
@@ -2113,7 +2146,7 @@ function renderPatched(
   this: Container,
   width: number,
   state: PatchState,
-): string[] {
+): readonly string[] {
   const options = state.options;
   if (!state.enabled || options === undefined) return invokeOriginal(this, state, width);
 
@@ -2166,7 +2199,7 @@ function renderPatched(
       if (candidateCount === 0) {
         fallback = true;
       } else {
-        const nativeLines = new Map<unknown, string[]>();
+        const nativeLines = new Map<unknown, readonly string[]>();
         for (let i = 0; i < children.length; i++) {
           const child = children[i];
           if (child instanceof ToolExecutionComponent) continue;
@@ -2265,7 +2298,7 @@ function renderPatched(
             if (lines === undefined) throw new Error("native child output missing");
             mouseChildren.push({ component: child, height: lines.length });
           }
-          setMouseLayout(this, width, mouseChildren);
+          setMouseLayout(this, width, mouseChildren, rendered);
           output = rendered;
         }
       }
@@ -2387,7 +2420,7 @@ export function installToolGroupingPatch(
     }
 
     let state!: PatchState;
-    const wrapper: ContainerRender = function (this: Container, width: number): string[] {
+    const wrapper: ContainerRender = function (this: Container, width: number): readonly string[] {
       return renderPatched.call(this, width, state);
     };
     state = {

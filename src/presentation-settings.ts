@@ -79,6 +79,7 @@ export type PresentationSettings = Readonly<{
   showToolMetadata: boolean;
   /** Show one bounded text summary from each completed successful tool result. */
   showToolResultSummary: boolean;
+  maxThinkingRoots: number | null;
   symbols: Readonly<{
     toolDot: string;
     toolDots: Readonly<Record<GroupKind, string>>;
@@ -114,6 +115,7 @@ export type PresentationSettingsDraft = {
   };
   showToolMetadata: boolean;
   showToolResultSummary: boolean;
+  maxThinkingRoots: number | null;
   symbols: {
     toolDot: string;
     toolDots: Record<GroupKind, string>;
@@ -159,6 +161,7 @@ const DEFAULT_MUTABLE_SETTINGS: PresentationSettingsDraft = {
   },
   showToolMetadata: true,
   showToolResultSummary: true,
+  maxThinkingRoots: null,
   symbols: {
     toolDot: "●",
     toolDots: { ...DEFAULT_TOOL_DOTS },
@@ -317,6 +320,7 @@ export function normalizePresentationSettings(
 
   const toolDotIsValid = validDisplayString(symbols.toolDot, 4);
   const toolDot = readSymbol(symbols, "toolDot", fallback.symbols.toolDot, 4);
+  const maxThinkingRoots = source.maxThinkingRoots;
   const normalized: PresentationSettingsDraft = {
     trimming: {
       fileNames: readTrimMode(trimming, "fileNames", fallback.trimming.fileNames),
@@ -325,6 +329,9 @@ export function normalizePresentationSettings(
     },
     showToolMetadata: readBoolean(source, "showToolMetadata", fallback.showToolMetadata),
     showToolResultSummary: readBoolean(source, "showToolResultSummary", fallback.showToolResultSummary),
+    maxThinkingRoots: maxThinkingRoots === null || (
+      typeof maxThinkingRoots === "number" && Number.isSafeInteger(maxThinkingRoots) && maxThinkingRoots > 0
+    ) ? maxThinkingRoots : fallback.maxThinkingRoots,
     symbols: {
       toolDot,
       toolDots: { ...fallback.symbols.toolDots },

@@ -42,6 +42,7 @@ import {
   type StoryboardWorkSpan,
 } from "./storyboard.ts";
 import {
+  limitThinkingRoots,
   renderNativeThinkingMarkersLayout,
   renderStoryboardBoundary,
   renderStoryboardSceneLayout,
@@ -49,6 +50,7 @@ import {
   storyboardAssistantWidth,
   type StoryboardAssistantRenderRegion,
   type StoryboardGroupRenderer,
+  type StoryboardSceneLayout,
   type StoryboardThinkingMarkerColor,
 } from "./storyboard-renderer.ts";
 import {
@@ -1758,6 +1760,7 @@ function renderStoryboardIfRequested(
 
   const renderBoundary = (boundary: StoryboardBoundarySnapshot): string[] =>
     renderStoryboardBoundary(boundary, safeWidth, theme, settings);
+  const rootLimit = nativeExpansionActive ? null : settings.maxThinkingRoots;
 
   if (options.getSessionProjection !== undefined) {
     const session = sessionProjection;
@@ -1784,7 +1787,7 @@ function renderStoryboardIfRequested(
     const covered = new Set<number>();
     const workMembers = new Set<Component>();
     const workMouse = new Map<Component, { component: Component; height: number }>();
-    const workLayouts = new Map<number, { readonly lines: readonly string[] }>();
+    const workLayouts = new Map<number, StoryboardSceneLayout>();
     const nativeMouse = new Map<Component, { component: Component; height: number }>();
     // Normally the private Container mouse layout follows direct-child order.
     // Transient Pi status pairs can be projected out of ownership matching, so
@@ -1854,12 +1857,6 @@ function renderStoryboardIfRequested(
         if (attachedStatus !== undefined) {
           detailsByToolCallId.set(attachedStatus.toolCallId, attachedStatus.content);
           statusByPlanStart.set(plan.start, attachedStatus);
-          const statusComponent = componentForStoryboardChild({
-            type: "boundary",
-            boundary: attachedStatus.boundary,
-          });
-          if (statusComponent === undefined) throw new Error("attached search status is not renderable");
-          workMembers.add(statusComponent);
         }
         const layout = renderStoryboardWorkSpanLayout(
           plan.span,
@@ -1870,14 +1867,6 @@ function renderStoryboardIfRequested(
           detailsByToolCallId,
         );
         workLayouts.set(plan.start, layout);
-        const proxy = new StoryboardSceneMouseProxy(
-          assistant,
-          storyboardAssistantWidth(safeWidth, settings),
-          nativeLines.get(assistant)?.length ?? 0,
-          Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth, settings)),
-          layout.assistantRegions,
-        );
-        workMouse.set(assistant, { component: proxy, height: layout.lines.length });
       }
       for (let index = plan.start; index <= plan.end; index++) {
         const segment = projection.segments[index];
@@ -1894,6 +1883,7 @@ function renderStoryboardIfRequested(
       }
     }
 
+    const detachedStatuses = limitThinkingRoots(workLayouts, rootLimit, safeWidth, theme, settings);
     let projectedChildCursor = 0;
     for (let index = 0; index < projection.segments.length; index++) {
       const plan = planByStart.get(index);
@@ -1905,7 +1895,8 @@ function renderStoryboardIfRequested(
           if (segment === undefined) throw new Error("work span segment missing");
           segmentEnd += storyboardSegmentChildCount(segment);
         }
-        const attachedStatus = statusByPlanStart.get(index);
+        const status = statusByPlanStart.get(index);
+        const attachedStatus = status !== undefined && !detachedStatuses.has(status.toolCallId) ? status : undefined;
         if (attachedStatus !== undefined) {
           const statusSegment = projection.segments[attachedStatus.boundaryIndex];
           if (statusSegment?.type !== "boundary" || statusSegment.boundary !== attachedStatus.boundary) {
@@ -1913,21 +1904,29 @@ function renderStoryboardIfRequested(
           }
           segmentEnd += storyboardSegmentChildCount(statusSegment);
           covered.add(attachedStatus.boundaryIndex);
+          const statusComponent = componentForStoryboardChild({ type: "boundary", boundary: attachedStatus.boundary });
+          if (statusComponent === undefined) throw new Error("attached search status is not renderable");
+          workMembers.add(statusComponent);
         }
         appendExpansionGapsBefore(segmentStart);
 
         const layout = workLayouts.get(index);
         if (layout === undefined) throw new Error("work span layout missing");
         rendered.push(...layout.lines);
-        if (visualMouseChildren !== undefined) {
-          const first = projection.segments[plan.start];
-          if (first?.type !== "scene") throw new Error("work span anchor missing");
-          const assistant = componentForStoryboardChild({ type: "assistant", assistant: first.assistant });
-          if (assistant === undefined) throw new Error("work span assistant is not renderable");
-          const mouse = workMouse.get(assistant);
-          if (mouse === undefined) throw new Error("work span mouse layout missing");
-          visualMouseChildren.push(mouse);
-        }
+        const first = projection.segments[plan.start];
+        if (first?.type !== "scene") throw new Error("work span anchor missing");
+        const assistant = componentForStoryboardChild({ type: "assistant", assistant: first.assistant });
+        if (assistant === undefined) throw new Error("work span assistant is not renderable");
+        const proxy = new StoryboardSceneMouseProxy(
+          assistant,
+          storyboardAssistantWidth(safeWidth, settings),
+          layout.filtered ? 0 : (nativeLines.get(assistant)?.length ?? 0),
+          Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth, settings)),
+          layout.assistantRegions,
+        );
+        const mouse = { component: proxy, height: layout.lines.length };
+        workMouse.set(assistant, mouse);
+        visualMouseChildren?.push(mouse);
         projectedChildCursor = segmentEnd;
         appendExpansionGapsAfter(segmentStart, segmentEnd);
         index = attachedStatus?.boundaryIndex ?? plan.end;
@@ -2063,6 +2062,18 @@ function renderStoryboardIfRequested(
     return { requested: true, output: rendered };
   }
 
+  const sceneLayouts = new Map<number, StoryboardSceneLayout>();
+  if (rootLimit !== null) {
+    for (const [index, segment] of projection.segments.entries()) {
+      if (segment.type !== "scene") continue;
+      const assistant = componentForStoryboardChild({ type: "assistant", assistant: segment.assistant });
+      const assistantLines = assistant === undefined ? undefined : nativeLines.get(assistant);
+      if (assistantLines === undefined) throw new Error("scene assistant output missing");
+      sceneLayouts.set(index, renderStoryboardSceneLayout(segment, assistantLines, safeWidth, theme, options.renderGroup, settings));
+    }
+    limitThinkingRoots(sceneLayouts, rootLimit, safeWidth, theme, settings);
+  }
+
   for (let index = 0; index < projection.segments.length; index++) {
     const segment = projection.segments[index]!;
     if (segment.type === "boundary") {
@@ -2092,11 +2103,7 @@ function renderStoryboardIfRequested(
       // any compatible component that does not expose one).
       const hasNativeLeadingSpacer =
         assistantLines.length > 0 && visibleWidth(assistantLines[0] ?? "") === 0;
-      if (!hasNativeLeadingSpacer) {
-        rendered.push("");
-        mouseChildren.push({ component: GROUP_MOUSE_SINK, height: 1 });
-      }
-      const sceneLayout = renderStoryboardSceneLayout(
+      const sceneLayout = sceneLayouts.get(index) ?? renderStoryboardSceneLayout(
         segment,
         assistantLines,
         safeWidth,
@@ -2104,13 +2111,17 @@ function renderStoryboardIfRequested(
         options.renderGroup,
         settings,
       );
-      const sceneLines = [...sceneLayout.lines];
+      const sceneLines = sceneLayout.lines;
+      if (!hasNativeLeadingSpacer && (!sceneLayout.filtered || sceneLines.length > 0)) {
+        rendered.push("");
+        mouseChildren.push({ component: GROUP_MOUSE_SINK, height: 1 });
+      }
       rendered.push(...sceneLines);
       mouseChildren.push({
         component: new StoryboardSceneMouseProxy(
           assistant,
           storyboardAssistantWidth(safeWidth, settings),
-          assistantLines.length,
+          sceneLayout.filtered ? 0 : assistantLines.length,
           Math.max(0, safeWidth - storyboardAssistantWidth(safeWidth, settings)),
           sceneLayout.assistantRegions,
         ),

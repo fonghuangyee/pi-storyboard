@@ -75,18 +75,20 @@ function draftAsSettings(draft: PresentationSettingsDraft): PresentationSettings
 
 class TextSetting implements Component {
   private readonly input: Input;
+  private error?: string;
 
   constructor(
     private readonly title: string,
     private readonly description: string,
     value: string,
     private readonly theme: Theme,
-    onSubmit: (value: string) => void,
+    onSubmit: (value: string) => string | void,
     onCancel: () => void,
+    private readonly submitHint = "Enter applies • Save and reload keeps changes",
   ) {
     this.input = new Input({ prompt: "> " });
     this.input.setValue(value);
-    this.input.onSubmit = onSubmit;
+    this.input.onSubmit = (value) => { this.error = onSubmit(value) ?? undefined; };
     this.input.onEscape = onCancel;
   }
 
@@ -110,7 +112,9 @@ class TextSetting implements Component {
       "",
       ...this.input.render(safeWidth),
       "",
-      this.theme.fg("dim", "Enter save • Esc cancel"),
+      this.error === undefined
+        ? this.theme.fg("dim", this.submitHint)
+        : this.theme.fg("error", this.error),
     ];
     return lines.map((line) => truncateToWidth(line, safeWidth, ""));
   }
@@ -175,7 +179,32 @@ export async function openPresentationSettings(
       values: [...presentationColorNames],
     });
 
+    const rootLimitLabel = "Max thinking roots";
+    const rootLimitDescription = "Keep the newest thinking roots. Enter a positive whole number or clear for Unlimited.";
+    const rootLimitValue = (): string => draft.maxThinkingRoots?.toString() ?? "Unlimited";
+
     const items: SettingItem[] = [
+      {
+        id: "max-thinking-roots",
+        label: rootLimitLabel,
+        description: rootLimitDescription,
+        currentValue: rootLimitValue(),
+        submenu: (currentValue, close) => new TextSetting(
+          rootLimitLabel,
+          rootLimitDescription,
+          currentValue === "Unlimited" ? "" : currentValue,
+          theme,
+          (value) => {
+            const input = value.trim();
+            if (input === "") return close("Unlimited");
+            const limit = Number(input);
+            if (/^\d+$/u.test(input) && Number.isSafeInteger(limit) && limit > 0) return close(String(limit));
+            return "Enter a positive whole number or clear the field.";
+          },
+          () => close(),
+          "Enter saves all pending changes and reloads • Esc cancels",
+        ),
+      },
       {
         id: "trim-file-names",
         label: "File/path trim mode",
@@ -239,6 +268,10 @@ export async function openPresentationSettings(
 
     const updateDraftValue = (id: string, value: string): void => {
       switch (id) {
+        case "max-thinking-roots":
+          draft.maxThinkingRoots = value === "Unlimited" ? null : Number(value);
+          done(draftAsSettings(draft));
+          return;
         case "trim-file-names":
           setAndNormalize((next) => { next.trimming.fileNames = value as PresentationSettingsDraft["trimming"]["fileNames"]; });
           return;
@@ -290,6 +323,7 @@ export async function openPresentationSettings(
     );
 
     function currentValueFor(id: string): string {
+      if (id === "max-thinking-roots") return rootLimitValue();
       if (id === "trim-file-names") return draft.trimming.fileNames;
       if (id === "trim-commands") return draft.trimming.commands;
       if (id === "trim-tools") return draft.trimming.tools;
@@ -317,7 +351,7 @@ export async function openPresentationSettings(
       0,
     ));
     container.addChild(new Text(
-      theme.fg("muted", "Enter changes a value; choose Save and reload when finished."),
+      theme.fg("muted", "Choose Save and reload to keep changes. Esc discards them."),
       1,
       0,
     ));

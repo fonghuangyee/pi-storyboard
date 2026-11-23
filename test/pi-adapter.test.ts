@@ -650,8 +650,11 @@ describe("Container adapter", () => {
     const search = tool("web_search", { queries: ["mail delivery"], numResults: 6 }, result());
     assignToolCallId(search, "search-1");
     const status = webSearchStatus(statusText);
+    const newer = storyboardAssistant(["newer thinking"], ["read-after-status"]);
+    const read = tool("read", { path: "newer.ts" }, result());
+    assignToolCallId(read, "read-after-status");
     const session = buildSessionProjection({
-      leafId: "search-status",
+      leafId: "read-result",
       entries: [
         sessionMessage("root", { role: "user", content: "search the web" }),
         sessionMessage("search-assistant", {
@@ -663,21 +666,38 @@ describe("Container adapter", () => {
         }, "root"),
         sessionResult("search-result", "search-1", "search-assistant", "web_search"),
         sessionCustomWebSearchStatus("search-status", statusText, "search-result"),
+        sessionMessage("read-assistant", {
+          role: "assistant",
+          content: [
+            { type: "thinking", thinking: "work" },
+            { type: "toolCall", id: "read-after-status", name: "read", arguments: {} },
+          ],
+        }, "search-status"),
+        sessionResult("read-result", "read-after-status", "read-assistant"),
       ],
     });
+    let maxThinkingRoots: number | null = null;
     const handle = installToolGroupingPatch({
       getTheme: () => theme,
       getSessionProjection: () => session,
-      renderGroup: (group, width, groupTheme, settings) => renderToolGroup(group, width, groupTheme, settings),
+      getSettings: () => normalizePresentationSettings({ maxThinkingRoots }),
+      renderGroup: renderToolGroup,
     });
 
-    const output = container(owner, search, status).render(80).join("\n");
+    const transcript = container(owner, search, status, newer, read);
+    const output = transcript.render(80).join("\n");
     expect(output).toContain("╰─ Run 1 tool");
     expect(output).toContain("web_search");
     expect(output.replace(/\s+/gu, " ")).toContain(statusText);
     expect(output).not.toContain("[web-search-content-ready]");
     expect(output).not.toContain("native web-search preview");
     expect(output).not.toContain("...");
+    maxThinkingRoots = 1;
+    const capped = transcript.render(80).join("\n");
+    expect(capped).not.toContain("│ web_search");
+    expect(capped).toContain("◉ Content fetched");
+    expect(capped).toContain("1 earlier step hidden");
+    expect(capped).toContain("newer thinking");
     expect(status.render).not.toHaveBeenCalled();
     handle?.uninstall();
   });
@@ -1052,6 +1072,7 @@ describe("Container adapter", () => {
     const handle = installToolGroupingPatch({
       getTheme: () => theme,
       getSessionProjection: () => ({ leafId: "result-2", turns }),
+      getSettings: () => normalizePresentationSettings({ maxThinkingRoots: 1 }),
       renderGroup,
     });
 
@@ -1061,6 +1082,7 @@ describe("Container adapter", () => {
       thirdOwner, thirdTool,
     ).render(80).join("\n");
     expect(output.match(/◉ Thinking\.\.\./gu)).toHaveLength(1);
+    expect(output).not.toContain("hidden");
     expect(output).toContain("├─ read 2");
     expect(output).toContain("╰─ command 1");
     expect(renderGroup.mock.calls.map(([group]) => group.rows.map((row) => row.toolName))).toEqual([
@@ -1314,13 +1336,16 @@ describe("Container adapter", () => {
         boundaryAfter: false,
       }],
     };
+    let maxThinkingRoots: number | null = null;
     const handle = installToolGroupingPatch({
       getTheme: () => theme,
       getSessionProjection: () => session,
+      getSettings: () => normalizePresentationSettings({ maxThinkingRoots }),
       renderGroup: () => ["", " Read 1 file"],
     });
 
-    const output = container(owner, read).render(80).join("\\n");
+    const transcript = container(owner, read);
+    const output = transcript.render(80).join("\\n");
     expect(output).toContain("commentary 80");
     expect(output).not.toContain("│commentary 80");
     expect(output).toContain("◉ Thinking...");
@@ -1328,6 +1353,66 @@ describe("Container adapter", () => {
     expect(output).not.toContain("◉ Read 1 file");
     expect(commentary.render).toHaveBeenCalledWith(80);
     expect(read.render).not.toHaveBeenCalled();
+
+    maxThinkingRoots = 1;
+    const capped = transcript.render(80);
+    expect(capped.join("\n")).toMatch(/commentary 80\s+◉ Thinking\.\.\.\s+│ 1 earlier step hidden[\s\S]*╰─ Read 1 file/u);
+    expect(capped.join("\n")).not.toContain("planning");
+    const y = capped.indexOf("commentary 80");
+    transcript.handleMouse?.({
+      type: "click", button: "left", x: 0, y, screenX: 0, screenY: y,
+      width: 80, height: capped.length, shift: false, alt: false, ctrl: false,
+    });
+    expect(commentary.handleMouse).toHaveBeenCalledWith(expect.objectContaining({ x: 0, y: 0 }));
+    expect(thinking.handleMouse).not.toHaveBeenCalled();
+    handle?.uninstall();
+  });
+
+  it.each([false, true])("limits only the oldest master roots (session-aware: %s)", (sessionAware) => {
+    const calls = [["old-a"], ["old-b"], ["new-a", "new-b"]];
+    const rows = calls.map((ids) => ids.map((id) => {
+      const row = tool("read", { path: `${id}.ts` }, result());
+      assignToolCallId(row, id);
+      return row;
+    }));
+    const turns = calls.map((ids, index) => ({
+      entryId: `assistant-${index}`,
+      toolCallIds: ids,
+      resultEntryIds: ids.map((id) => `result-${id}`),
+      hasVisibleThinking: true,
+      hasCommentary: false,
+      hasFinalAnswer: false,
+      hasUnknownText: false,
+      valid: true,
+      boundaryBefore: true,
+      boundaryAfter: true,
+    }));
+    const transcript = container(
+      storyboardAssistant(["older first"], calls[0]!), ...rows[0]!,
+      new Text("Transcript notice"),
+      storyboardAssistant(["older second"], calls[1]!), ...rows[1]!,
+      storyboardAssistant(["newest thinking"], calls[2]!), ...rows[2]!,
+    );
+    const handle = installToolGroupingPatch({
+      getTheme: () => theme,
+      getSettings: () => normalizePresentationSettings({ maxThinkingRoots: 1 }),
+      getSessionProjection: sessionAware ? () => ({ leafId: "result-new-b", turns }) : undefined,
+      renderGroup: renderToolGroup,
+    });
+    const output = transcript.render(80).join("\n");
+    expect(output.match(/2 earlier steps hidden/gu)).toHaveLength(1);
+    expect(output).toMatch(/Transcript notice\s+◉\s*newest thinking\s+│ 2 earlier steps hidden/u);
+    expect(output).toContain("Read 2 files");
+    expect(output).toContain("new-a.ts");
+    expect(output).toContain("new-b.ts");
+    expect(output).not.toMatch(/older first|older second|old-[ab]\.ts/u);
+    expect(transcript.render(10).every((line) => visibleWidth(line) <= 10)).toBe(true);
+
+    for (const row of rows.flat()) Object.assign(row, { expanded: true });
+    const expanded = transcript.render(80).join("\n");
+    expect(expanded).toContain("older first");
+    expect(expanded).toContain("older second");
+    expect(expanded).not.toContain("steps hidden");
     handle?.uninstall();
   });
 

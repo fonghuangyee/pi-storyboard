@@ -34,7 +34,7 @@ Press **Option+O** on macOS (Pi key ID `alt+o`) to switch between Storyboard and
 
 In interactive TUI mode, run `/storyboard-settings` to open the global settings page (`/storyboard-settings global` is also accepted). The command edits only `~/.pi/agent/pi-storyboard.json`; `project` is not a supported command argument. Trusted project settings in `.pi/pi-storyboard.json` can still override global values.
 
-Configure independent file/path, command, and custom-tool-argument trimming (`none`, `middle`, or `end`), optional tool metadata, successful-result excerpts, per-kind dots, symbols, and theme color tokens, including **Skill invocation color** (default: `warning`). Result excerpts are enabled by default. Saving reloads Pi so the settings take effect.
+Configure independent file/path, command, and custom-tool-argument trimming (`none`, `middle`, or `end`), optional tool metadata, successful-result excerpts, per-kind dots, symbols, and theme color tokens, including **Skill invocation color** (default: `warning`). Result excerpts are enabled by default. **Max thinking roots** defaults to **Unlimited**. Set a number to keep only the newest thinking roots across the transcript; each visible root keeps all its branches. The oldest retained root includes a line counting the hidden roots. Clear the field to restore Unlimited. Pressing Enter in this field saves all pending storyboard settings and reloads Pi. For other settings, use **Save and reload**.
 
 ## Compatibility
 

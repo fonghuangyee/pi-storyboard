@@ -92,10 +92,71 @@ export type StoryboardAssistantRenderRegion = {
   readonly sourceHeight?: number;
 };
 
+type ThinkingRootRange = {
+  readonly start: number;
+  readonly end: number;
+  readonly headerEnd: number;
+  readonly attachedStatusToolCallId?: string;
+};
+
 export type StoryboardSceneLayout = {
   readonly lines: readonly string[];
   readonly assistantRegions: readonly StoryboardAssistantRenderRegion[];
+  readonly thinkingRoots?: readonly ThinkingRootRange[];
+  readonly breakouts?: readonly StoryboardAssistantRenderRegion[];
+  readonly filtered?: true;
 };
+
+/** Limit only validated visual roots, remapping the native breakout hit regions. */
+export function limitThinkingRoots(
+  layouts: Map<number, StoryboardSceneLayout>,
+  limit: number | null,
+  width: number,
+  theme: ThemeLike,
+  settings: PresentationSettings,
+): ReadonlySet<string> {
+  const detachedStatuses = new Set<string>();
+  if (limit === null) return detachedStatuses;
+  const count = [...layouts.values()].reduce((sum, layout) => sum + (layout.thinkingRoots?.length ?? 0), 0) - limit;
+  if (count <= 0) return detachedStatuses;
+
+  let remaining = count;
+  for (const [index, layout] of layouts) {
+    const firstVisibleRoot = layout.thinkingRoots?.[remaining];
+    const hidden = layout.thinkingRoots?.slice(0, remaining) ?? [];
+    if (hidden.length === 0 && firstVisibleRoot === undefined) continue;
+    const lines: string[] = [];
+    const positions = new Map<number, number>();
+    remaining -= hidden.length;
+    let rootIndex = 0;
+    for (let line = 0; line <= layout.lines.length; line++) {
+      if (line === firstVisibleRoot?.headerEnd) {
+        const label = `${count} earlier ${count === 1 ? "step" : "steps"} hidden`;
+        const rail = assistantRailPrefix(layoutForWidth(width, settings), theme);
+        const summary = theme.fg(settings.colors.structure, label);
+        lines.push(...wrapBoundaryText(rail === "" ? "" : `${rail} `, summary, width));
+      }
+      if (line === layout.lines.length) break;
+      if (line === hidden[rootIndex]?.end) rootIndex++;
+      const root = hidden[rootIndex];
+      if (root !== undefined && line >= root.start && !layout.breakouts?.some(
+        (region) => line >= region.start && line < region.start + region.height,
+      )) continue;
+      positions.set(line, lines.length);
+      lines.push(layout.lines[line]!);
+    }
+    for (const root of hidden) {
+      if (root.attachedStatusToolCallId !== undefined) detachedStatuses.add(root.attachedStatusToolCallId);
+    }
+    const assistantRegions = layout.assistantRegions.flatMap((region) => {
+      const start = positions.get(region.start);
+      return start === undefined ? [] : [{ ...region, start }];
+    });
+    layouts.set(index, { lines, assistantRegions, filtered: true });
+    if (firstVisibleRoot !== undefined) break;
+  }
+  return detachedStatuses;
+}
 
 type StoryLayout = {
   readonly indent: string;
@@ -675,6 +736,8 @@ function orderedSceneLayout(
   const assistantRegions: StoryboardAssistantRenderRegion[] = [];
 
   let nodeStart = 0;
+  let thinkingHeaderEnd: number | undefined;
+  const breakouts: StoryboardAssistantRenderRegion[] = [];
   if (nodes[0]?.type === "assistant" && nodes[0].content.type === "thinking") {
     const first = nodes[0].content;
     nodeStart = 1;
@@ -688,6 +751,7 @@ function orderedSceneLayout(
       theme,
     );
     lines.push(...header.lines);
+    if (scene.actionRuns.length > 0 && first.renderedLines.some(hasVisibleText)) thinkingHeaderEnd = lines.length;
     for (const region of header.regions) {
       assistantRegions.push({ row: first.row, ...region, start: start + region.start });
     }
@@ -759,14 +823,16 @@ function orderedSceneLayout(
         lines.push(line);
       }
       if (node.content.renderedLines.length > 0) {
-        assistantRegions.push({
+        const region = {
           row: node.content.row,
           start,
           height: node.content.renderedLines.length,
           prefixWidth: 0,
           sourceStart: 0,
           sourceHeight: node.content.renderedLines.length,
-        });
+        };
+        assistantRegions.push(region);
+        breakouts.push(region);
       }
     } else {
       const start = lines.length;
@@ -780,7 +846,9 @@ function orderedSceneLayout(
       );
       lines.push(...continuation.lines);
       for (const region of continuation.regions) {
-        assistantRegions.push({ row: node.content.row, ...region, start: start + region.start });
+        const placed = { row: node.content.row, ...region, start: start + region.start };
+        assistantRegions.push(placed);
+        if (node.content.type !== "thinking") breakouts.push(placed);
       }
     }
 
@@ -794,7 +862,12 @@ function orderedSceneLayout(
     }
   }
 
-  return { lines, assistantRegions };
+  return {
+    lines,
+    assistantRegions,
+    thinkingRoots: thinkingHeaderEnd === undefined ? [] : [{ start: 0, end: lines.length, headerEnd: thinkingHeaderEnd }],
+    breakouts,
+  };
 }
 
 function legacySceneLayout(
@@ -827,6 +900,7 @@ function legacySceneLayout(
   }
 
   if (scene.actionRuns.length === 0) return { lines, assistantRegions };
+  const thinkingHeaderEnd = lines.length;
   lines.push(fit(assistantRailPrefix(layout, theme), safeWidth));
   for (let index = 0; index < scene.actionRuns.length; index++) {
     const last = index === scene.actionRuns.length - 1;
@@ -841,7 +915,13 @@ function legacySceneLayout(
     ));
     if (!last) lines.push(fit(assistantRailPrefix(layout, theme), safeWidth));
   }
-  return { lines, assistantRegions };
+  return {
+    lines,
+    assistantRegions,
+    thinkingRoots: scene.assistant.hasThinking && !scene.assistant.hasText && body.some(hasVisibleText)
+      ? [{ start: 0, end: lines.length, headerEnd: thinkingHeaderEnd }]
+      : [],
+  };
 }
 
 /**
@@ -877,6 +957,7 @@ export function renderStoryboardSceneLayout(
 function renderWorkChapter(
   chapter: StoryboardChapter,
   span: StoryboardWorkSpan,
+  spanHasActions: boolean,
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
@@ -884,11 +965,10 @@ function renderWorkChapter(
   lines: string[],
   regions: StoryboardAssistantRenderRegion[],
   detailsByToolCallId: ReadonlyMap<string, string>,
-): void {
+): number {
   const items = chapter.items;
-  if (items.length === 0) return;
+  let headerEnd = lines.length;
   const terminalIndex = items.length - 1;
-  const spanHasActions = span.chapters.some((candidate) => candidate.items.some((item) => item.type === "action"));
   // Multi-scene work spans come only from the validated active-path
   // continuations. Scenes remain separate ownership units, but adjacent
   // same-kind actions may share one visual compact group.
@@ -971,8 +1051,10 @@ function renderWorkChapter(
       ));
     }
 
+    if (index === 0) headerEnd = lines.length;
     index = endIndex + 1;
   }
+  return headerEnd;
 }
 
 /**
@@ -998,10 +1080,22 @@ export function renderStoryboardWorkSpanLayout(
   const assistantRegions: StoryboardAssistantRenderRegion[] = [];
   if (leading.count === 0) lines.push("");
 
+  const thinkingRoots: ThinkingRootRange[] = [];
+  const spanHasActions = span.chapters.some((chapter) => chapter.items.some((item) => item.type === "action"));
   for (let partIndex = 0; partIndex < span.parts.length; partIndex++) {
     const part = span.parts[partIndex]!;
     if (part.type === "chapter") {
-      renderWorkChapter(part, span, safeWidth, layout, theme, renderGroup, lines, assistantRegions, detailsByToolCallId);
+      const start = partIndex === 0 ? 0 : lines.length;
+      const headerEnd = renderWorkChapter(part, span, spanHasActions, safeWidth, layout, theme, renderGroup, lines, assistantRegions, detailsByToolCallId);
+      const first = part.items[0];
+      if (first?.type === "synthetic-thinking-placeholder" || first?.type === "synthetic-scene-root" || (
+        first?.type === "thinking" && spanHasActions && first.content.renderedLines.some(hasVisibleText)
+      )) {
+        const attachedStatusToolCallId = detailsByToolCallId.size === 0 ? undefined : part.items.flatMap((item) =>
+          item.type === "action" ? item.run.rows : [],
+        ).find((row) => detailsByToolCallId.has(row.toolCallId))?.toolCallId;
+        thinkingRoots.push({ start, end: lines.length, headerEnd, attachedStatusToolCallId });
+      }
       continue;
     }
 
@@ -1024,7 +1118,7 @@ export function renderStoryboardWorkSpanLayout(
     if (partIndex < span.parts.length - 1) lines.push("");
   }
 
-  return { lines, assistantRegions };
+  return { lines, assistantRegions, thinkingRoots };
 }
 
 /**

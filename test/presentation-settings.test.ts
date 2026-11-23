@@ -33,6 +33,17 @@ describe("presentation settings", () => {
     expect(settings.showToolResultSummary).toBe(true);
   });
 
+  it("defaults to unlimited roots and validates layered limits independently", () => {
+    expect(normalizePresentationSettings(undefined).maxThinkingRoots).toBeNull();
+    const global = { maxThinkingRoots: 4 };
+    for (const invalid of [0, -1, 1.5, "3", Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(resolvePresentationSettings(global, { maxThinkingRoots: invalid }, true).maxThinkingRoots).toBe(4);
+    }
+    expect(resolvePresentationSettings(global, { maxThinkingRoots: 2 }, true).maxThinkingRoots).toBe(2);
+    expect(resolvePresentationSettings(global, { maxThinkingRoots: null }, true).maxThinkingRoots).toBeNull();
+    expect(resolvePresentationSettings(global, { maxThinkingRoots: 2 }, false).maxThinkingRoots).toBe(4);
+  });
+
   it("validates skill colors with trusted precedence and independent fallbacks", () => {
     const global = { colors: { skillInvocation: "mdHeading" } };
     expect(normalizePresentationSettings(undefined).colors.skillInvocation).toBe("warning");
@@ -186,7 +197,9 @@ describe("presentation settings", () => {
     expect(source.effective.colors.skillInvocation).toBe("mdHeading");
 
     writePresentationSettings(cwd, "project", source.effective, agentDir);
+    writePresentationSettings(cwd, "global", { ...source.global, maxThinkingRoots: 3 }, agentDir);
 
+    expect(readGlobalPresentationSettings(cwd, agentDir).maxThinkingRoots).toBe(3);
     expect(JSON.parse(readFileSync(projectPath, "utf8"))).toEqual(source.effective);
     expect(JSON.parse(readFileSync(piGlobalPath, "utf8"))).toEqual({ theme: "dark" });
     expect(JSON.parse(readFileSync(piProjectPath, "utf8"))).toEqual({ compaction: { enabled: false } });

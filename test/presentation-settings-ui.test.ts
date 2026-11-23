@@ -23,7 +23,7 @@ vi.mock("@earendil-works/pi-tui", async (importOriginal) => ({
 import { openPresentationSettings } from "../src/presentation-settings-ui.ts";
 
 describe("presentation settings UI", () => {
-  it("edits, resets, and saves the skill color through the existing color picker", async () => {
+  it.each([3, null])("saves and closes when a thinking-root limit of %s is submitted", async (expected) => {
     initTheme("dark", false);
     const ctx = {
       ui: {
@@ -45,12 +45,27 @@ describe("presentation settings UI", () => {
           list.change("reset-defaults", "reset");
           expect(list.updateValue).toHaveBeenCalledWith("color-skillInvocation", "warning");
           list.change("color-skillInvocation", "accent");
-          list.change("save-reload", "save");
+          const limit = list.items.find(({ id }) => id === "max-thinking-roots");
+          expect(limit?.currentValue).toBe("Unlimited");
+          const close = vi.fn((value?: string) => { if (value !== undefined) list.change("max-thinking-roots", value); });
+          const editor = limit?.submenu?.(expected === null ? "3" : "Unlimited", close);
+          expect(editor?.render(80).join("\n")).toContain("Enter saves all pending changes and reloads");
+          if (expected === null) editor?.handleInput?.("\x04");
+          editor?.handleInput?.("0");
+          editor?.handleInput?.("\n");
+          expect(close).not.toHaveBeenCalled();
+          expect(result).toBeUndefined();
+          expect(editor?.render(80).join("\n")).toContain("Enter a positive whole number");
+          editor?.handleInput?.("\x7f");
+          if (expected !== null) editor?.handleInput?.(String(expected));
+          editor?.handleInput?.("\n");
+          expect(close).toHaveBeenCalledExactlyOnceWith(expected === null ? "Unlimited" : String(expected));
           return result;
         },
       },
     };
     const saved: PresentationSettings | null = await openPresentationSettings(ctx, DEFAULT_PRESENTATION_SETTINGS);
     expect(saved?.colors.skillInvocation).toBe("accent");
+    expect(saved?.maxThinkingRoots).toBe(expected);
   });
 });

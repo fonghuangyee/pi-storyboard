@@ -7,6 +7,7 @@ import {
 } from "@earendil-works/pi-tui";
 import type { GroupKind } from "./grouping.ts";
 import { sanitizeDisplay } from "./safe-display.ts";
+import { shimmerLines, type ShimmerFrame } from "./shimmer.ts";
 import {
   DEFAULT_PRESENTATION_SETTINGS,
   type PresentationSettings,
@@ -44,6 +45,7 @@ export type ToolRowSnapshot = {
   readonly elapsedMs?: number;
   readonly isPartial: boolean;
   readonly expanded: boolean;
+  readonly executionStarted?: true;
 };
 
 export type GroupSnapshot = {
@@ -57,6 +59,7 @@ export interface ThemeLike {
   fg(color: StoryboardColorName, text: string): string;
   bold?(text: string): string;
   italic?(text: string): string;
+  getFgAnsi?(color: StoryboardColorName): string;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -605,10 +608,11 @@ function renderToolRow(
   width: number,
   theme: ThemeLike,
   settings: PresentationSettings,
+  shimmer: ShimmerFrame | undefined,
 ): string[] {
   const prefixWidth = visibleWidth(prefix);
   const continuation = continuationPrefix(prefix, width);
-  const lines: string[] = [width > prefixWidth ? prefix : ""];
+  let lines: string[] = [width > prefixWidth ? prefix : ""];
 
   const appendText = (
     value: string,
@@ -627,6 +631,7 @@ function renderToolRow(
 
   appendText(parts.mainPrefix ?? "", "text", undefined);
   appendText(mainValueForRow(row, parts), "text", parts.mainTrim);
+  if (shimmer !== undefined) lines = [...shimmerLines(lines, shimmer, width > prefixWidth ? prefixWidth : 0)];
   if (normalDetailText.length > 0) {
     appendWrappedSegment(
       lines,
@@ -659,6 +664,7 @@ export function renderToolGroup(
   width: number,
   theme: ThemeLike,
   settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+  shimmer?: ShimmerFrame,
 ): string[] {
   const safeWidth = normaliseWidth(width);
   const title = theme.bold ? theme.bold(heading(group.kind, group.rows.length)) : heading(group.kind, group.rows.length);
@@ -699,6 +705,7 @@ export function renderToolGroup(
       safeWidth,
       theme,
       settings,
+      row.executionStarted && !row.expanded && !failed && !complete ? shimmer : undefined,
     ));
   }
 

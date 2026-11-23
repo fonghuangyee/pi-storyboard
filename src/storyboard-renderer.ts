@@ -1,6 +1,7 @@
 import { Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { GroupSnapshot, ThemeLike } from "./renderer.ts";
 import { sanitizeDisplay, sanitizeMultilineDisplay } from "./safe-display.ts";
+import { shimmerLines, type ShimmerFrame } from "./shimmer.ts";
 import {
   DEFAULT_PRESENTATION_SETTINGS,
   type PresentationSettings,
@@ -24,6 +25,7 @@ export type StoryboardGroupRenderer = (
   width: number,
   theme: ThemeLike,
   settings?: PresentationSettings,
+  shimmer?: ShimmerFrame,
 ) => string[];
 
 function wrapBoundaryText(prefix: string, text: string, width: number): string[] {
@@ -326,6 +328,21 @@ function thinkingParts(
     sourceHeight: range.end - range.start,
   })));
   return parts;
+}
+
+export function shimmerThinkingLines(
+  lines: readonly string[],
+  settings: PresentationSettings,
+  frame: ShimmerFrame,
+): readonly string[] {
+  const parts = thinkingParts(lines, settings).filter((part) => part.sourceStart >= 0);
+  const styled = shimmerLines(parts.flatMap((part) => part.lines), frame);
+  const result = [...lines];
+  let offset = 0;
+  for (const part of parts) {
+    for (let index = 0; index < part.lines.length; index++) result[part.sourceStart + index] = styled[offset++]!;
+  }
+  return result;
 }
 
 function assistantMarkerPrefix(

@@ -6,7 +6,7 @@ import {
   SkillInvocationMessageComponent,
   ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Text, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { Container, stripTerminalSequences, Text, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
   classifyToolRowForTesting,
   installToolGroupingPatch,
@@ -227,6 +227,57 @@ describe("Container adapter", () => {
       }
     }
     original = Container.prototype.render;
+  });
+
+  it("shimmers only visible active thinking and the exact running tool row", () => {
+    initTheme("dark", false);
+    const message = {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        { type: "thinking", thinking: "Earlier thought" },
+        { type: "toolCall", id: "one", name: "read", arguments: {} },
+        { type: "thinking", thinking: "Active thought" },
+        { type: "toolCall", id: "two", name: "read", arguments: {} },
+      ],
+    } as Parameters<AssistantMessageComponent["updateContent"]>[0];
+    const owner = new AssistantMessageComponent();
+    const running = tool("read", { path: "running.txt" });
+    const queued = tool("read", { path: "queued.txt" });
+    Object.assign(running, { executionStarted: true });
+    assignToolCallId(running, "one");
+    assignToolCallId(queued, "two");
+    owner.updateContent(message, true);
+    const clock = vi.spyOn(performance, "now").mockReturnValue(500);
+    const accent = "\x1b[95m";
+    let active: number | undefined = 2;
+    const handle = installToolGroupingPatch({
+      getTheme: () => ({ ...theme, getFgAnsi: (color) => color === "accent" ? accent : "\x1b[90m" }),
+      getActiveThinkingIndex: (value) => value === message ? active : undefined,
+      renderGroup: renderToolGroup,
+    });
+    const view = container(owner, running, queued);
+    const animated = () => view.render(80).filter((line) => line.includes(accent)).map((line) => stripTerminalSequences(line).trim());
+    try {
+      expect(animated()).toEqual(["│   ● running.txt", "○ Active thought"]);
+      active = undefined;
+      expect(animated()).toEqual(["│   ● running.txt"]);
+      Object.assign(queued, { executionStarted: true });
+      expect(animated()).toEqual(["│   ● running.txt", "● queued.txt"]);
+      Object.assign(queued, { result: result(true), isPartial: false });
+      expect(animated()).toEqual(["│   ● running.txt"]);
+      active = 2;
+      owner.setHideThinkingBlock(true);
+      expect(animated()).toEqual(["│   ● running.txt"]);
+      Object.assign(running, { result: result(), isPartial: false });
+      expect(animated()).toEqual([]);
+      owner.setHideThinkingBlock(false);
+      Object.assign(queued, { expanded: true });
+      expect(animated()).toEqual([]);
+    } finally {
+      handle?.uninstall();
+      clock.mockRestore();
+    }
   });
 
   it.each([false, true])("renders skill invocations with a dedicated marker and preserves expansion (session-aware=%s)", (sessionAware) => {

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { initTheme, type Theme } from "@earendil-works/pi-coding-agent";
-import type { Component, SettingItem, TUI } from "@earendil-works/pi-tui";
-import { DEFAULT_PRESENTATION_SETTINGS, type PresentationSettings } from "../src/presentation-settings.ts";
+import { visibleWidth, type Component, type SettingItem, type TUI } from "@earendil-works/pi-tui";
+import { DEFAULT_PRESENTATION_SETTINGS, presentationColorNames, type PresentationSettings } from "../src/presentation-settings.ts";
 
 const list = vi.hoisted(() => ({
   items: [] as SettingItem[],
@@ -29,18 +29,32 @@ describe("presentation settings UI", () => {
       ui: {
         custom: async <T>(factory: (tui: TUI, theme: Theme, keys: unknown, done: (value: T) => void) => Component): Promise<T> => {
           let result!: T;
+          const fg = vi.fn((color: string, text: string) => color === "warning" ? `\x1b[33m${text}\x1b[39m` : text);
           factory(
             { requestRender: vi.fn() } as unknown as TUI,
-            { fg: (_color: string, text: string) => text, bold: (text: string) => text } as Theme,
+            { fg, bold: (text: string) => text } as unknown as Theme,
             undefined,
             (value) => { result = value; },
           );
           const item = list.items.find(({ id }) => id === "color-skillInvocation");
           expect(item?.label).toBe("Skill invocation color");
           expect(item?.currentValue).toBe("warning");
-          expect(item?.values).toContain("mdHeading");
-          list.change("color-skillInvocation", "mdHeading");
-          expect(list.updateValue).toHaveBeenCalledWith("color-skillInvocation", "mdHeading");
+          expect(list.items.filter(({ id }) => id.startsWith("color-")).every(({ submenu }) => submenu)).toBe(true);
+          expect(item?.values).toBeUndefined();
+          const closeColor = vi.fn((value?: string) => { if (value !== undefined) list.change("color-skillInvocation", value); });
+          const picker = item?.submenu?.("warning", closeColor);
+          expect(picker?.render(80).join("\n")).toContain("→ \x1b[33mwarning");
+          expect(fg).toHaveBeenCalledWith("warning", "warning");
+          expect(picker?.render(5).every((line) => visibleWidth(line) <= 5)).toBe(true);
+          picker?.handleInput?.("\x1b");
+          expect(closeColor).toHaveBeenCalledExactlyOnceWith();
+          const reopened = item?.submenu?.("warning", closeColor);
+          reopened?.handleInput?.("\x1b[B");
+          reopened?.handleInput?.("\r");
+          const nextColor = presentationColorNames[presentationColorNames.findIndex((color) => color === "warning") + 1];
+          expect(closeColor).toHaveBeenLastCalledWith(nextColor);
+          expect(list.updateValue).toHaveBeenCalledWith("color-skillInvocation", nextColor);
+          expect(result).toBeUndefined();
           list.updateValue.mockClear();
           list.change("reset-defaults", "reset");
           expect(list.updateValue).toHaveBeenCalledWith("color-skillInvocation", "warning");

@@ -6,13 +6,13 @@ import {
   SkillInvocationMessageComponent,
   ToolExecutionComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Text, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { Container, rgbColor, stripTerminalSequences, styleText, Text, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import {
   classifyToolRowForTesting,
   installToolGroupingPatch,
   PATCH_MARKER,
 } from "../src/pi-adapter.ts";
-import { renderToolGroup, type ThemeLike, type ToolRowSnapshot } from "../src/renderer.ts";
+import { renderToolGroup, withMarkerWave, type ThemeLike, type ToolRowSnapshot } from "../src/renderer.ts";
 import { buildSessionProjection, type SessionProjection } from "../src/session-projection.ts";
 import { normalizePresentationSettings } from "../src/presentation-settings.ts";
 
@@ -1291,7 +1291,7 @@ describe("Container adapter", () => {
     handle?.uninstall();
   });
 
-  it("inserts a thinking placeholder after same-response commentary before tools", () => {
+  it("keeps one separator after commentary when its thinking placeholder is hidden", () => {
     const owner = storyboardAssistant(["", " planning", "", "commentary 78"], ["read-commentary-suffix"], {
       text: true,
       textPhase: "commentary",
@@ -1321,7 +1321,7 @@ describe("Container adapter", () => {
     };
     const read = tool("read", { path: "commentary-suffix.ts" }, result());
     assignToolCallId(read, "read-commentary-suffix");
-    const session: SessionProjection = {
+    let session: SessionProjection = {
       leafId: "result",
       turns: [{
         entryId: "assistant",
@@ -1365,6 +1365,24 @@ describe("Container adapter", () => {
     });
     expect(commentary.handleMouse).toHaveBeenCalledWith(expect.objectContaining({ x: 0, y: 0 }));
     expect(thinking.handleMouse).not.toHaveBeenCalled();
+
+    const newestOwner = storyboardAssistant(["", " newest thinking"], ["newest-read"]);
+    const newestRead = tool("read", { path: "newest.ts" }, result());
+    assignToolCallId(newestRead, "newest-read");
+    session = {
+      leafId: "newest-result",
+      turns: [...session.turns, {
+        ...session.turns[0]!,
+        entryId: "newest-assistant",
+        toolCallIds: ["newest-read"],
+        resultEntryIds: ["newest-result"],
+        hasCommentary: false,
+      }],
+    };
+    const withNewest = container(owner, read, newestOwner, newestRead).render(80);
+    expect(withNewest).toContain(" │ 2 earlier steps hidden");
+    const rootRow = withNewest.findIndex((line) => line.includes("newest thinking"));
+    expect(withNewest.slice(withNewest.indexOf("commentary 80") + 1, rootRow)).toEqual([""]);
     handle?.uninstall();
   });
 
@@ -1545,6 +1563,62 @@ describe("Container adapter", () => {
     expect(value.render(80).join("\\n")).toContain("FULL-WIDTH GREEN NATIVE EDIT PREVIEW");
     expect(runningEdit.render).toHaveBeenCalledOnce();
     handle?.uninstall();
+  });
+
+  it("staggers the configured complete-status color across active markers without changing glyphs or layout", () => {
+    const { owner } = interleavedAssistant();
+    const read = tool("read", { path: "settled.ts" }, result());
+    const edit = tool("edit", { path: "running.ts" });
+    assignToolCallId(read, "read-1");
+    assignToolCallId(edit, "edit-1");
+    const colorTheme = {
+      ...theme,
+      colors: { syntaxKeyword: rgbColor(200, 100, 50), success: rgbColor(0, 200, 0), warning: rgbColor(100, 200, 150) },
+      getColorMode: () => "truecolor" as const,
+      style: (text: string, options: { fg: ReturnType<typeof rgbColor> }) => styleText(text, options, "truecolor"),
+    };
+    const settings = normalizePresentationSettings({
+      colors: { status: { complete: "warning" } },
+      symbols: { thinkingRoot: "◆", thinkingStep: "›", toolDots: { read: "▣", edit: "ϟ" } },
+    });
+    let elapsedMs = 0;
+    const handle = installToolGroupingPatch({
+      getTheme: () => withMarkerWave(colorTheme, elapsedMs, settings.colors.status.complete),
+      renderGroup: renderToolGroup,
+      getSettings: () => settings,
+    });
+    try {
+      const value = container(owner, read, edit);
+      const normal = value.render(80);
+      expect(normal.join("\n")).not.toContain("\x1b[38;2;");
+      elapsedMs = 150;
+      expect(value.render(80).join("\n")).toContain("\x1b[38;2;150;150;100m◆");
+      for (const [time, glyph] of [[300, "◆"], [420, "›"], [540, "ϟ"]] as const) {
+        elapsedMs = time;
+        const frame = value.render(80);
+        expect(frame.map(stripTerminalSequences)).toEqual(normal.map(stripTerminalSequences));
+        expect(frame.join("\n").match(/\x1b\[38;2;100;200;150m[^\x1b]+/g)).toEqual([`\x1b[38;2;100;200;150m${glyph}`]);
+        expect(frame.find((line) => line.includes("settled.ts"))).toContain("▣ settled.ts");
+      }
+      for (const time of [900, 1200, 1500]) {
+        elapsedMs = time;
+        expect(value.render(80)).toEqual(normal);
+      }
+      elapsedMs = 1800;
+      expect(value.render(80).join("\n")).toContain("\x1b[38;2;100;200;150m◆");
+      const limitedTheme = { ...colorTheme, getColorMode: () => "256color" as const };
+      expect(withMarkerWave(limitedTheme, 1100, settings.colors.status.complete)).toBe(limitedTheme);
+      expect(withMarkerWave(colorTheme, 300, "accent")).toBe(colorTheme);
+
+      const editFields = edit as unknown as Record<string, unknown>;
+      editFields.result = result(true);
+      editFields.isPartial = false;
+      expect(value.render(80).join("\n")).not.toContain("\x1b[38;2;");
+      editFields.expanded = true;
+      expect(value.render(80)).toContain("native edit");
+    } finally {
+      handle?.uninstall();
+    }
   });
 
   it("renders interleaved native thinking runs in source order", () => {

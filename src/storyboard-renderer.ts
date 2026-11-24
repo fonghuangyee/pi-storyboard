@@ -1,5 +1,5 @@
 import { Markdown, stripTerminalSequences, truncateToWidth, visibleWidth, wrapTextWithAnsi, type MarkdownTheme } from "@earendil-works/pi-tui";
-import type { GroupSnapshot, ThemeLike } from "./renderer.ts";
+import { markerForeground, type GroupSnapshot, type ThemeLike } from "./renderer.ts";
 import { sanitizeDisplay, sanitizeMultilineDisplay } from "./safe-display.ts";
 import {
   DEFAULT_PRESENTATION_SETTINGS,
@@ -340,7 +340,7 @@ function assistantMarkerPrefix(
   const hasActions = aggregate && (hasActionsOverride ?? scene.actionRuns.length > 0);
   const shape = hasActions ? layout.settings.symbols.thinkingRoot : layout.settings.symbols.thinkingStep;
   return padPrefix(
-    `${layout.indent}${theme.fg(thinkingMarkerColor(markerState, layout.settings), shape)}`,
+    `${layout.indent}${markerForeground(theme, thinkingMarkerColor(markerState, layout.settings), shape, markerState === "running")}`,
     layout.assistantPrefixWidth,
   );
 }
@@ -564,9 +564,8 @@ function renderDirectActionRun(
   const marker = layout.assistantPrefixWidth === 0
     ? ""
     : padPrefix(
-      `${layout.indent}${theme.fg(
-        sceneMarkerColor(state, layout.settings),
-        layout.settings.symbols.thinkingRoot,
+      `${layout.indent}${markerForeground(
+        theme, sceneMarkerColor(state, layout.settings), layout.settings.symbols.thinkingRoot, state === "running",
       )}`,
       layout.assistantPrefixWidth,
     );
@@ -586,7 +585,7 @@ function renderAssistantContinuation(
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
-  markerColor?: StoryboardThinkingMarkerColor,
+  markerState: SceneState,
 ): AssistantBlockLayout {
   const rail = assistantRailPrefix(layout, theme);
   const terminalSymbol = firstDisplayCell(layout.settings.symbols.lastBranch, "╰");
@@ -600,9 +599,8 @@ function renderAssistantContinuation(
   const thinkingMarker = layout.assistantPrefixWidth === 0
     ? ""
     : padPrefix(
-      `${layout.indent}${theme.fg(
-        markerColor ?? layout.settings.colors.thinking.settled,
-        layout.settings.symbols.thinkingStep,
+      `${layout.indent}${markerForeground(
+        theme, thinkingMarkerColor(markerState, layout.settings), layout.settings.symbols.thinkingStep, markerState === "running", 1,
       )}`,
       layout.assistantPrefixWidth,
     );
@@ -842,7 +840,7 @@ function orderedSceneLayout(
         safeWidth,
         layout,
         theme,
-        thinkingMarkerColor(scene.state, layout.settings),
+        scene.state,
       );
       lines.push(...continuation.lines);
       for (const region of continuation.regions) {
@@ -1024,7 +1022,7 @@ function renderWorkChapter(
           span.state,
           spanHasActions,
         )
-        : renderAssistantContinuation(renderItem.content, terminal, width, layout, theme, thinkingMarkerColor(renderItem.scene.state, layout.settings));
+        : renderAssistantContinuation(renderItem.content, terminal, width, layout, theme, renderItem.scene.state);
       lines.push(...block.lines);
       for (const region of block.regions) {
         regions.push({ row: renderItem.content.row, ...region, start: start + region.start });
@@ -1085,7 +1083,9 @@ export function renderStoryboardWorkSpanLayout(
   for (let partIndex = 0; partIndex < span.parts.length; partIndex++) {
     const part = span.parts[partIndex]!;
     if (part.type === "chapter") {
-      const start = partIndex === 0 ? 0 : lines.length;
+      const previous = span.parts[partIndex - 1];
+      // Hide the generated separator with the chapter it introduces, not the native breakout.
+      const start = previous === undefined ? 0 : previous.type === "chapter" ? lines.length : lines.length - 1;
       const headerEnd = renderWorkChapter(part, span, spanHasActions, safeWidth, layout, theme, renderGroup, lines, assistantRegions, detailsByToolCallId);
       const first = part.items[0];
       if (first?.type === "synthetic-thinking-placeholder" || first?.type === "synthetic-scene-root" || (
@@ -1133,13 +1133,14 @@ function renderThinkingMarkerBlock(
   width: number,
   layout: StoryLayout,
   theme: ThemeLike,
-  markerColor: StoryboardThinkingMarkerColor = DEFAULT_PRESENTATION_SETTINGS.colors.thinking.settled,
+  markerColor: StoryboardThinkingMarkerColor,
+  active: boolean,
 ): AssistantBlockLayout {
   const rail = assistantRailPrefix(layout, theme);
   const thinkingMarker = layout.assistantPrefixWidth === 0
     ? ""
     : padPrefix(
-      `${layout.indent}${theme.fg(markerColor, layout.settings.symbols.thinkingStep)}`,
+      `${layout.indent}${markerForeground(theme, markerColor, layout.settings.symbols.thinkingStep, active)}`,
       layout.assistantPrefixWidth,
     );
   const lines: string[] = [];
@@ -1193,6 +1194,7 @@ export function renderNativeThinkingMarkersLayout(
   theme: ThemeLike,
   markerColor: StoryboardThinkingMarkerColor = DEFAULT_PRESENTATION_SETTINGS.colors.thinking.settled,
   settings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS,
+  active = false,
 ): StoryboardSceneLayout {
   const safeWidth = Math.max(1, Math.floor(width));
   const layout = layoutForWidth(safeWidth, settings);
@@ -1206,7 +1208,7 @@ export function renderNativeThinkingMarkersLayout(
 
   for (const content of assistantContent) {
     if (content.type === "thinking") {
-      const block = renderThinkingMarkerBlock(content.renderedLines, safeWidth, layout, theme, markerColor);
+      const block = renderThinkingMarkerBlock(content.renderedLines, safeWidth, layout, theme, markerColor, active);
       for (const region of block.regions) {
         assistantRegions.push({
           row: content.row,

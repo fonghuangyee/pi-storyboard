@@ -10,7 +10,7 @@ import {
   readPresentationSettings,
   writePresentationSettings,
 } from "./presentation-settings-store.ts";
-import { renderToolGroup } from "./renderer.ts";
+import { renderToolGroup, withMarkerWave } from "./renderer.ts";
 import { buildSessionProjection, type SessionProjection } from "./session-projection.ts";
 
 /**
@@ -121,10 +121,9 @@ export default function (pi: ExtensionAPI): void {
 
     patch = installToolGroupingPatch({
       isEnabled: () => storyboardEnabled,
-      getTheme: () => ctx.ui.theme,
+      getTheme: () => withMarkerWave(ctx.ui.theme, performance.now(), presentationSettings.colors.status.complete),
       getSettings: () => presentationSettings,
-      renderGroup: (group, width, theme, settings) =>
-        renderToolGroup(group, width, theme, settings ?? presentationSettings),
+      renderGroup: renderToolGroup,
       getSessionProjection,
     });
   });

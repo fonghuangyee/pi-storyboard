@@ -1,7 +1,8 @@
-import { getSettingsListTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { getSelectListTheme, getSettingsListTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import {
   Container,
   Input,
+  SelectList,
   SettingsList,
   Spacer,
   Text,
@@ -176,7 +177,22 @@ export async function openPresentationSettings(
       label,
       description,
       currentValue: colorFor(draft, field),
-      values: [...presentationColorNames],
+      submenu: (currentValue, close) => {
+        const picker = new SelectList(
+          presentationColorNames.map((color) => ({ value: color, label: color })),
+          11,
+          { ...getSelectListTheme(), selectedText: (text) => text },
+          { truncatePrimary: ({ text, maxWidth }) => {
+            const color = presentationColorNames.find((name) => name === text);
+            const label = truncateToWidth(text, maxWidth, "");
+            return color === undefined ? label : theme.fg(color, label);
+          } },
+        );
+        picker.setSelectedIndex(presentationColorNames.findIndex((color) => color === currentValue));
+        picker.onSelect = (item) => close(item.value);
+        picker.onCancel = () => close();
+        return picker;
+      },
     });
 
     const rootLimitLabel = "Max thinking roots";

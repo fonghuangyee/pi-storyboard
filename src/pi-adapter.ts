@@ -6,8 +6,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import {
   Container,
-  Markdown,
-  MouseRegion,
   Text,
   stripTerminalSequences,
   visibleWidth,
@@ -49,7 +47,6 @@ import {
   renderStoryboardBoundary,
   renderStoryboardSceneLayout,
   renderStoryboardWorkSpanLayout,
-  shimmerThinkingLines,
   storyboardAssistantWidth,
   type StoryboardAssistantRenderRegion,
   type StoryboardGroupRenderer,
@@ -65,7 +62,6 @@ import {
   type PresentationSettings,
 } from "./presentation-settings.ts";
 import { sanitizeMultilineDisplay } from "./safe-display.ts";
-import type { ShimmerFrame } from "./shimmer.ts";
 
 export const PATCH_MARKER = Symbol.for("pi-storyboard.container.v1");
 
@@ -76,7 +72,6 @@ export type PatchHandle = {
 export type ToolGroupingPatchOptions = {
   isEnabled?(): boolean;
   getTheme(): ThemeLike;
-  getActiveThinkingIndex?(message: object): number | undefined;
   renderGroup: StoryboardGroupRenderer;
   /** Optional live presentation settings snapshot; absent means built-in defaults. */
   getSettings?(): PresentationSettings;
@@ -150,7 +145,6 @@ type AssistantContentKind = StoryboardAssistantContentType;
 
 type AssistantMetadata = Omit<AssistantSceneSnapshot, "renderedAssistantLines" | "assistantContent" | "sourceOrder"> & {
   readonly contentKinds: readonly AssistantContentKind[];
-  readonly activeThinkingChild: number | undefined;
   readonly sourceOrder: readonly StoryboardSourceItem[];
   readonly hasVisibleContent: boolean;
 };
@@ -725,7 +719,6 @@ function inspectToolRow(row: unknown, includeResultSummary = true): CandidateCla
         result: undefined,
         isPartial: true,
         expanded: false,
-        ...(fields.executionStarted === true ? { executionStarted: true } : {}),
       });
       return {
         kind,
@@ -780,7 +773,6 @@ function inspectToolRow(row: unknown, includeResultSummary = true): CandidateCla
     ...(elapsedMs === undefined ? {} : { elapsedMs }),
     isPartial: fields.isPartial,
     expanded: fields.expanded,
-    ...(fields.executionStarted === true ? { executionStarted: true } : {}),
   });
 
   return {
@@ -800,10 +792,7 @@ function isAssistant(row: unknown): row is AssistantMessageComponent {
  * The source-order references deliberately retain only content kinds, indexes,
  * and tool-call IDs.
  */
-function inspectAssistantMetadata(
-  row: unknown,
-  getActiveThinkingIndex?: ToolGroupingPatchOptions["getActiveThinkingIndex"],
-): AssistantMetadata | undefined {
+function inspectAssistantMetadata(row: unknown): AssistantMetadata | undefined {
   if (!isAssistant(row) || !isRecord(row)) return undefined;
   const fields = row as unknown as Record<string, unknown>;
   const message = fields.lastMessage;
@@ -817,8 +806,6 @@ function inspectAssistantMetadata(
     return undefined;
   }
 
-  const activeIndex = fields.isStreaming ? getActiveThinkingIndex?.(message) : undefined;
-  let activeThinkingChild: number | undefined;
   const expectedToolCallIds: string[] = [];
   const contentKinds: AssistantContentKind[] = [];
   const sourceOrder: StoryboardSourceItem[] = [];
@@ -850,7 +837,6 @@ function inspectAssistantMetadata(
       }
     } else if (rawBlock.type === "thinking") {
       hasThinkingBlock = true;
-      const firstIndex = index;
       const thinkingBlocks: string[] = [];
       for (; index < message.content.length; index++) {
         const thinkingContent = message.content[index];
@@ -862,9 +848,6 @@ function inspectAssistantMetadata(
       if (thinkingBlocks.length > 0) {
         hasThinking = true;
         hasVisibleContent = true;
-        if (activeIndex !== undefined && activeIndex >= firstIndex && activeIndex <= index) {
-          activeThinkingChild = contentKinds.length;
-        }
         addAssistantContent("thinking");
 
         // This is the native AssistantMessageComponent spacer policy: it
@@ -898,7 +881,6 @@ function inspectAssistantMetadata(
     hasFinalAnswer,
     hasUnknownText,
     contentKinds: Object.freeze(contentKinds),
-    activeThinkingChild,
     sourceOrder: Object.freeze(sourceOrder),
     hasVisibleContent,
   });
@@ -915,8 +897,6 @@ function inspectAssistantPresentation(
   metadata: AssistantMetadata,
   width: number,
   renderedAssistantLines: readonly string[],
-  shimmer: ShimmerFrame | undefined,
-  settings: PresentationSettings,
 ): AssistantPresentation | undefined | null {
   if (!isRecord(row)) return undefined;
   const fields = row as unknown as Record<string, unknown>;
@@ -980,13 +960,10 @@ function inspectAssistantPresentation(
   for (const kind of metadata.contentKinds) {
     const consumed = consumeChild();
     if (consumed === undefined) return undefined;
-    const animate = shimmer !== undefined && parts.length === metadata.activeThinkingChild &&
-      consumed.child instanceof MouseRegion &&
-      (consumed.child as unknown as Record<string, unknown>).child instanceof Markdown;
     parts.push(Object.freeze({
       type: kind,
       row: consumed.child,
-      renderedLines: Object.freeze(animate ? shimmerThinkingLines(consumed.lines, settings, shimmer) : consumed.lines),
+      renderedLines: Object.freeze(consumed.lines),
     }));
   }
 
@@ -1609,7 +1586,7 @@ function renderStoryboardIfRequested(
       const candidate = inspectToolRow(child, settings.showToolResultSummary);
       if (candidate !== undefined) candidates.set(child, candidate);
     } else if (isAssistant(child)) {
-      const assistant = inspectAssistantMetadata(child, options.getActiveThinkingIndex);
+      const assistant = inspectAssistantMetadata(child);
       if (assistant !== undefined) metadata.set(child, assistant);
     }
   }
@@ -1690,13 +1667,6 @@ function renderStoryboardIfRequested(
     }
   }
 
-  const theme = options.getTheme();
-  const shimmer: ShimmerFrame | undefined = nativeExpansionActive || !theme.getFgAnsi ? undefined : {
-    time: performance.now(),
-    colors: [theme.getFgAnsi("dim"), theme.getFgAnsi("muted"), theme.getFgAnsi("accent")],
-  };
-  const renderGroup: StoryboardGroupRenderer = (group, width, theme, settings) =>
-    options.renderGroup(group, width, theme, settings, shimmer);
   const nativeLines = new Map<Component, readonly string[]>();
   const assistantSnapshots = new Map<AssistantMessageComponent, AssistantSceneSnapshot>();
   const safeWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
@@ -1715,7 +1685,7 @@ function renderStoryboardIfRequested(
     if (isAssistant(child) && assistantMetadata !== undefined) {
       let presentation: AssistantPresentation | undefined | null;
       if (sceneOwners.has(child) || thinkingDecorationOwners.has(child)) {
-        presentation = inspectAssistantPresentation(child, assistantMetadata, renderWidth, lines, shimmer, settings);
+        presentation = inspectAssistantPresentation(child, assistantMetadata, renderWidth, lines);
         if (presentation === undefined) return { requested: true };
         if (
           presentation !== null &&
@@ -1752,6 +1722,7 @@ function renderStoryboardIfRequested(
   }
   const rendered: string[] = [];
   const mouseChildren: Array<{ component: Component; height: number }> = [];
+  const theme = options.getTheme();
   const thinkingDecorations = new Map<Component, {
     readonly lines: readonly string[];
     readonly assistantRegions: readonly StoryboardAssistantRenderRegion[];
@@ -1891,7 +1862,7 @@ function renderStoryboardIfRequested(
           plan.span,
           safeWidth,
           theme,
-          renderGroup,
+          options.renderGroup,
           settings,
           detailsByToolCallId,
         );
@@ -2011,7 +1982,7 @@ function renderStoryboardIfRequested(
           assistantLines,
           safeWidth,
           theme,
-          renderGroup,
+          options.renderGroup,
           settings,
         );
         rendered.push(...sceneLayout.lines);
@@ -2098,7 +2069,7 @@ function renderStoryboardIfRequested(
       const assistant = componentForStoryboardChild({ type: "assistant", assistant: segment.assistant });
       const assistantLines = assistant === undefined ? undefined : nativeLines.get(assistant);
       if (assistantLines === undefined) throw new Error("scene assistant output missing");
-      sceneLayouts.set(index, renderStoryboardSceneLayout(segment, assistantLines, safeWidth, theme, renderGroup, settings));
+      sceneLayouts.set(index, renderStoryboardSceneLayout(segment, assistantLines, safeWidth, theme, options.renderGroup, settings));
     }
     limitThinkingRoots(sceneLayouts, rootLimit, safeWidth, theme, settings);
   }
@@ -2137,7 +2108,7 @@ function renderStoryboardIfRequested(
         assistantLines,
         safeWidth,
         theme,
-        renderGroup,
+        options.renderGroup,
         settings,
       );
       const sceneLines = sceneLayout.lines;

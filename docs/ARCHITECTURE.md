@@ -240,8 +240,6 @@ For failures, the adapter does not classify tool-specific error formats. It scan
 
 Every running call, including a running edit, is compact while collapsed. A running edit never copies `oldText`, `newText`, diff, patch, preview, or full result details. If it later settles or fails, its compact row updates without invoking the native edit renderer in collapsed mode.
 
-A shimmer modeled on [Zentui Classic](https://cdn.jsdelivr.net/npm/pi-zentui@0.34.0/extensions/zentui/working-line.ts) sweeps across each eligible tool label after trimming and wrapping, from one visible line to the next. The dim base and muted shoulders give the narrow bold accent core contrast; the center advances nominally one cell every 60 ms with four cells of padding at each end. Actual frames follow Pi’s redraw cadence. Only an exactly owned, collapsed row with Pi's `executionStarted === true` and no final result/error animates. Pending, complete, failed, expanded, unowned, and native fallback rows stay static. Markers, indentation, headings, metadata, summaries, and status details are not part of the sweep.
-
 ### 3.5 Text phases and commentary
 
 The adapter accepts a text phase only when its serialized signature is valid `TextSignatureV1` data: `v === 1`, a non-empty `id`, and `phase` equal to `commentary` or `final_answer`.
@@ -332,10 +330,6 @@ running > failed > complete > note
 - `failed`: settled failure stop reason (`error`, `aborted`, `length`) or failed tool result;
 - `complete`: settled scene with tools and no failure;
 - `note`: thinking content without tools.
-
-A real thinking node shimmers only while a public `thinking_start`/`thinking_delta` message update identifies its exact source index on the same live assistant message. The entrypoint retains only a weak message key and the active index; other message updates, completion, and session lifecycle clear it. The adapter requires Pi's streaming component and a validated visible native Markdown thinking child. Hidden labels, folded-away paragraphs, summaries, earlier nodes, and synthetic roots do not animate. `src/shimmer.ts` temporarily changes foreground and emphasizes the core, restoring native foreground and intensity without changing terminal cell widths, other native styles, links, or mouse mapping. Unsupported terminal sequences or unavailable palette ANSI leave the text unchanged.
-
-The animation reads one monotonic timestamp per Storyboard render; it never schedules a redraw or changes Pi's Working indicator. Pi 1.6.0's native loader redraws transcript content in standard and fullscreen modes. Without an animating Working indicator or another redraw source, the effect pauses between updates. The regression tests cover wrapped labels and Unicode widths, native styling/link preservation, exact active-node selection, and cessation on settlement, hidden thinking, and native expansion.
 
 The final meaningful source child gets `╰─`; earlier action runs get `├─`. A recognized terminal diagnostic is a full-width storyboard breakout in its exact source position, so it is not placed on the action rail. Safely readable unsupported custom/status content uses a general boundary; opaque unknown content remains native.
 

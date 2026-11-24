@@ -35,29 +35,6 @@ function row(
 }
 
 describe("renderToolGroup", () => {
-  it("sweeps across a wrapped label without changing widths or styling metadata", () => {
-    const group: GroupSnapshot = {
-      kind: "read",
-      rows: [{ ...row("read", { path: "界🌈e\u0301/long-nested-path/file.ts", offset: 80 }, undefined, true), executionStarted: true }],
-    };
-    const settings = normalizePresentationSettings({ trimming: { fileNames: "none" } });
-    const base = renderToolGroup(group, 12, plainTheme, settings);
-    const accent = "\x1b[95m";
-    const highlightedRows = (time: number) => {
-      const lines = renderToolGroup(group, 12, plainTheme, settings, { time, colors: ["\x1b[90m", "\x1b[36m", accent] });
-      expect(lines.map(stripTerminalSequences)).toEqual(base);
-      expect(lines.map(visibleWidth)).toEqual(base.map(visibleWidth));
-      return lines.flatMap((line, index) => line.includes(accent) ? [index] : []);
-    };
-    expect(highlightedRows(240)).toEqual([2]);
-    const laterRows = highlightedRows(1200);
-    expect(laterRows.length).toBeGreaterThan(0);
-    expect(laterRows.every((index) => index > 2)).toBe(true);
-    const metadataRow = base.findIndex((line) => line.includes("offset"));
-    expect(metadataRow).toBeGreaterThan(2);
-    expect(highlightedRows(1599)).not.toContain(metadataRow);
-  });
-
   it("renders deterministic headings, labels, and state markers", () => {
     const group: GroupSnapshot = {
       kind: "read",

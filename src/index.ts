@@ -63,27 +63,10 @@ export default function (pi: ExtensionAPI): void {
   let presentationSettings: PresentationSettings = DEFAULT_PRESENTATION_SETTINGS;
   let invalidateProjection: () => void = () => undefined;
 
-  let activeThinking = new WeakMap<object, number>();
-  pi.on("message_update", ({ message, assistantMessageEvent }, ctx) => {
-    if (ctx.mode !== "tui" || message.role !== "assistant") return;
-    const event = assistantMessageEvent;
-    if (event.type === "thinking_start" || event.type === "thinking_delta") {
-      activeThinking.set(message, event.contentIndex);
-    } else {
-      activeThinking.delete(message);
-    }
-  });
-
   const invalidate = (): void => invalidateProjection();
-  pi.on("message_end", ({ message }) => {
-    activeThinking.delete(message);
-    invalidate();
-  });
+  pi.on("message_end", invalidate);
   pi.on("turn_end", invalidate);
-  pi.on("agent_end", () => {
-    activeThinking = new WeakMap();
-    invalidate();
-  });
+  pi.on("agent_end", invalidate);
   pi.on("agent_settled", invalidate);
   pi.on("tool_execution_end", invalidate);
   pi.on("session_compact", invalidate);
@@ -96,7 +79,6 @@ export default function (pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => {
     patch?.uninstall();
     patch = undefined;
-    activeThinking = new WeakMap();
     invalidateProjection = () => undefined;
     presentationSettings = DEFAULT_PRESENTATION_SETTINGS;
     try {
@@ -141,8 +123,8 @@ export default function (pi: ExtensionAPI): void {
       isEnabled: () => storyboardEnabled,
       getTheme: () => ctx.ui.theme,
       getSettings: () => presentationSettings,
-      getActiveThinkingIndex: (message) => activeThinking.get(message),
-      renderGroup: renderToolGroup,
+      renderGroup: (group, width, theme, settings) =>
+        renderToolGroup(group, width, theme, settings ?? presentationSettings),
       getSessionProjection,
     });
   });
@@ -153,7 +135,6 @@ export default function (pi: ExtensionAPI): void {
     if (!storyboardEnabled && ctx.mode === "tui") ctx.ui.setStatus(statusKey, undefined);
     storyboardEnabled = true;
     presentationSettings = DEFAULT_PRESENTATION_SETTINGS;
-    activeThinking = new WeakMap();
     invalidateProjection = () => undefined;
   });
 }

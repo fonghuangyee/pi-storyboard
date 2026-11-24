@@ -13,15 +13,13 @@ const forbidden = [
   "appendEntry",
   "fetch(",
   "child_process",
-  "setInterval(",
-  "setTimeout(",
   "spawn(",
   "exec(",
 ];
 
 describe("architecture guard", () => {
   it("keeps model, mutation, and process APIs out of src", () => {
-    const source = ["index.ts", "grouping.ts", "renderer.ts", "safe-display.ts", "shimmer.ts", "pi-adapter.ts", "session-projection.ts", "storyboard.ts", "storyboard-renderer.ts"]
+    const source = ["index.ts", "grouping.ts", "renderer.ts", "safe-display.ts", "pi-adapter.ts", "session-projection.ts", "storyboard.ts", "storyboard-renderer.ts"]
       .map((file) => readFileSync(join(process.cwd(), "src", file), "utf8"))
       .join("\n");
     for (const term of forbidden) expect(source).not.toContain(term);

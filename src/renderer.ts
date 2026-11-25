@@ -5,7 +5,6 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
-import * as tui from "@earendil-works/pi-tui";
 import type { GroupKind } from "./grouping.ts";
 import { sanitizeDisplay } from "./safe-display.ts";
 import {
@@ -58,37 +57,6 @@ export interface ThemeLike {
   fg(color: StoryboardColorName, text: string): string;
   bold?(text: string): string;
   italic?(text: string): string;
-  activeMarkerFg?(color: StoryboardColorName, symbol: string, waveStep: number): string;
-}
-
-export function withMarkerWave(theme: ThemeLike & {
-  readonly colors?: Readonly<Partial<Record<StoryboardColorName, tui.Color>>>;
-  getColorMode?(): tui.TerminalColorMode;
-  style?(text: string, options: { fg: tui.Color }): string;
-}, elapsedMs: number, completeColor: StoryboardColorName): ThemeLike {
-  const colors = theme.colors;
-  const style = theme.style?.bind(theme);
-  const target = colors?.[completeColor];
-  if (!colors || !target || !style || theme.getColorMode?.() !== "truecolor" ||
-      typeof tui.mixColors !== "function") return theme;
-  return {
-    fg: theme.fg.bind(theme),
-    bold: theme.bold?.bind(theme),
-    italic: theme.italic?.bind(theme),
-    activeMarkerFg: (color, symbol, waveStep) => {
-      const cycleMs = 1500;
-      const pulseMs = 600;
-      const phase = ((elapsedMs - waveStep * 120) % cycleMs + cycleMs) % cycleMs;
-      const foreground = colors[color];
-      if (foreground === undefined || color === completeColor || phase === 0 || phase >= pulseMs) return theme.fg(color, symbol);
-      const amount = (1 - Math.cos(2 * Math.PI * phase / pulseMs)) / 2;
-      return style(symbol, { fg: tui.mixColors(foreground, target, amount, "srgb") });
-    },
-  };
-}
-
-export function markerForeground(theme: ThemeLike, color: StoryboardColorName, symbol: string, active: boolean, waveStep = 0): string {
-  return active && theme.activeMarkerFg ? theme.activeMarkerFg(color, symbol, waveStep) : theme.fg(color, symbol);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -719,9 +687,7 @@ export function renderToolGroup(
     const summary = resultSummaryText(row, settings.showToolResultSummary);
     const failure = errorText(row);
     const marker = settings.symbols.toolDots[group.kind] ?? settings.symbols.toolDot;
-    const prefix = !complete && !failed && theme.activeMarkerFg
-      ? `  ${theme.activeMarkerFg(color, marker, 2 + rowIndex)} `
-      : styled(theme, color, `  ${marker} `);
+    const prefix = styled(theme, color, `  ${marker} `);
     lines.push(...renderToolRow(
       row,
       parts,

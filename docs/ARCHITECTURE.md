@@ -159,9 +159,7 @@ Markers mean:
 
 The hierarchy communicates presentation membership only. It never claims that a thought or commentary caused, planned, or semantically owns a tool call.
 
-Thinking markers use the configured assistant lifecycle colors: active thinking defaults to `syntaxKeyword`, settled thinking defaults to `success`. They never turn red because a tool failed. The top-level action marker follows aggregate scene state, and each tool row retains its own configured success/running/error state.
-
-Active storyboard roots, thinking steps, and running tool markers hold their configured theme colors for 900 ms of each 1.5-second cycle. The other 600 ms ease toward the configured **Complete status color** (`colors.status.complete`, default `success`) and back using a cosine curve. Both thinking and tool markers use this same target token, resolved from the active theme. If the target cannot be resolved, markers stay static. The root leads, continuation thinking markers follow 120 ms later, and tool markers start at a 240 ms offset plus 120 ms per row within each group. There is no dim or white phase. Only the glyph's foreground changes; symbols, layout, rails, and labels stay unchanged. Settled and failed tool markers, standalone boundary markers, and native fallback remain unchanged. The renderer samples the monotonic clock on existing Pi redraws, so sparse redraws skip intermediate shades and idle screens hold the last shade. There are no timers or redraw requests. Pi versions without the theme/color APIs and terminals not in truecolor mode retain static markers rather than switching between a pair of colors.
+Thinking markers use the configured assistant lifecycle colors: active thinking defaults to `syntaxKeyword`, settled thinking defaults to `success`. They never turn red because a tool failed. The top-level action marker follows aggregate scene state, and each tool row retains its own configured success/running/error state. Storyboard markers do not animate; their colors can change when their lifecycle state changes.
 
 ### 3.2 Tool groups
 
@@ -647,7 +645,6 @@ pi-storyboard/
 
 - exports the default Pi extension factory;
 - registers `/storyboard-settings`, which opens global settings directly, is available only in interactive TUI mode, and rejects the unsupported `project` argument;
-- supplies a render-local theme view that samples the active-marker wave without scheduling redraws;
 - listens to public lifecycle notifications only to invalidate the ephemeral session projection;
 - installs a fresh guarded patch with Storyboard on at `session_start` in TUI mode, and registers `alt+o` to toggle only that patch's presentation with a public footer status update;
 - reads a fresh validated presentation-settings snapshot at the same lifecycle boundary;
@@ -848,7 +845,7 @@ At minimum, preserve tests for:
 - hard boundaries from user/custom/native/branch/context-edit content;
 - collapsed compaction boundaries rendered as `◉ Compacted from N tokens` without an inline expansion hint, with native compaction rendering only while Pi marks it expanded;
 - recognized web-search statuses rendered as wrapped plain-text detail only with exact active-path result/call proof, otherwise standalone with the existing thinking-root marker, without changing tool counts or ownership;
-- streaming before and after settlement; staggered phases using the configured complete-status color and the hold at the configured color preserve the custom root, thinking-step and per-kind tool glyphs and layout, while successful/failed tools, palette-only terminals, and expanded native output stay static;
+- streaming before and after settlement;
 - thinking toggles, expanded tools, theme changes, narrow widths, and mouse coordinates;
 - session reload, resume, fork, tree navigation, new session, collapsed compaction storyboard boundaries, expanded compaction native preview, older visible children, and storyboard rendering after the compaction boundary;
 - `alt+o` switches the existing transcript to native rendering and back; Pi can expand and collapse natively while Storyboard is off;

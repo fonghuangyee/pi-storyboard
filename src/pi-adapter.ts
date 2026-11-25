@@ -1737,7 +1737,6 @@ function renderStoryboardIfRequested(
       theme,
       nativeThinkingMarkerColor(snapshot, settings),
       settings,
-      snapshot.isStreaming || snapshot.stopReason === "pending",
     );
     thinkingDecorations.set(owner, decoration);
   }

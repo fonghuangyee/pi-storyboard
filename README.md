@@ -5,7 +5,6 @@ A presentation-only Pi extension that turns eligible collapsed tool activity int
 ## Features
 
 - Groups compatible `read`, `grep`/`find`, `ls`, `write`, `edit`, `bash`/`powershell`, custom, MCP, and subagent rows.
-- Animates active symbols with a wave from their configured active color to the **Complete status color** and back on Pi redraws in truecolor terminals. Custom symbols and layout stay unchanged.
 - Preserves assistant source order and native thinking/commentary. Eligible tool scenes with absent or empty source thinking get a fixed `Thinking...` presentation label—not generated reasoning; consecutive settled tool-only responses can share one label when active-path ownership and boundaries are proven.
 - Shows compact running and failed states, a wrapped failure diagnostic, and one sanitized, bounded successful-result excerpt by default. Excerpts may contain file or command output; disable them in settings if preferred. Full details remain available through Pi's native expansion.
 - Gives default text-only custom messages and plain transcript status rows a full-text Storyboard view. Collapsed skill invocations appear as one configurable-color `◉ Skill loaded: name` row (yellow/amber by default) using the standard master-node symbol. Recognized web-search statuses and collapsed compaction summaries retain their specialized layouts.
